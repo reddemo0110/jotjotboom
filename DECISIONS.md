@@ -261,3 +261,35 @@ Copy of Big Fish in Little China with the tangerine accent muted
   machine's PATH, icon under hicolor/scalable/apps, metainfo) and refreshes
   the desktop/icon caches. The template's `install` recipe had the icon
   destination pointing at the directory, not the file — fixed.
+
+## 2026-08-30 — Comic frame and drag-to-move pictures
+- New frame style `comic` ("comic book"). First attempt (posterise raw
+  pixels + Sobel + black dot screen) looked like a muddy screen door; the
+  rewrite follows what the Photoshop "photo to comic" tutorials (Poster
+  Edges / Cutout / Color Halftone on Darken) and the OpenCV "Toonify"
+  pipeline agree on: (1) bilateral-smooth first, on a half-size copy, so
+  colour regions are homogeneous before anything else; (2) auto-levels to
+  the 2nd–98th percentile plus a lift, scaling chroma with the lift so
+  shadows stay coloured instead of going grey — on a comic page black is
+  only ever ink; (3) five cel bands of lightness with chroma snapped;
+  (4) outlines from the gradient of the smoothed luma with hysteresis,
+  specks under 14 px dropped (Toonify's min-area rule), thickened one
+  pixel; (5) one 45° Ben-Day screen of dots in the shadows only, each dot a
+  darker ink of the colour under it, sized by the continuous tone (the
+  dots do the shading inside a flat band); (6) cream paper, red plate a
+  pixel off-register. A four-plate CMYK rosette was tried and rejected:
+  authentic, but it turns dark regions into olive mud at note sizes.
+  The panel is a thick ink border on a newsprint gutter; a caption becomes
+  a yellow narration box in the top-left corner. Not palette-dependent.
+- A picture is moved by dragging it (press, then travel > 6 px; a plain click
+  still opens the ⋯ menu). While dragging, the note switches to a "drop
+  mode": each body line is drawn as plain text with a top half (drop above)
+  and a bottom half (drop below), so the drop line — an accent rule tagged
+  "▼ picture drops here" — is drawn exactly where the picture will land, no
+  pixel-to-line guessing. Dropping mid-paragraph splits it; the end of the
+  note is reachable via a strip under the last line. Esc cancels; the move
+  is one undo step. Rejected: estimating the target line from cursor y over
+  the live editors (wrapping makes it lie) and a ghost image that follows
+  the pointer (window-to-editor coordinates are not available to `view`).
+- Script hook: `imgdrag:n:line` shows drop mode with the line before body
+  line `line`; `imgmove:n:line` performs the move.

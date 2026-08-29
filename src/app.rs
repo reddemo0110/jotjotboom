@@ -34,6 +34,8 @@ const UNDO_GROUP_IDLE: Duration = Duration::from_millis(700);
 const NAV_WIDTH: f32 = 230.0;
 const NOTE_LIST_WIDTH: f32 = 320.0;
 const GAP: u16 = 14;
+/// Pointer travel (px) that turns a press on a picture into a drag.
+const DRAG_THRESHOLD: f32 = 6.0;
 
 pub struct AppModel {
     core: cosmic::Core,
@@ -54,8 +56,11 @@ pub struct AppModel {
     resizing: Option<Resize>,
     /// The Ctrl+Shift+H shortcuts overlay.
     show_shortcuts: bool,
-    /// Last known cursor x (window coords), for resize deltas.
+    /// A picture being dragged to another line (press, then move).
+    dragging: Option<ImageDrag>,
+    /// Last known cursor position (window coords), for drag deltas.
     mouse_x: f32,
+    mouse_y: f32,
     /// Width being dragged, shown live before it is written to the note.
     live_width: Option<(usize, u32)>,
     /// In-app image picker (context drawer).
@@ -126,6 +131,10 @@ pub enum Message {
     SetCaption(usize, String),
     RemoveImage(usize),
     ResizeStart(usize),
+    /// Left button went down on a picture: a click (menu) or the start of a drag.
+    ImagePress(usize),
+    /// While dragging, the pointer is over the slot before this body line.
+    DragOver(usize),
     MouseMoved(Point),
     MouseReleased,
     OpenImage(String),
@@ -236,8 +245,10 @@ impl cosmic::Application for AppModel {
             image_cache: HashMap::new(),
             image_menu: None,
             resizing: None,
+            dragging: None,
             show_shortcuts: false,
             mouse_x: 0.0,
+            mouse_y: 0.0,
             live_width: None,
             picker_dir: dirs::picture_dir()
                 .or_else(dirs::home_dir)
@@ -765,8 +776,36 @@ impl AppModel {
                 });
             }
 
+            Message::ImagePress(block) => {
+                let editable = self.current.as_ref().is_some_and(|n| !n.trashed);
+                if self.image_menu.is_some() || !editable {
+                    return self.update(Message::ImageMenu(Some(block)));
+                }
+                self.dragging = Some(ImageDrag {
+                    block,
+                    start: Point::new(self.mouse_x, self.mouse_y),
+                    active: false,
+                    target: None,
+                });
+            }
+
+            Message::DragOver(line) => {
+                if let Some(d) = &mut self.dragging
+                    && d.active
+                {
+                    d.target = Some(line);
+                }
+            }
+
             Message::MouseMoved(position) => {
                 self.mouse_x = position.x;
+                self.mouse_y = position.y;
+                if let Some(d) = &mut self.dragging
+                    && !d.active
+                    && position.distance(d.start) > DRAG_THRESHOLD
+                {
+                    d.active = true;
+                }
                 if let Some(rz) = &self.resizing {
                     let w = (rz.start_w as f32 + (position.x - rz.start_x))
                         .clamp(images::MIN_WIDTH as f32, images::MAX_WIDTH as f32)
@@ -780,6 +819,20 @@ impl AppModel {
                     && let Some((_, w)) = self.live_width.take()
                 {
                     self.edit_ref(rz.block, |r| r.width = Some(w));
+                }
+                if let Some(d) = self.dragging.take() {
+                    if !d.active {
+                        return self.update(Message::ImageMenu(Some(d.block)));
+                    }
+                    if let Some(target) = d.target {
+                        let snap = self.snapshot();
+                        if self.blocks.move_image(d.block, target).is_some() {
+                            self.push_undo(snap);
+                            self.dirty = true;
+                            self.last_edit = Instant::now();
+                            return self.focus_editor();
+                        }
+                    }
                 }
             }
 
@@ -1119,6 +1172,12 @@ impl AppModel {
             }
 
             Message::Key(modifiers, key, physical) => {
+                if self.dragging.is_some()
+                    && matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape))
+                {
+                    self.dragging = None;
+                    return Task::none();
+                }
                 let action = self
                     .key_binds
                     .iter()
@@ -1832,25 +1891,36 @@ impl AppModel {
     fn blocks_view<'a>(&'a self, p: &Palette, trashed: bool) -> Element<'a, Message> {
         let items = &self.blocks.items;
         let last_text = self.blocks.last_text();
-        let mut col = widget::column::with_capacity(items.len())
+        // While a picture is being dragged the note becomes a drop target:
+        // plain lines with hover slots instead of editors.
+        let drag = self.dragging.filter(|d| d.active);
+        let offsets = self.blocks.line_offsets();
+        let target = drag.and_then(|d| d.target);
+        let text_el = |i: usize, content: &'a text_editor::Content, id: widget::Id| {
+            if drag.is_some() {
+                self.drag_lines(p, content, offsets[i], target, i == last_text)
+            } else {
+                self.text_block(p, i, content, id, trashed, i == last_text)
+            }
+        };
+        let mut col = widget::column::with_capacity(items.len() + 1)
             .spacing(6)
             .width(Length::Fill);
         let mut i = 0;
         while i < items.len() {
             match &items[i] {
                 Block::Text { content, id } => {
-                    col = col.push(self.text_block(
-                        p,
-                        i,
-                        content,
-                        id.clone(),
-                        trashed,
-                        i == last_text,
-                    ));
+                    col = col.push(text_el(i, content, id.clone()));
                     i += 1;
                 }
                 Block::Image(r) => {
-                    let card = self.image_card(p, r, i);
+                    if drag.is_some() && target == Some(offsets[i]) {
+                        col = col.push(retro::drop_line(p, fl!("drop-here")));
+                    }
+                    let card = match drag {
+                        Some(d) => self.drag_image_card(p, r, i, offsets[i], d.block == i),
+                        None => self.image_card(p, r, i),
+                    };
                     match r.align {
                         Align::Center => {
                             col = col.push(
@@ -1863,14 +1933,9 @@ impl AppModel {
                         }
                         Align::Left | Align::Right => {
                             let paired = match items.get(i + 1) {
-                                Some(Block::Text { content, id }) => Some(self.text_block(
-                                    p,
-                                    i + 1,
-                                    content,
-                                    id.clone(),
-                                    trashed,
-                                    i + 1 == last_text,
-                                )),
+                                Some(Block::Text { content, id }) => {
+                                    Some(text_el(i + 1, content, id.clone()))
+                                }
                                 _ => None,
                             };
                             let has_pair = paired.is_some();
@@ -1894,6 +1959,9 @@ impl AppModel {
                     }
                 }
             }
+        }
+        if drag.is_some() && target == offsets.last().copied() {
+            col = col.push(retro::drop_line(p, fl!("drop-here")));
         }
         widget::scrollable(col)
             .height(Length::Fill)
@@ -2090,6 +2158,11 @@ impl AppModel {
             return;
         }
         let snap = self.snapshot();
+        self.push_undo(snap);
+    }
+
+    /// Push a snapshot as an undo step (skipping an exact repeat).
+    fn push_undo(&mut self, snap: Snapshot) {
         if self.undo.last().is_some_and(|last| last.body == snap.body) {
             return;
         }
@@ -2108,8 +2181,129 @@ impl AppModel {
         self.last_edit = Instant::now();
     }
 
-    /// One inline image: frame treatment, ⋯ menu, drag grip, and the popup menu.
-    fn image_card<'a>(
+    /// A text block while a picture is being dragged: one plain line per body
+    /// line, each split into a top half (drop above) and a bottom half (drop
+    /// below), with the drop line drawn exactly where the picture will land.
+    fn drag_lines<'a>(
+        &'a self,
+        p: &Palette,
+        content: &'a text_editor::Content,
+        offset: usize,
+        target: Option<usize>,
+        is_last: bool,
+    ) -> Element<'a, Message> {
+        let slot = |line: usize, height: Length| {
+            widget::mouse_area(widget::Space::new().width(Length::Fill).height(height))
+                .on_move(move |_| Message::DragOver(line))
+                .interaction(mouse::Interaction::Grabbing)
+        };
+        let text = content.text();
+        let text = text.strip_suffix('\n').unwrap_or(&text);
+        let mut col =
+            widget::column::with_capacity(text.lines().count() * 2 + 2).width(Length::Fill);
+        let count = if text.is_empty() {
+            // A gap between pictures owns no line; hovering it means "here".
+            col = col.push(slot(
+                offset,
+                Length::Fixed(if is_last { 120.0 } else { 14.0 }),
+            ));
+            0
+        } else {
+            let mut count = 0;
+            for (k, line) in text.split('\n').enumerate() {
+                if target == Some(offset + k) {
+                    col = col.push(retro::drop_line(p, fl!("drop-here")));
+                }
+                let shown = if line.is_empty() {
+                    " ".to_owned()
+                } else {
+                    line.to_owned()
+                };
+                let line_el = retro::text(p, shown)
+                    .font(retro::mono())
+                    .size(15)
+                    .line_height(1.5)
+                    .width(Length::Fill);
+                let halves = widget::column::with_capacity(2)
+                    .push(slot(offset + k, Length::Fill))
+                    .push(slot(offset + k + 1, Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill);
+                col = col.push(
+                    cosmic::iced::widget::stack([line_el.into(), halves.into()])
+                        .width(Length::Fill),
+                );
+                count = k + 1;
+            }
+            count
+        };
+        if is_last && count > 0 {
+            // Room below the last line so the end of the note is a target too.
+            col = col.push(slot(offset + count, Length::Fixed(120.0)));
+        }
+        widget::container(col)
+            .padding([6, 10])
+            .width(Length::Fill)
+            .into()
+    }
+
+    /// An image while a picture is being dragged: top half drops above it,
+    /// bottom half below; the one being moved is outlined.
+    fn drag_image_card<'a>(
+        &'a self,
+        p: &Palette,
+        r: &'a ImageRef,
+        block: usize,
+        offset: usize,
+        dragged: bool,
+    ) -> Element<'a, Message> {
+        let pic = self.image_picture(p, r, block);
+        let slot = |line: usize| {
+            widget::mouse_area(
+                widget::Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_move(move |_| Message::DragOver(line))
+            .interaction(mouse::Interaction::Grabbing)
+        };
+        let halves = widget::column::with_capacity(2)
+            .push(slot(offset))
+            .push(slot(offset + 1))
+            .width(Length::Fill)
+            .height(Length::Fill);
+        let stacked = cosmic::iced::widget::stack([pic, halves.into()]).width(Length::Fill);
+        let el: Element<'a, Message> = if dragged {
+            retro::lifted(p, stacked.into())
+        } else {
+            stacked.into()
+        };
+        self.size_card(r, block, el).into()
+    }
+
+    /// The card at its chosen width (live while resizing).
+    fn size_card<'a>(
+        &self,
+        r: &ImageRef,
+        block: usize,
+        content: Element<'a, Message>,
+    ) -> widget::Container<'a, Message, cosmic::Theme> {
+        let width = self
+            .live_width
+            .filter(|(b, _)| *b == block)
+            .map(|(_, w)| w)
+            .or(r.width);
+        match (r.align, width) {
+            (Align::Center, Some(w)) => widget::container(content)
+                .max_width(w as f32)
+                .width(Length::Fill),
+            (Align::Center, None) => widget::container(content).width(Length::Fill),
+            (_, w) => widget::container(content).width(Length::Fixed(w.unwrap_or(360) as f32)),
+        }
+    }
+
+    /// The picture itself in its frame treatment (or its loading / error state).
+    fn image_picture<'a>(
         &'a self,
         p: &Palette,
         r: &'a ImageRef,
@@ -2144,6 +2338,7 @@ impl AppModel {
                     FrameStyle::Bezel => retro::bezel(p, img.into()),
                     FrameStyle::Print => retro::print(p, img.into(), r.alt.clone()),
                     FrameStyle::Film => retro::film(p, img.into(), self.image_number(block)),
+                    FrameStyle::Comic => retro::comic(p, img.into(), r.alt.clone()),
                 }
             }
             Some(ImageState::Ascii(text)) => {
@@ -2164,11 +2359,22 @@ impl AppModel {
                 .align_x(Alignment::Center)
                 .into(),
         };
+        pic
+    }
 
-        // Click the picture (or ⋯) for the menu; drag ◢ to resize.
+    /// One inline image: frame treatment, ⋯ menu, drag grip, and the popup menu.
+    fn image_card<'a>(
+        &'a self,
+        p: &Palette,
+        r: &'a ImageRef,
+        block: usize,
+    ) -> Element<'a, Message> {
+        let pic = self.image_picture(p, r, block);
+
+        // Click the picture for the menu, drag it to move it; drag ◢ to resize.
         let clickable = widget::mouse_area(pic)
-            .on_press(Message::ImageMenu(Some(block)))
-            .interaction(mouse::Interaction::Pointer);
+            .on_press(Message::ImagePress(block))
+            .interaction(mouse::Interaction::Grab);
         let menu_open = self.image_menu == Some(block);
         let dots = widget::container(
             widget::button::custom(retro::accent(p, "⋯").size(14))
@@ -2192,18 +2398,7 @@ impl AppModel {
         let stacked = cosmic::iced::widget::stack([clickable.into(), dots.into(), grip.into()])
             .width(Length::Fill);
 
-        let width = self
-            .live_width
-            .filter(|(b, _)| *b == block)
-            .map(|(_, w)| w)
-            .or(r.width);
-        let sized = match (r.align, width) {
-            (Align::Center, Some(w)) => widget::container(stacked)
-                .max_width(w as f32)
-                .width(Length::Fill),
-            (Align::Center, None) => widget::container(stacked).width(Length::Fill),
-            (_, w) => widget::container(stacked).width(Length::Fixed(w.unwrap_or(360) as f32)),
-        };
+        let sized = self.size_card(r, block, stacked.into());
 
         if menu_open {
             widget::popover(sized)
@@ -2300,6 +2495,9 @@ impl AppModel {
             widget::container(retro::dim(p, fl!("menu-resize-hint")).size(11)).padding([2, 8]),
         );
         col = col.push(
+            widget::container(retro::dim(p, fl!("menu-move-hint")).size(11)).padding([0, 8, 2, 8]),
+        );
+        col = col.push(
             widget::row::with_capacity(2)
                 .push(item(
                     fl!("open-image"),
@@ -2394,6 +2592,9 @@ impl AppModel {
     /// Write pending edits and let go of the current note.
     fn close_current(&mut self) {
         self.flush();
+        self.dragging = None;
+        self.resizing = None;
+        self.live_width = None;
         let Some(note) = self.current.take() else {
             return;
         };
@@ -2514,6 +2715,22 @@ impl AppModel {
             },
             Step::ImgMenu(n) => match self.nth_image_block(n) {
                 Some(b) => self.update(Message::ImageMenu(Some(b))),
+                None => Task::none(),
+            },
+            Step::ImgDrag(n, line) | Step::ImgMove(n, line) => match self.nth_image_block(n) {
+                Some(b) => {
+                    self.dragging = Some(ImageDrag {
+                        block: b,
+                        start: Point::ORIGIN,
+                        active: true,
+                        target: Some(line),
+                    });
+                    if matches!(step, Step::ImgMove(..)) {
+                        self.update(Message::MouseReleased)
+                    } else {
+                        Task::none()
+                    }
+                }
                 None => Task::none(),
             },
             Step::Theme(key) => self.update(Message::SetTheme(retro::Theme::from_key(&key))),
@@ -2687,6 +2904,18 @@ pub enum EditKind {
     Typing,
     Deleting,
     Other,
+}
+
+/// A picture being dragged to a new line.
+#[derive(Debug, Clone, Copy)]
+pub struct ImageDrag {
+    block: usize,
+    /// Where the button went down (window coords).
+    start: Point,
+    /// The pointer has travelled past `DRAG_THRESHOLD`: a drag, not a click.
+    active: bool,
+    /// Body line the picture will sit before when dropped.
+    target: Option<usize>,
 }
 
 /// A drag-resize in progress on an image block.

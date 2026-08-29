@@ -17,7 +17,7 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
 - Visual check without a human: `tools/xshot.py out.png [--keys ctrl+n --type 'text']`
   runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (steps:
   new, type, search, select, pin, trash, folder, format, selectall, dock,
-  themes, theme, wait, exit; `;` separates steps — write `\;` inside text),
+  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, wait, exit; `;` separates steps — write `\;` inside text),
   and captures the window with X auto-repeat switched off. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
   hook (iced `window::screenshot`) silently drops editor text and menu labels.
 

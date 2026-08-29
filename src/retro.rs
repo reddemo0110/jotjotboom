@@ -785,6 +785,138 @@ pub fn film<'a, M: 'static>(p: &Palette, content: Element<'a, M>, number: usize)
 }
 
 /// ASCII rendering in the accent colour.
+/// A comic panel: newsprint gutter, thick ink border, and the caption in a
+/// yellow narration box tucked into the top-left corner.
+pub fn comic<'a, M: 'static>(
+    p: &Palette,
+    content: Element<'a, M>,
+    caption: String,
+) -> Element<'a, M> {
+    let _ = p;
+    let paper = hex(0xf2e8cd);
+    let ink = hex(0x18121a);
+    let yellow = hex(0xf6d85a);
+    let panel = widget::container(content)
+        .padding(0)
+        .width(Length::Fill)
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(Background::Color(ink)),
+                border: Border {
+                    color: ink,
+                    width: 3.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }
+        }));
+    let inner: Element<'a, M> = if caption.trim().is_empty() {
+        panel.into()
+    } else {
+        let tag = widget::container(
+            widget::text(caption.to_uppercase())
+                .font(TITLE_FONT)
+                .size(18)
+                .class(theme::Text::Color(ink)),
+        )
+        .padding([1, 8, 2, 8])
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(Background::Color(yellow)),
+                border: Border {
+                    color: ink,
+                    width: 2.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }
+        }));
+        cosmic::iced::widget::stack([
+            panel.into(),
+            widget::container(tag).padding([9, 0, 0, 9]).into(),
+        ])
+        .width(Length::Fill)
+        .into()
+    };
+    widget::container(inner)
+        .padding(8)
+        .width(Length::Fill)
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(Background::Color(paper)),
+                border: Border {
+                    color: hex(0xd9cfae),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }
+        }))
+        .into()
+}
+
+/// The drop indicator while a picture is dragged: an accent rule with a tag,
+/// drawn exactly where the picture will land.
+pub fn drop_line<'a, M: 'static>(p: &Palette, label: String) -> Element<'a, M> {
+    let accent = p.accent;
+    let rule = || {
+        widget::container(widget::Space::new().width(Length::Fill).height(2))
+            .width(Length::Fill)
+            .class(theme::Container::custom(move |_| {
+                widget::container::Style {
+                    background: Some(Background::Color(accent)),
+                    ..Default::default()
+                }
+            }))
+    };
+    let tag = widget::container(
+        widget::text(label)
+            .font(TITLE_FONT)
+            .size(16)
+            .class(theme::Text::Color(p.bg)),
+    )
+    .padding([0, 8, 1, 8])
+    .class(theme::Container::custom(move |_| {
+        widget::container::Style {
+            background: Some(Background::Color(accent)),
+            border: Border {
+                radius: 3.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }));
+    widget::container(
+        widget::row::with_capacity(3)
+            .push(rule())
+            .push(tag)
+            .push(rule())
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
+    )
+    .padding([2, 4])
+    .width(Length::Fill)
+    .into()
+}
+
+/// The picture being dragged: outlined in the accent so it reads as lifted.
+pub fn lifted<'a, M: 'static>(p: &Palette, content: Element<'a, M>) -> Element<'a, M> {
+    let accent = p.accent;
+    widget::container(content)
+        .width(Length::Fill)
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                border: Border {
+                    color: accent,
+                    width: 2.0,
+                    radius: 3.0.into(),
+                },
+                ..Default::default()
+            }
+        }))
+        .into()
+}
+
 pub fn ascii_card<'a, M: 'static>(p: &Palette, text: String, size: f32) -> Element<'a, M> {
     let txt = widget::text(text)
         .font(mono())

@@ -52,6 +52,10 @@ pub enum Step {
     ImgWidth(usize, u32),
     /// Open the ⋯ menu of the n-th image.
     ImgMenu(usize),
+    /// Show the n-th image mid-drag with the drop line before body line `line`: `imgdrag:n:line`.
+    ImgDrag(usize, usize),
+    /// Move the n-th image to sit before body line `line`: `imgmove:n:line`.
+    ImgMove(usize, usize),
     /// Set the caption of the n-th image: `imgcaption:n:text`.
     ImgCaption(usize, String),
     /// Switch theme by key.
@@ -105,6 +109,14 @@ pub fn parse(script: &str) -> Vec<Step> {
                     Step::ImgWidth(n.parse().ok()?, w.parse().ok()?)
                 }
                 "imgmenu" => Step::ImgMenu(arg.trim().parse().ok()?),
+                "imgdrag" => {
+                    let (n, line) = arg.trim().split_once(':')?;
+                    Step::ImgDrag(n.parse().ok()?, line.parse().ok()?)
+                }
+                "imgmove" => {
+                    let (n, line) = arg.trim().split_once(':')?;
+                    Step::ImgMove(n.parse().ok()?, line.parse().ok()?)
+                }
                 "imgcaption" => {
                     let (n, text) = arg.split_once(':')?;
                     Step::ImgCaption(n.trim().parse().ok()?, unescape(text))

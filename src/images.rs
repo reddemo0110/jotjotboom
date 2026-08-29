@@ -25,10 +25,11 @@ pub enum FrameStyle {
     Ascii,
     Film,
     Pixel,
+    Comic,
 }
 
 impl FrameStyle {
-    pub const ALL: [FrameStyle; 8] = [
+    pub const ALL: [FrameStyle; 9] = [
         FrameStyle::Box,
         FrameStyle::Tint,
         FrameStyle::Dither,
@@ -37,6 +38,7 @@ impl FrameStyle {
         FrameStyle::Ascii,
         FrameStyle::Film,
         FrameStyle::Pixel,
+        FrameStyle::Comic,
     ];
 
     pub fn key(self) -> &'static str {
@@ -49,6 +51,7 @@ impl FrameStyle {
             FrameStyle::Ascii => "ascii",
             FrameStyle::Film => "film",
             FrameStyle::Pixel => "pixel",
+            FrameStyle::Comic => "comic",
         }
     }
 
@@ -66,6 +69,7 @@ impl FrameStyle {
             FrameStyle::Ascii => "ASCII",
             FrameStyle::Film => "film strip",
             FrameStyle::Pixel => "chunky pixels",
+            FrameStyle::Comic => "comic book",
         }
     }
 
@@ -487,6 +491,7 @@ pub fn process(rgba: RgbaImage, style: FrameStyle, p: &Palette, ascii_cols: u32)
         FrameStyle::Dither => dither(&rgba, p),
         FrameStyle::Pixel => pixelate(&rgba),
         FrameStyle::Bezel => scanlines(rgba),
+        FrameStyle::Comic => comic(&rgba),
         FrameStyle::Ascii => return Processed::Ascii(ascii(&rgba, ascii_cols)),
         FrameStyle::Box | FrameStyle::Print | FrameStyle::Film => rgba,
     };
@@ -592,6 +597,346 @@ fn scanlines(mut img: RgbaImage) -> RgbaImage {
         px[2] = (px[2] as f32 * k) as u8;
     }
     img
+}
+
+/// Old comic-book print. The recipe follows the classic Photoshop/OpenCV
+/// "photo to comic" pipeline: smooth the photo into homogeneous colour
+/// regions first (bilateral filter), flatten those regions into a few cel
+/// shades, ink bold outlines from the smoothed luminance, then lay a CMYK
+/// halftone screen over it in Darken mode like a cheap four-colour press,
+/// on cream paper with the red plate a touch off-register.
+fn comic(src: &RgbaImage) -> RgbaImage {
+    const CELL: f32 = 5.0;
+    const PAPER: [f32; 3] = [0.96, 0.925, 0.86];
+    const INK: [f32; 3] = [0.08, 0.06, 0.09];
+    let (w, h) = (src.width() as usize, src.height() as usize);
+    let rgb: Vec<[f32; 3]> = src
+        .pixels()
+        .map(|p| {
+            [
+                p[0] as f32 / 255.0,
+                p[1] as f32 / 255.0,
+                p[2] as f32 / 255.0,
+            ]
+        })
+        .collect();
+
+    // 1. Smooth: bilateral on a half-size copy (edges survive, texture goes).
+    let smooth = bilateral_half(&rgb, w, h);
+
+    // 2. Auto-levels on the smoothed luma (2nd–98th percentile) with a lift,
+    //    so a dark photo still prints as colour with dot shading rather than
+    //    a black slab: on a comic page black is only ever ink.
+    let lum = |c: &[f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let mut sorted: Vec<f32> = smooth.iter().map(lum).collect();
+    sorted.sort_by(f32::total_cmp);
+    let lo = sorted[sorted.len() * 2 / 100];
+    let hi = sorted[sorted.len() * 98 / 100].max(lo + 0.05);
+    let levels = |y: f32| ((y - lo) / (hi - lo)).clamp(0.0, 1.0).powf(0.75);
+    // Continuous, lifted colour (what the halftone screens sample).
+    let tone: Vec<[f32; 3]> = smooth
+        .iter()
+        .map(|c| {
+            let y = lum(c);
+            let y2 = levels(y);
+            // Lifting lightness must lift chroma with it, or shadows go grey.
+            let gain = (y2 / y.max(0.04)).clamp(1.0, 5.0) * 1.35;
+            let mut out = [0.0; 3];
+            for i in 0..3 {
+                out[i] = (y2 + (c[i] - y) * gain).clamp(0.0, 1.0);
+            }
+            out
+        })
+        .collect();
+    // Flat colour: five cel bands of lightness, chroma pumped and snapped.
+    let flat: Vec<[f32; 3]> = tone
+        .iter()
+        .map(|c| {
+            let y = lum(c);
+            let yq = 0.16 + (y * 4.0).round() / 4.0 * 0.84;
+            let mut out = [0.0; 3];
+            for i in 0..3 {
+                let chroma = ((c[i] - y) * 1.5 / 0.06).round() * 0.06;
+                out[i] = (yq + chroma).clamp(0.0, 1.0);
+            }
+            out
+        })
+        .collect();
+
+    // 3. Outlines: gradient of the smoothed luma, hysteresis, then thickened.
+    let luma: Vec<f32> = smooth.iter().map(lum).collect();
+    let luma = gaussian(&luma, w, h, 1.0);
+    let edges = outlines(&luma, w, h, 0.11, 0.045);
+
+    // 4. Ben-Day shading: one 45° screen of dots in the shadows, each dot
+    //    printed in a darker ink of the colour under it, sized by the
+    //    continuous tone at the cell centre.
+    let tone_at = |x: i64, y: i64| -> f32 {
+        let x = x.clamp(0, w as i64 - 1) as usize;
+        let y = y.clamp(0, h as i64 - 1) as usize;
+        lum(&tone[y * w + x])
+    };
+    let (sn, cs) = 45.0f32.to_radians().sin_cos();
+    let mut out = ImageBuffer::new(w as u32, h as u32);
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (x as f32, y as f32);
+            let u = (fx * cs + fy * sn) / CELL;
+            let v = (-fx * sn + fy * cs) / CELL;
+            let (cu, cv) = (u.round(), v.round());
+            let cx = (cu * cs - cv * sn) * CELL;
+            let cy = (cu * sn + cv * cs) * CELL;
+            let (cxi, cyi) = (cx.round() as i64, cy.round() as i64);
+            let mut t = 0.0;
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    t += tone_at(cxi + dx, cyi + dy);
+                }
+            }
+            let shade = (1.0 - t / 9.0).clamp(0.0, 1.0);
+            // Highlights stay clean paper; dots grow through the midtones
+            // and merge into solid ink in the deepest shadows.
+            let cover = ((shade - 0.22) / 0.7).clamp(0.0, 1.0);
+            let r = CELL * (cover / std::f32::consts::PI).sqrt() * 1.12;
+            let dist = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt();
+            let dot = if dist < r { 1.0 } else { 0.0 };
+
+            let f = flat[y * w + x];
+            let mut px = [0.0f32; 3];
+            for i in 0..3 {
+                let ink = f[i] * 0.42;
+                px[i] = f[i] * (1.0 - dot) + ink * dot;
+            }
+            // Red plate one pixel to the right of the others.
+            if x > 0 {
+                let fl = flat[y * w + x - 1];
+                px[0] = px[0] * 0.55 + (fl[0] * (1.0 - dot) + fl[0] * 0.42 * dot) * 0.45;
+            }
+            // Cream paper shows through, then the ink goes on top.
+            for i in 0..3 {
+                px[i] = px[i] * 0.92 + PAPER[i] * px[i] * 0.08;
+            }
+            let e = edges[y * w + x];
+            for i in 0..3 {
+                px[i] = px[i] * (1.0 - e) + INK[i] * e;
+            }
+            out.put_pixel(
+                x as u32,
+                y as u32,
+                Rgba([
+                    (px[0] * 255.0).round() as u8,
+                    (px[1] * 255.0).round() as u8,
+                    (px[2] * 255.0).round() as u8,
+                    src.get_pixel(x as u32, y as u32)[3],
+                ]),
+            );
+        }
+    }
+    out
+}
+
+/// Bilateral filter (edge-preserving smoothing) run several times on a
+/// half-size copy, then scaled back up — the Toonify recipe.
+fn bilateral_half(rgb: &[[f32; 3]], w: usize, h: usize) -> Vec<[f32; 3]> {
+    const RADIUS: i64 = 4;
+    const SIGMA_S: f32 = 2.5;
+    const SIGMA_R: f32 = 0.09;
+    let (hw, hh) = ((w / 2).max(1), (h / 2).max(1));
+    let mut small: Vec<[f32; 3]> = (0..hw * hh)
+        .map(|i| {
+            let (x, y) = (i % hw, i / hw);
+            let mut acc = [0.0; 3];
+            let mut n = 0.0;
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let (sx, sy) = ((x * 2 + dx).min(w - 1), (y * 2 + dy).min(h - 1));
+                    let c = rgb[sy * w + sx];
+                    for i in 0..3 {
+                        acc[i] += c[i];
+                    }
+                    n += 1.0;
+                }
+            }
+            acc.map(|v| v / n)
+        })
+        .collect();
+    let spatial: Vec<f32> = (-RADIUS..=RADIUS)
+        .flat_map(|dy| {
+            (-RADIUS..=RADIUS)
+                .map(move |dx| (-((dx * dx + dy * dy) as f32) / (2.0 * SIGMA_S * SIGMA_S)).exp())
+        })
+        .collect();
+    let span = (2 * RADIUS + 1) as usize;
+    for _ in 0..5 {
+        let mut next = small.clone();
+        for y in 0..hh {
+            for x in 0..hw {
+                let centre = small[y * hw + x];
+                let mut acc = [0.0f32; 3];
+                let mut wsum = 0.0;
+                for dy in -RADIUS..=RADIUS {
+                    let sy = (y as i64 + dy).clamp(0, hh as i64 - 1) as usize;
+                    for dx in -RADIUS..=RADIUS {
+                        let sx = (x as i64 + dx).clamp(0, hw as i64 - 1) as usize;
+                        let c = small[sy * hw + sx];
+                        let dr = (c[0] - centre[0]).powi(2)
+                            + (c[1] - centre[1]).powi(2)
+                            + (c[2] - centre[2]).powi(2);
+                        let wgt = spatial[(dy + RADIUS) as usize * span + (dx + RADIUS) as usize]
+                            * (-dr / (2.0 * SIGMA_R * SIGMA_R)).exp();
+                        for i in 0..3 {
+                            acc[i] += c[i] * wgt;
+                        }
+                        wsum += wgt;
+                    }
+                }
+                next[y * hw + x] = acc.map(|v| v / wsum);
+            }
+        }
+        small = next;
+    }
+    // Bilinear back to full size.
+    (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            let fx = (x as f32 / 2.0 - 0.25).max(0.0);
+            let fy = (y as f32 / 2.0 - 0.25).max(0.0);
+            let (x0, y0) = ((fx as usize).min(hw - 1), (fy as usize).min(hh - 1));
+            let (x1, y1) = ((x0 + 1).min(hw - 1), (y0 + 1).min(hh - 1));
+            let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+            let mut out = [0.0; 3];
+            for i in 0..3 {
+                let top = small[y0 * hw + x0][i] * (1.0 - tx) + small[y0 * hw + x1][i] * tx;
+                let bot = small[y1 * hw + x0][i] * (1.0 - tx) + small[y1 * hw + x1][i] * tx;
+                out[i] = top * (1.0 - ty) + bot * ty;
+            }
+            out
+        })
+        .collect()
+}
+
+/// Separable Gaussian blur of a single channel.
+fn gaussian(src: &[f32], w: usize, h: usize, sigma: f32) -> Vec<f32> {
+    let radius = (sigma * 3.0).ceil() as i64;
+    let kernel: Vec<f32> = (-radius..=radius)
+        .map(|d| (-(d * d) as f32 / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let norm: f32 = kernel.iter().sum();
+    let mut tmp = vec![0.0; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (k, wgt) in kernel.iter().enumerate() {
+                let sx = (x as i64 + k as i64 - radius).clamp(0, w as i64 - 1) as usize;
+                acc += src[y * w + sx] * wgt;
+            }
+            tmp[y * w + x] = acc / norm;
+        }
+    }
+    let mut out = vec![0.0; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (k, wgt) in kernel.iter().enumerate() {
+                let sy = (y as i64 + k as i64 - radius).clamp(0, h as i64 - 1) as usize;
+                acc += tmp[sy * w + x] * wgt;
+            }
+            out[y * w + x] = acc / norm;
+        }
+    }
+    out
+}
+
+/// Ink coverage (0..1) for outlines: Sobel gradient of `luma`, kept where it
+/// is strong or touches something strong (hysteresis), thickened by a pixel.
+fn outlines(luma: &[f32], w: usize, h: usize, high: f32, low: f32) -> Vec<f32> {
+    const MIN_AREA: usize = 14;
+    let at = |x: i64, y: i64| -> f32 {
+        luma[y.clamp(0, h as i64 - 1) as usize * w + x.clamp(0, w as i64 - 1) as usize]
+    };
+    let mag: Vec<f32> = (0..w * h)
+        .map(|i| {
+            let (x, y) = ((i % w) as i64, (i / w) as i64);
+            let gx = (at(x + 1, y - 1) + 2.0 * at(x + 1, y) + at(x + 1, y + 1))
+                - (at(x - 1, y - 1) + 2.0 * at(x - 1, y) + at(x - 1, y + 1));
+            let gy = (at(x - 1, y + 1) + 2.0 * at(x, y + 1) + at(x + 1, y + 1))
+                - (at(x - 1, y - 1) + 2.0 * at(x, y - 1) + at(x + 1, y - 1));
+            (gx * gx + gy * gy).sqrt() / 4.0
+        })
+        .collect();
+    let mut strong: Vec<bool> = mag.iter().map(|m| *m >= high).collect();
+    // Weak edges survive only next to strong ones (two passes are plenty).
+    for _ in 0..2 {
+        let prev = strong.clone();
+        for y in 0..h {
+            for x in 0..w {
+                if mag[y * w + x] >= low && !prev[y * w + x] {
+                    let mut near = false;
+                    for dy in -1i64..=1 {
+                        for dx in -1i64..=1 {
+                            let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+                            if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
+                                near |= prev[ny as usize * w + nx as usize];
+                            }
+                        }
+                    }
+                    strong[y * w + x] = near;
+                }
+            }
+        }
+    }
+    // Drop specks: connected runs of edge pixels smaller than MIN_AREA.
+    let mut seen = vec![false; w * h];
+    let mut stack = Vec::new();
+    for start in 0..w * h {
+        if !strong[start] || seen[start] {
+            continue;
+        }
+        let mut comp = vec![start];
+        seen[start] = true;
+        stack.push(start);
+        while let Some(i) = stack.pop() {
+            let (x, y) = ((i % w) as i64, (i / w) as i64);
+            for dy in -1i64..=1 {
+                for dx in -1i64..=1 {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
+                        continue;
+                    }
+                    let j = ny as usize * w + nx as usize;
+                    if strong[j] && !seen[j] {
+                        seen[j] = true;
+                        stack.push(j);
+                        comp.push(j);
+                    }
+                }
+            }
+        }
+        if comp.len() < MIN_AREA {
+            for j in comp {
+                strong[j] = false;
+            }
+        }
+    }
+    // Thicken by one pixel (cross-shaped, so lines stay smooth).
+    (0..w * h)
+        .map(|i| {
+            let (x, y) = ((i % w) as i64, (i / w) as i64);
+            let mut best = 0.0f32;
+            for (dx, dy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let (nx, ny) = (x + dx, y + dy);
+                if nx >= 0
+                    && ny >= 0
+                    && (nx as usize) < w
+                    && (ny as usize) < h
+                    && strong[ny as usize * w + nx as usize]
+                {
+                    best = 1.0;
+                }
+            }
+            best
+        })
+        .collect()
 }
 
 /// Characters for luminance at `cols` columns, 2:1 cell aspect.

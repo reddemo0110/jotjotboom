@@ -211,6 +211,64 @@ impl Blocks {
             content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
         }
     }
+    /// Body line at which each block starts. Empty text blocks own no line
+    /// (`images::join` skips them), so they share the next block's offset.
+    /// The final entry is the total line count.
+    pub fn line_offsets(&self) -> Vec<usize> {
+        let mut out = Vec::with_capacity(self.items.len() + 1);
+        let mut line = 0;
+        for b in &self.items {
+            out.push(line);
+            line += match b {
+                Block::Text { content, .. } => {
+                    let t = content_text(content);
+                    if t.is_empty() {
+                        0
+                    } else {
+                        t.split('\n').count()
+                    }
+                }
+                Block::Image(_) => 1,
+            };
+        }
+        out.push(line);
+        out
+    }
+
+    /// Move the image at `block` so that its line sits just before body line
+    /// `target` (`target == line count` puts it last). Returns the image's
+    /// new block index, or `None` when nothing changed.
+    pub fn move_image(&mut self, block: usize, target: usize) -> Option<usize> {
+        if !matches!(self.items.get(block), Some(Block::Image(_))) {
+            return None;
+        }
+        let offsets = self.line_offsets();
+        let from = offsets[block];
+        let total = *offsets.last()?;
+        let target = target.min(total);
+        if target == from || target == from + 1 {
+            return None;
+        }
+        let body = self.body();
+        let mut lines: Vec<&str> = body.lines().collect();
+        let md = lines.remove(from);
+        let at = if target > from { target - 1 } else { target };
+        lines.insert(at, md);
+        let ordinal = lines[..at]
+            .iter()
+            .filter(|l| images::parse_line(l).is_some())
+            .count();
+        let mut new_body = lines.join("\n");
+        new_body.push('\n');
+        // Focus the text that now follows the picture.
+        let fresh = Blocks::from_body(&new_body);
+        let new_block = fresh.images().get(ordinal).map(|(b, _)| *b)?;
+        let focus = fresh
+            .text_after(new_block)
+            .unwrap_or_else(|| fresh.last_text());
+        self.rebuild(&new_body, focus, None);
+        Some(new_block)
+    }
 }
 
 /// `Content::text()` appends a trailing newline; drop it so joins stay exact.
@@ -239,6 +297,32 @@ mod tests {
         assert_eq!(b.images().len(), 1);
         b.remove_image(1);
         assert_eq!(b.body(), "hello\nworld\n");
+    }
+
+    #[test]
+    fn move_image_between_lines() {
+        let body = "one\ntwo\n![p](assets/p.png)\nthree\n\nfour\n";
+        let mut b = Blocks::from_body(body);
+        assert_eq!(b.line_offsets(), vec![0, 2, 3, 6]);
+        // Same place (before or after its own line) is a no-op.
+        assert_eq!(b.move_image(1, 2), None);
+        assert_eq!(b.move_image(1, 3), None);
+        assert_eq!(b.body(), body);
+        // Up to the top.
+        assert_eq!(b.move_image(1, 0), Some(1));
+        assert_eq!(b.body(), "![p](assets/p.png)\none\ntwo\nthree\n\nfour\n");
+        assert_eq!(b.line_offsets(), vec![0, 0, 1, 6]);
+        // Into the middle of a paragraph splits it.
+        assert_eq!(b.move_image(1, 4), Some(1));
+        assert_eq!(b.body(), "one\ntwo\nthree\n![p](assets/p.png)\n\nfour\n");
+        assert_eq!(b.focused, 2);
+        // To the very end.
+        assert_eq!(b.move_image(1, 6), Some(1));
+        assert_eq!(b.body(), "one\ntwo\nthree\n\nfour\n![p](assets/p.png)\n");
+        assert_eq!(b.focused, 2);
+        assert_eq!(b.line_offsets(), vec![0, 5, 6, 6]);
+        // Not an image block.
+        assert_eq!(b.move_image(0, 3), None);
     }
 
     #[test]
