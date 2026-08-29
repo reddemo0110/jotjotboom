@@ -83,6 +83,10 @@ pub struct AppModel {
     blocks: Blocks,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    /// Set when the last autosave failed; cleared by the next success.
+    save_error: Option<String>,
+    /// Show "saved hh:mm" next to the tick until this instant.
+    saved_info_until: Option<Instant>,
     last_undo_kind: EditKind,
     last_undo_at: Instant,
     dirty: bool,
@@ -131,6 +135,8 @@ pub enum Message {
     Undo,
     Redo,
     ToggleShortcuts,
+    ToggleSavedInfo,
+    SavedInfoTick,
     AutosaveTick,
     SetView(View),
     Select(String),
@@ -253,6 +259,8 @@ impl cosmic::Application for AppModel {
             blocks: Blocks::default(),
             undo: Vec::new(),
             redo: Vec::new(),
+            save_error: None,
+            saved_info_until: None,
             last_undo_kind: EditKind::Other,
             last_undo_at: Instant::now(),
             dirty: false,
@@ -553,6 +561,12 @@ impl cosmic::Application for AppModel {
                     .map(|_| Message::AutosaveTick),
             );
         }
+        if self.saved_info_until.is_some() {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(500))
+                    .map(|_| Message::SavedInfoTick),
+            );
+        }
         if self.screenshot_pending {
             subscriptions.push(
                 cosmic::iced::time::every(Duration::from_millis(2500))
@@ -693,6 +707,19 @@ impl AppModel {
 
             Message::ToggleShortcuts => {
                 self.show_shortcuts = !self.show_shortcuts;
+            }
+
+            Message::ToggleSavedInfo => {
+                self.saved_info_until = match self.saved_info_until {
+                    Some(_) => None,
+                    None => Some(Instant::now() + Duration::from_secs(4)),
+                };
+            }
+
+            Message::SavedInfoTick => {
+                if self.saved_info_until.is_some_and(|t| Instant::now() >= t) {
+                    self.saved_info_until = None;
+                }
             }
 
             Message::Undo => {
@@ -1284,14 +1311,42 @@ impl AppModel {
                 .height(Length::Fill);
             return retro::frame(p, fl!("app-title").to_lowercase(), None, content);
         };
-        let badge = if self.drop_hover {
-            fl!("badge-drop")
-        } else if self.dirty {
-            fl!("badge-editing")
+        // Quiet by default: a tick. Click it for the last save time; a failed
+        // save replaces it with a warning until the next one succeeds.
+        let last_saved = format_time(note.modified);
+        let badge: Element<'a, Message> = if self.drop_hover {
+            retro::dim(p, fl!("badge-drop")).into()
         } else if note.trashed {
-            fl!("badge-in-trash")
+            retro::dim(p, fl!("badge-in-trash")).into()
+        } else if self.save_error.is_some() {
+            widget::tooltip(
+                widget::button::custom(
+                    retro::accent(p, fl!("badge-not-saved", time = last_saved))
+                        .size(12)
+                        .wrapping(cosmic::iced::widget::text::Wrapping::None),
+                )
+                .padding([0, 4])
+                .class(retro::row_class(p, false))
+                .on_press(Message::ToggleSavedInfo),
+                retro::dim(p, self.save_error.clone().unwrap_or_default()),
+                widget::tooltip::Position::Bottom,
+            )
+            .into()
         } else {
-            fl!("badge-saved", time = format_time(note.modified))
+            let label = if self.saved_info_until.is_some() {
+                fl!("badge-saved", time = last_saved)
+            } else {
+                "✓".to_owned()
+            };
+            widget::button::custom(
+                retro::dim(p, label)
+                    .size(12)
+                    .wrapping(cosmic::iced::widget::text::Wrapping::None),
+            )
+            .padding([0, 4])
+            .class(retro::row_class(p, false))
+            .on_press(Message::ToggleSavedInfo)
+            .into()
         };
 
         let text_area: Element<'a, Message> = self.blocks_view(p, note.trashed);
@@ -1306,7 +1361,14 @@ impl AppModel {
         }
         column = column.push(self.dock(p));
 
-        let framed = retro::frame(p, note.title.clone(), Some(badge), column);
+        let framed = retro::frame_el(
+            p,
+            note.title.clone(),
+            Some(badge),
+            column,
+            Length::Fill,
+            21.0,
+        );
         widget::dnd_destination::dnd_destination_for_data::<UriList, Message>(
             framed,
             |data, _action| Message::Dropped(data),
@@ -2361,8 +2423,13 @@ impl AppModel {
         note.body = self.blocks.body();
         if let Err(err) = store.save(note) {
             tracing::error!(%err, "saving note");
+            self.save_error = Some(format!("{err:#}"));
+            // Keep the edit pending and retry in a few seconds.
+            self.dirty = true;
+            self.last_edit = Instant::now() + Duration::from_secs(5);
             return;
         }
+        self.save_error = None;
         if note.title != old_title {
             self.backlinks = store.backlinks(&note.title).unwrap_or_default();
         }
@@ -2423,6 +2490,7 @@ impl AppModel {
             Step::Dock => self.update(Message::ToggleDock),
             Step::Undo => self.update(Message::Undo),
             Step::Shortcuts => self.update(Message::ToggleShortcuts),
+            Step::SavedInfo => self.update(Message::ToggleSavedInfo),
             Step::Redo => self.update(Message::Redo),
             Step::Themes => self.update(Message::ToggleContextPage(ContextPage::Themes)),
             Step::Solo => self.update(Message::ToggleSolo),

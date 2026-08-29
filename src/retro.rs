@@ -437,6 +437,20 @@ pub fn frame_sized<'a, M: 'static>(
     height: Length,
     title_size: f32,
 ) -> Element<'a, M> {
+    let badge = badge.map(|b| dim(p, b).into());
+    frame_el(p, title_text, badge, content, height, title_size)
+}
+
+/// [`frame_sized`] with an arbitrary element as the right-hand badge
+/// (e.g. a clickable save indicator).
+pub fn frame_el<'a, M: 'static>(
+    p: &Palette,
+    title_text: impl Into<std::borrow::Cow<'a, str>> + 'a,
+    badge: Option<Element<'a, M>>,
+    content: impl Into<Element<'a, M>>,
+    height: Length,
+    title_size: f32,
+) -> Element<'a, M> {
     let panel = p.panel;
     let border = p.border;
 
@@ -476,7 +490,7 @@ pub fn frame_sized<'a, M: 'static>(
         .push(widget::Space::new().width(Length::Fill))
         .align_y(Alignment::Center);
     if let Some(badge) = badge {
-        bar = bar.push(chip(dim(p, badge).into()));
+        bar = bar.push(chip(badge));
     }
     let title_bar = widget::container(bar)
         .padding([0, 12])

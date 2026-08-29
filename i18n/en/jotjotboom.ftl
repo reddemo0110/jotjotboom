@@ -42,9 +42,9 @@ frame-tags = tags
 frame-notes = notes
 no-tags-yet = no tags yet
 notes-of = { $shown } of { $total }
-badge-editing = editing…
 badge-in-trash = in trash
-badge-saved = saved { $time }
+badge-saved = ✓ saved { $time }
+badge-not-saved = ✗ not saved — last saved { $time }
 
 # Dock
 dock-bold = Bold

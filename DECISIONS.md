@@ -243,3 +243,10 @@ Copy of Big Fish in Little China with the tangerine accent muted
   Ctrl+Shift+C themes, Ctrl+Shift+M markdown syntax, Ctrl+Shift+H this.
   Pane toggles moved from Ctrl+1/2 to Ctrl+Shift+1/2 to free the digits for
   headings. A new Format menu mirrors the dock.
+
+## 2026-08-29 — Save indicator
+- The editor badge no longer flips "editing… / saved hh:mm". It is a quiet
+  `✓` (autosave is assumed); clicking it shows "✓ saved hh:mm" for four
+  seconds. If a save fails the badge becomes "✗ not saved — last saved
+  hh:mm" (tooltip has the error) and the edit stays pending with a retry
+  every ~5 s until a save succeeds.
