@@ -229,3 +229,17 @@ in the text, resizable, with a click-for-options menu.
 ## 2026-08-29 — Little Fish in Big China
 Copy of Big Fish in Little China with the tangerine accent muted
 (#fa6900 → #c9773f); every other colour identical. User request.
+
+## 2026-08-29 — Shortcuts for everything
+- One bind map (`key_binds`) is the single source: menus print the shortcut
+  beside each item (libcosmic does this from the map), header/dock tooltips
+  append it ("Bold · Ctrl + B"), and Ctrl+Shift+H opens a full-window
+  overlay generated from the same map; × or Esc closes it.
+- Layout: File — Ctrl+N new, Ctrl+Shift+N folder, Ctrl+Shift+I image,
+  Ctrl+F search, Ctrl+Shift+P pin, Ctrl+Shift+D trash. Edit — Ctrl+Z,
+  Ctrl+Shift+Z / Ctrl+Y. Format — Ctrl+B/I/E, Ctrl+1/2 headings, Ctrl+L
+  bullet, Ctrl+T to-do, Ctrl+K link, Ctrl+Shift+3 tag (# lives on 3),
+  Ctrl+R divider. View — Ctrl+Shift+1/2 panes, Ctrl+Shift+0 editor only,
+  Ctrl+Shift+C themes, Ctrl+Shift+M markdown syntax, Ctrl+Shift+H this.
+  Pane toggles moved from Ctrl+1/2 to Ctrl+Shift+1/2 to free the digits for
+  headings. A new Format menu mirrors the dock.

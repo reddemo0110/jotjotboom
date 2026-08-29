@@ -32,6 +32,8 @@ pub enum Step {
     /// Undo / redo one step.
     Undo,
     Redo,
+    /// Toggle the shortcuts overlay.
+    Shortcuts,
     /// Open the theme picker drawer.
     Themes,
     /// Toggle editor-only layout.
@@ -81,6 +83,7 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "selectall" => Step::SelectAll,
                 "dock" => Step::Dock,
                 "undo" => Step::Undo,
+                "shortcuts" => Step::Shortcuts,
                 "redo" => Step::Redo,
                 "themes" => Step::Themes,
                 "solo" => Step::Solo,

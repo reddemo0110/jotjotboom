@@ -102,3 +102,10 @@ caption-placeholder = name this picture
 edit = Edit
 undo = Undo
 redo = Redo
+
+# Shortcuts
+format = Format
+new-folder = New folder
+search-notes = Search notes
+shortcuts = Keyboard shortcuts
+shortcuts-hint = Every shortcut in one place. Esc or × to close.

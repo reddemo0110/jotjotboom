@@ -52,6 +52,8 @@ pub struct AppModel {
     image_menu: Option<usize>,
     /// Drag-resize in progress.
     resizing: Option<Resize>,
+    /// The Ctrl+Shift+H shortcuts overlay.
+    show_shortcuts: bool,
     /// Last known cursor x (window coords), for resize deltas.
     mouse_x: f32,
     /// Width being dragged, shown live before it is written to the note.
@@ -128,6 +130,7 @@ pub enum Message {
     Editor(usize, text_editor::Action),
     Undo,
     Redo,
+    ToggleShortcuts,
     AutosaveTick,
     SetView(View),
     Select(String),
@@ -227,6 +230,7 @@ impl cosmic::Application for AppModel {
             image_cache: HashMap::new(),
             image_menu: None,
             resizing: None,
+            show_shortcuts: false,
             mouse_x: 0.0,
             live_width: None,
             picker_dir: dirs::picture_dir()
@@ -298,6 +302,7 @@ impl cosmic::Application for AppModel {
                 MenuAction::ToggleMarkers,
             ),
             menu::Item::Divider,
+            menu::Item::Button(fl!("shortcuts"), None, MenuAction::Shortcuts),
             menu::Item::Button(fl!("about"), None, MenuAction::About),
         ];
 
@@ -308,6 +313,11 @@ impl cosmic::Application for AppModel {
                     &self.key_binds,
                     vec![
                         menu::Item::Button(fl!("new-note"), None, MenuAction::NewNote),
+                        menu::Item::Button(fl!("new-folder"), None, MenuAction::NewFolder),
+                        menu::Item::Button(fl!("dock-image"), None, MenuAction::AddImage),
+                        menu::Item::Divider,
+                        menu::Item::Button(fl!("search-notes"), None, MenuAction::FocusSearch),
+                        menu::Item::Button(fl!("pin-note"), None, MenuAction::Pin),
                         menu::Item::Divider,
                         menu::Item::Button(fl!("trash-note"), None, MenuAction::TrashNote),
                     ],
@@ -321,6 +331,16 @@ impl cosmic::Application for AppModel {
                         menu::Item::Button(fl!("undo"), None, MenuAction::Undo),
                         menu::Item::Button(fl!("redo"), None, MenuAction::Redo),
                     ],
+                ),
+            ),
+            menu::Tree::with_children(
+                menu::root(fl!("format")).apply(Element::from),
+                menu::items(
+                    &self.key_binds,
+                    Format::ALL
+                        .into_iter()
+                        .map(|f| menu::Item::Button(f.label(), None, MenuAction::Format(f)))
+                        .collect(),
                 ),
             ),
             menu::Tree::with_children(
@@ -343,13 +363,13 @@ impl cosmic::Application for AppModel {
             menu_bar.into(),
             toggle(
                 "sidebar-places-symbolic",
-                fl!("show-nav"),
+                self.with_shortcut(fl!("show-nav"), MenuAction::ToggleNav),
                 self.show_nav,
                 Message::ToggleNav,
             ),
             toggle(
                 "view-list-symbolic",
-                fl!("show-list"),
+                self.with_shortcut(fl!("show-list"), MenuAction::ToggleList),
                 self.show_list,
                 Message::ToggleList,
             ),
@@ -359,6 +379,7 @@ impl cosmic::Application for AppModel {
     fn header_end(&self) -> Vec<Element<'_, Self::Message>> {
         let mut items: Vec<Element<'_, Message>> = Vec::new();
         let in_trash = matches!(self.view, View::Trash);
+        let sc = |label: String, action: MenuAction| self.with_shortcut(label, action);
 
         if let Some(note) = &self.current {
             if in_trash {
@@ -378,10 +399,14 @@ impl cosmic::Application for AppModel {
                 } else {
                     fl!("pin-note")
                 };
-                items.push(header_button("pin-symbolic", pin_label, Message::TogglePin));
+                items.push(header_button(
+                    "pin-symbolic",
+                    sc(pin_label, MenuAction::Pin),
+                    Message::TogglePin,
+                ));
                 items.push(header_button(
                     "user-trash-symbolic",
-                    fl!("trash-note"),
+                    sc(fl!("trash-note"), MenuAction::TrashNote),
                     Message::TrashCurrent,
                 ));
             }
@@ -396,7 +421,7 @@ impl cosmic::Application for AppModel {
         if !in_trash {
             items.push(header_button(
                 "list-add-symbolic",
-                fl!("new-note"),
+                sc(fl!("new-note"), MenuAction::NewNote),
                 Message::NewNote,
             ));
         }
@@ -483,11 +508,18 @@ impl cosmic::Application for AppModel {
         }
         panes = panes.push(editor_col);
 
-        widget::container(panes)
+        let content = widget::container(panes)
             .padding([GAP + 4, GAP, GAP, GAP])
             .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+        if self.show_shortcuts {
+            cosmic::iced::widget::stack([content.into(), self.shortcuts_overlay(&p)])
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            content.into()
+        }
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
@@ -551,7 +583,9 @@ impl cosmic::Application for AppModel {
     }
 
     fn on_escape(&mut self) -> Task<cosmic::Action<Self::Message>> {
-        if self.dock_open {
+        if self.show_shortcuts {
+            self.show_shortcuts = false;
+        } else if self.dock_open {
             self.dock_open = false;
         } else if self.core.window.show_context {
             self.core.window.show_context = false;
@@ -655,6 +689,10 @@ impl AppModel {
             Message::SetCaption(block, caption) => {
                 let caption = caption.replace(['[', ']', '\n'], "");
                 self.edit_ref_kind(block, EditKind::Typing, |r| r.alt = caption);
+            }
+
+            Message::ToggleShortcuts => {
+                self.show_shortcuts = !self.show_shortcuts;
             }
 
             Message::Undo => {
@@ -1323,7 +1361,10 @@ impl AppModel {
                 .on_press_maybe(editable.then_some(Message::Format(format)));
             row = row.push(widget::tooltip(
                 button,
-                retro::dim(p, format.label()),
+                retro::dim(
+                    p,
+                    self.with_shortcut(format.label(), MenuAction::Format(format)),
+                ),
                 widget::tooltip::Position::Top,
             ));
         }
@@ -1333,7 +1374,7 @@ impl AppModel {
                 .padding([1, 7])
                 .class(retro::row_class(p, self.dock_open))
                 .on_press(Message::ToggleDock),
-            retro::dim(p, fl!("dock-plus")),
+            retro::dim(p, self.with_shortcut(fl!("dock-plus"), MenuAction::NewNote)),
             widget::tooltip::Position::Top,
         ));
 
@@ -1342,7 +1383,10 @@ impl AppModel {
                 .padding([2, 7])
                 .class(retro::row_class(p, false))
                 .on_press_maybe(editable.then_some(Message::PickImage)),
-            retro::dim(p, fl!("dock-image")),
+            retro::dim(
+                p,
+                self.with_shortcut(fl!("dock-image"), MenuAction::AddImage),
+            ),
             widget::tooltip::Position::Top,
         ));
 
@@ -1354,7 +1398,10 @@ impl AppModel {
                     self.core.window.show_context && self.context_page == ContextPage::Themes,
                 ))
                 .on_press(Message::ToggleContextPage(ContextPage::Themes)),
-            retro::dim(p, fl!("theme-colours")),
+            retro::dim(
+                p,
+                self.with_shortcut(fl!("theme-colours"), MenuAction::Themes),
+            ),
             widget::tooltip::Position::Top,
         ));
 
@@ -1580,6 +1627,133 @@ impl AppModel {
         }
         col = col.push(list);
         widget::scrollable(col).into()
+    }
+
+    // ----- shortcuts -----
+
+    /// The key binding shown for an action, if any ("Ctrl + B").
+    fn shortcut_for(&self, action: MenuAction) -> Option<String> {
+        let mut found: Vec<String> = self
+            .key_binds
+            .iter()
+            .filter(|(_, a)| **a == action)
+            .map(|(k, _)| k.to_string())
+            .collect();
+        found.sort_by_key(|k| k.len());
+        found.into_iter().next()
+    }
+
+    /// "Label  ·  Ctrl + B" for tooltips.
+    fn with_shortcut(&self, label: String, action: MenuAction) -> String {
+        match self.shortcut_for(action) {
+            Some(key) => format!("{label}  ·  {key}"),
+            None => label,
+        }
+    }
+
+    /// Everything with a shortcut, grouped the way the menus are.
+    fn shortcut_table(&self) -> Vec<(String, Vec<(String, MenuAction)>)> {
+        let format: Vec<(String, MenuAction)> = Format::ALL
+            .into_iter()
+            .map(|f| (f.label(), MenuAction::Format(f)))
+            .collect();
+        vec![
+            (
+                fl!("file"),
+                vec![
+                    (fl!("new-note"), MenuAction::NewNote),
+                    (fl!("new-folder"), MenuAction::NewFolder),
+                    (fl!("dock-image"), MenuAction::AddImage),
+                    (fl!("search-notes"), MenuAction::FocusSearch),
+                    (fl!("pin-note"), MenuAction::Pin),
+                    (fl!("trash-note"), MenuAction::TrashNote),
+                ],
+            ),
+            (
+                fl!("edit"),
+                vec![
+                    (fl!("undo"), MenuAction::Undo),
+                    (fl!("redo"), MenuAction::Redo),
+                ],
+            ),
+            (fl!("format"), format),
+            (
+                fl!("view"),
+                vec![
+                    (fl!("show-nav"), MenuAction::ToggleNav),
+                    (fl!("show-list"), MenuAction::ToggleList),
+                    (fl!("editor-only"), MenuAction::Solo),
+                    (fl!("theme-colours"), MenuAction::Themes),
+                    (fl!("show-markers"), MenuAction::ToggleMarkers),
+                    (fl!("shortcuts"), MenuAction::Shortcuts),
+                ],
+            ),
+        ]
+    }
+
+    /// Full-window overlay listing every shortcut; × or Esc closes it.
+    fn shortcuts_overlay<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
+        let mut columns = widget::row::with_capacity(2)
+            .spacing(28)
+            .align_y(Alignment::Start);
+        let groups = self.shortcut_table();
+        let half = groups.len().div_ceil(2);
+        for chunk in groups.chunks(half) {
+            let mut col = widget::column::with_capacity(24)
+                .spacing(3)
+                .width(Length::Fixed(300.0));
+            for (group, entries) in chunk {
+                col = col.push(
+                    widget::container(retro::title(p, group.clone()).size(20))
+                        .padding([8, 0, 2, 0]),
+                );
+                for (label, action) in entries {
+                    let key = self.shortcut_for(*action).unwrap_or_else(|| "—".to_owned());
+                    col = col.push(
+                        widget::row::with_capacity(2)
+                            .push(retro::text(p, label.clone()).width(Length::Fill))
+                            .push(retro::accent(p, key))
+                            .spacing(12),
+                    );
+                }
+            }
+            columns = columns.push(col);
+        }
+        let close = widget::button::custom(retro::accent(p, "×").size(18))
+            .padding([0, 8])
+            .class(retro::row_class(p, false))
+            .on_press(Message::ToggleShortcuts);
+        let header = widget::row::with_capacity(2)
+            .push(retro::dim(p, fl!("shortcuts-hint")).width(Length::Fill))
+            .push(close)
+            .align_y(Alignment::Center);
+        let body = widget::column::with_capacity(2)
+            .push(header)
+            .push(columns)
+            .spacing(6)
+            .padding([2, 6, 6, 6]);
+        let card = retro::frame_sized(
+            p,
+            fl!("shortcuts").to_lowercase(),
+            self.shortcut_for(MenuAction::Shortcuts),
+            body,
+            Length::Shrink,
+            21.0,
+        );
+        let backdrop = p.bg.scale_alpha(0.88);
+        widget::container(widget::container(card).max_width(700.0))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .padding(24)
+            .class(cosmic::theme::Container::custom(move |_| {
+                widget::container::Style {
+                    background: Some(cosmic::iced::Background::Color(backdrop)),
+                    ..Default::default()
+                }
+            }))
+            .into()
     }
 
     // ----- blocks & images -----
@@ -2248,6 +2422,7 @@ impl AppModel {
             )),
             Step::Dock => self.update(Message::ToggleDock),
             Step::Undo => self.update(Message::Undo),
+            Step::Shortcuts => self.update(Message::ToggleShortcuts),
             Step::Redo => self.update(Message::Redo),
             Step::Themes => self.update(Message::ToggleContextPage(ContextPage::Themes)),
             Step::Solo => self.update(Message::ToggleSolo),
@@ -2387,71 +2562,47 @@ fn tag_tree(tags: &[(String, usize)]) -> Vec<(String, usize)> {
 }
 
 fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
-    use menu::key_bind::Modifier;
+    use keyboard::Key;
+    use menu::key_bind::Modifier::{Ctrl, Shift};
     let mut binds = HashMap::new();
-    binds.insert(
-        menu::KeyBind {
-            modifiers: vec![Modifier::Ctrl],
-            key: keyboard::Key::Character("n".into()),
-        },
-        MenuAction::NewNote,
-    );
-    binds.insert(
-        menu::KeyBind {
-            modifiers: vec![Modifier::Ctrl],
-            key: keyboard::Key::Character("f".into()),
-        },
-        MenuAction::FocusSearch,
-    );
-    binds.insert(
-        menu::KeyBind {
-            modifiers: vec![Modifier::Ctrl, Modifier::Shift],
-            key: keyboard::Key::Character("d".into()),
-        },
-        MenuAction::TrashNote,
-    );
-    binds.insert(
-        menu::KeyBind {
-            modifiers: vec![Modifier::Ctrl],
-            key: keyboard::Key::Character("z".into()),
-        },
-        MenuAction::Undo,
-    );
-    binds.insert(
-        menu::KeyBind {
-            modifiers: vec![Modifier::Ctrl, Modifier::Shift],
-            key: keyboard::Key::Character("z".into()),
-        },
-        MenuAction::Redo,
-    );
-    binds.insert(
-        menu::KeyBind {
-            modifiers: vec![Modifier::Ctrl],
-            key: keyboard::Key::Character("y".into()),
-        },
-        MenuAction::Redo,
-    );
-    binds.insert(
-        menu::KeyBind {
-            modifiers: vec![Modifier::Ctrl],
-            key: keyboard::Key::Character("1".into()),
-        },
-        MenuAction::ToggleNav,
-    );
-    binds.insert(
-        menu::KeyBind {
-            modifiers: vec![Modifier::Ctrl],
-            key: keyboard::Key::Character("2".into()),
-        },
-        MenuAction::ToggleList,
-    );
-    binds.insert(
-        menu::KeyBind {
-            modifiers: vec![Modifier::Ctrl],
-            key: keyboard::Key::Character("0".into()),
-        },
-        MenuAction::Solo,
-    );
+    let mut bind = |modifiers: &[menu::key_bind::Modifier], key: &str, action: MenuAction| {
+        binds.insert(
+            menu::KeyBind {
+                modifiers: modifiers.to_vec(),
+                key: Key::Character(key.into()),
+            },
+            action,
+        );
+    };
+    // File
+    bind(&[Ctrl], "n", MenuAction::NewNote);
+    bind(&[Ctrl, Shift], "n", MenuAction::NewFolder);
+    bind(&[Ctrl, Shift], "i", MenuAction::AddImage);
+    bind(&[Ctrl], "f", MenuAction::FocusSearch);
+    bind(&[Ctrl, Shift], "p", MenuAction::Pin);
+    bind(&[Ctrl, Shift], "d", MenuAction::TrashNote);
+    // Edit
+    bind(&[Ctrl], "z", MenuAction::Undo);
+    bind(&[Ctrl, Shift], "z", MenuAction::Redo);
+    bind(&[Ctrl], "y", MenuAction::Redo);
+    // Format
+    bind(&[Ctrl], "b", MenuAction::Format(Format::Bold));
+    bind(&[Ctrl], "i", MenuAction::Format(Format::Italic));
+    bind(&[Ctrl], "e", MenuAction::Format(Format::Code));
+    bind(&[Ctrl], "1", MenuAction::Format(Format::H1));
+    bind(&[Ctrl], "2", MenuAction::Format(Format::H2));
+    bind(&[Ctrl], "l", MenuAction::Format(Format::Bullet));
+    bind(&[Ctrl], "t", MenuAction::Format(Format::Todo));
+    bind(&[Ctrl], "k", MenuAction::Format(Format::Link));
+    bind(&[Ctrl, Shift], "3", MenuAction::Format(Format::Tag));
+    bind(&[Ctrl], "r", MenuAction::Format(Format::Rule));
+    // View
+    bind(&[Ctrl, Shift], "1", MenuAction::ToggleNav);
+    bind(&[Ctrl, Shift], "2", MenuAction::ToggleList);
+    bind(&[Ctrl, Shift], "0", MenuAction::Solo);
+    bind(&[Ctrl, Shift], "c", MenuAction::Themes);
+    bind(&[Ctrl, Shift], "m", MenuAction::ToggleMarkers);
+    bind(&[Ctrl, Shift], "h", MenuAction::Shortcuts);
     binds
 }
 
@@ -2578,6 +2729,11 @@ pub enum MenuAction {
     FocusSearch,
     Undo,
     Redo,
+    NewFolder,
+    AddImage,
+    Pin,
+    Format(Format),
+    Shortcuts,
     Themes,
     ToggleMarkers,
     ToggleNav,
@@ -2594,6 +2750,11 @@ impl menu::action::MenuAction for MenuAction {
             MenuAction::NewNote => Message::NewNote,
             MenuAction::Undo => Message::Undo,
             MenuAction::Redo => Message::Redo,
+            MenuAction::NewFolder => Message::ToggleDock,
+            MenuAction::AddImage => Message::PickImage,
+            MenuAction::Pin => Message::TogglePin,
+            MenuAction::Format(f) => Message::Format(*f),
+            MenuAction::Shortcuts => Message::ToggleShortcuts,
             MenuAction::TrashNote => Message::TrashCurrent,
             MenuAction::FocusSearch => Message::FocusSearch,
             MenuAction::Themes => Message::ToggleContextPage(ContextPage::Themes),
