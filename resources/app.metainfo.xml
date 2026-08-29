@@ -25,6 +25,8 @@
     <control>touch</control>
   </supports>
   <categories>
+    <category>Office</category>
+    <category>Utility</category>
     <category>COSMIC</category>
   </categories>
   <keywords>

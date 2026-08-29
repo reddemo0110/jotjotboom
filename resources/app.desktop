@@ -6,6 +6,6 @@ Icon=io.github.jotjotboom.JotJotBoom
 Exec=jotjotboom %F
 Terminal=false
 StartupNotify=true
-Categories=COSMIC
+Categories=Office;Utility;COSMIC;
 Keywords=COSMIC
 MimeType=
