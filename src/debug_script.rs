@@ -35,6 +35,8 @@ pub enum Step {
     Solo,
     /// Import an image file into the note.
     Image(String),
+    /// Open the image picker (portal dialog).
+    Pick,
     /// Cycle the frame style of the n-th image reference.
     CycleFrame(usize),
     /// Cycle the size of the n-th image reference.
@@ -74,6 +76,7 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "themes" => Step::Themes,
                 "solo" => Step::Solo,
                 "image" => Step::Image(unescape(arg)),
+                "pick" => Step::Pick,
                 "cycleframe" => Step::CycleFrame(arg.trim().parse().ok()?),
                 "cyclesize" => Step::CycleSize(arg.trim().parse().ok()?),
                 "placement" => Step::Placement(arg.trim().to_owned()),

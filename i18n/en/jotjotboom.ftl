@@ -67,11 +67,6 @@ theme-colours = Theme colours
 show-markers = Show markdown syntax
 theme-picker-hint = Eight retro palettes and one that follows your desktop. Click to apply.
 
-# Themes
-theme-colours = Theme colours
-show-markers = Show markdown syntax
-theme-picker-hint = Eight retro palettes and one that follows your desktop. Click to apply.
-
 # Layout
 show-nav = Views and tags
 show-list = Notes list
@@ -85,3 +80,10 @@ dock-image = Add image
 pick-image = Add an image to this note
 image-files = Images
 open-image = open
+
+# Picker
+picker-home = Home
+picker-pictures = Pictures
+picker-downloads = Downloads
+picker-empty = No folders or images here.
+badge-drop = drop to add

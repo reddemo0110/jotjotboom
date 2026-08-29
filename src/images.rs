@@ -5,7 +5,9 @@
 
 use crate::retro::Palette;
 use anyhow::{Context, Result};
+use cosmic::iced::clipboard::mime::AllowedMimeTypes;
 use image::{ImageBuffer, Rgba, RgbaImage};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 pub const ASSETS_DIR: &str = "assets";
@@ -214,6 +216,92 @@ pub fn replace_line(body: &str, line: usize, new_line: &str) -> String {
         }
     }
     out
+}
+
+// ---------- drag and drop payload ----------
+
+/// A `text/uri-list` drop (files dragged from a file manager).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UriList(pub Vec<PathBuf>);
+
+impl AllowedMimeTypes for UriList {
+    fn allowed() -> Cow<'static, [String]> {
+        Cow::Owned(vec!["text/uri-list".to_owned()])
+    }
+}
+
+impl TryFrom<(Vec<u8>, String)> for UriList {
+    type Error = anyhow::Error;
+
+    fn try_from((data, mime): (Vec<u8>, String)) -> Result<Self> {
+        anyhow::ensure!(
+            mime.starts_with("text/uri-list"),
+            "unsupported mime type {mime}"
+        );
+        let text = String::from_utf8_lossy(&data);
+        let paths = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .filter_map(|l| l.strip_prefix("file://").map(percent_decode))
+            .map(|p| {
+                // file://host/path — drop a host component if present.
+                let p = p.strip_prefix("localhost").unwrap_or(&p).to_owned();
+                PathBuf::from(p)
+            })
+            .collect();
+        Ok(UriList(paths))
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A directory listing for the in-app picker: folders first, then images.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickerEntry {
+    pub path: PathBuf,
+    pub name: String,
+    pub is_dir: bool,
+}
+
+pub fn list_dir(dir: &Path) -> Vec<PickerEntry> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<PickerEntry> = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let path = e.path();
+            let name = path.file_name()?.to_str()?.to_owned();
+            if name.starts_with('.') {
+                return None;
+            }
+            let is_dir = path.is_dir();
+            (is_dir || is_image_file(&path)).then_some(PickerEntry { path, name, is_dir })
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    entries
 }
 
 // ---------- asset store ----------
@@ -489,6 +577,20 @@ mod tests {
                 Processed::Ascii(text) => assert!(text.lines().count() >= 1),
             }
         }
+    }
+
+    #[test]
+    fn uri_list_parses_file_urls() {
+        let data = b"# comment\r\nfile:///home/me/My%20Pics/a%20b.png\r\nfile://localhost/tmp/c.jpg\r\nhttp://x/y.png\r\n".to_vec();
+        let list = UriList::try_from((data, "text/uri-list".to_owned())).unwrap();
+        assert_eq!(
+            list.0,
+            vec![
+                PathBuf::from("/home/me/My Pics/a b.png"),
+                PathBuf::from("/tmp/c.jpg")
+            ]
+        );
+        assert!(UriList::try_from((vec![], "text/plain".to_owned())).is_err());
     }
 
     #[test]

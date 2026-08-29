@@ -157,3 +157,17 @@ option; placement is a setting with all three feasible layouts.
   strip, persisted; a note can override with `images: top` in frontmatter.
   Sizes S/M/L per image. Each card has chips: cycle frame, cycle size, open
   in the system viewer. Inline flow waits for the custom editor.
+
+## 2026-08-29 — Image picker and drag-and-drop, second pass
+- The xdg-portal file chooser (`cosmic::dialog::file_chooser`) never
+  returned on this COSMIC 1.7 session — no error, no dialog, the future just
+  hangs — so the `⧉` button now opens an **in-app picker** in the context
+  drawer: Home / Pictures / Downloads shortcuts, `..`, folders first, then
+  image files. Self-contained, no portal dependency.
+- winit's `FileDropped` only fires on X11. On Wayland libcosmic delivers
+  drops through `widget::dnd_destination`; the editor frame is now wrapped
+  in `dnd_destination_for_data::<UriList>` (`text/uri-list`, percent-decoded
+  `file://` URLs) with a "drop to add" badge while hovering. Both paths stay
+  so the X11 capture harness and real Wayland use both work.
+- Lesson: the script harness proves logic, not integration with the
+  compositor/portals — anything touching those needs a hands-on check.

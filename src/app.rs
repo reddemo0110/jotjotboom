@@ -3,7 +3,7 @@
 use crate::config::Config;
 use crate::debug_script::{self, Step};
 use crate::fl;
-use crate::images::{self, FrameStyle, ImageRef, Processed};
+use crate::images::{self, FrameStyle, ImageRef, PickerEntry, Processed, UriList};
 use crate::markdown;
 use crate::note::{Note, NoteSummary};
 use crate::retro::{self, Palette};
@@ -44,6 +44,11 @@ pub struct AppModel {
     placement: Placement,
     /// Processed images keyed by path|mtime|style|theme.
     image_cache: HashMap<String, ImageState>,
+    /// In-app image picker (context drawer).
+    picker_dir: PathBuf,
+    picker_entries: Vec<PickerEntry>,
+    /// A file drag is hovering the editor.
+    drop_hover: bool,
 
     store: Option<Store>,
     store_error: Option<String>,
@@ -87,7 +92,11 @@ pub enum Message {
     SetPlacement(Placement),
     ImagesDropped(Vec<PathBuf>),
     PickImage,
-    ImagePicked(Option<PathBuf>),
+    PickerNavigate(PathBuf),
+    PickerChoose(PathBuf),
+    DragEnter,
+    DragLeave,
+    Dropped(Option<UriList>),
     ImageLoaded(String, Result<Processed, String>),
     CycleFrame(usize),
     CycleSize(usize),
@@ -194,6 +203,11 @@ impl cosmic::Application for AppModel {
             show_list,
             placement,
             image_cache: HashMap::new(),
+            picker_dir: dirs::picture_dir()
+                .or_else(dirs::home_dir)
+                .unwrap_or_else(|| PathBuf::from("/")),
+            picker_entries: Vec::new(),
+            drop_hover: false,
             store,
             store_error,
             view: View::All,
@@ -389,6 +403,11 @@ impl cosmic::Application for AppModel {
                 Message::ToggleContextPage(ContextPage::Themes),
             )
             .title(fl!("theme-colours")),
+            ContextPage::Picker => context_drawer::context_drawer(
+                self.file_picker(),
+                Message::ToggleContextPage(ContextPage::Picker),
+            )
+            .title(fl!("pick-image")),
         })
     }
 
@@ -549,30 +568,34 @@ impl AppModel {
                 if self.current.as_ref().is_none_or(|n| n.trashed) {
                     return Task::none();
                 }
-                let label = fl!("image-files");
-                let mut filter = cosmic::dialog::file_chooser::FileFilter::new(&label);
-                for glob in ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.bmp"] {
-                    filter = filter.glob(glob);
-                }
-                let dialog = cosmic::dialog::file_chooser::open::Dialog::new()
-                    .title(fl!("pick-image"))
-                    .filter(filter);
-                return Task::perform(
-                    async move {
-                        match dialog.open_file().await {
-                            Ok(response) => response.url().to_file_path().ok(),
-                            Err(err) => {
-                                tracing::warn!(%err, "image picker");
-                                None
-                            }
-                        }
-                    },
-                    |path| cosmic::Action::App(Message::ImagePicked(path)),
-                );
+                self.picker_entries = images::list_dir(&self.picker_dir);
+                self.context_page = ContextPage::Picker;
+                self.core.window.show_context = true;
             }
 
-            Message::ImagePicked(Some(path)) => return self.import_image(&path),
-            Message::ImagePicked(None) => {}
+            Message::PickerNavigate(dir) => {
+                self.picker_dir = dir;
+                self.picker_entries = images::list_dir(&self.picker_dir);
+            }
+
+            Message::PickerChoose(path) => {
+                self.core.window.show_context = false;
+                return self.import_image(&path);
+            }
+
+            Message::DragEnter => self.drop_hover = true,
+            Message::DragLeave => self.drop_hover = false,
+
+            Message::Dropped(list) => {
+                self.drop_hover = false;
+                let mut task = Task::none();
+                if let Some(UriList(paths)) = list {
+                    for path in paths.into_iter().filter(|p| images::is_image_file(p)) {
+                        task = self.import_image(&path);
+                    }
+                }
+                return task;
+            }
 
             Message::ImageLoaded(key, result) => {
                 let state = match result {
@@ -1054,6 +1077,15 @@ impl AppModel {
                 .height(Length::Fill);
             return retro::frame(p, fl!("app-title").to_lowercase(), None, content);
         };
+        let badge = if self.drop_hover {
+            fl!("badge-drop")
+        } else if self.dirty {
+            fl!("badge-editing")
+        } else if note.trashed {
+            fl!("badge-in-trash")
+        } else {
+            fl!("badge-saved", time = format_time(note.modified))
+        };
 
         let settings = markdown::Settings {
             palette: *p,
@@ -1120,14 +1152,14 @@ impl AppModel {
         }
         column = column.push(self.dock(p));
 
-        let badge = if self.dirty {
-            fl!("badge-editing")
-        } else if note.trashed {
-            fl!("badge-in-trash")
-        } else {
-            fl!("badge-saved", time = format_time(note.modified))
-        };
-        retro::frame(p, note.title.clone(), Some(badge), column)
+        let framed = retro::frame(p, note.title.clone(), Some(badge), column);
+        widget::dnd_destination::dnd_destination_for_data::<UriList, Message>(
+            framed,
+            |data, _action| Message::Dropped(data),
+        )
+        .on_enter(|_, _, _| Message::DragEnter)
+        .on_leave(|| Message::DragLeave)
+        .into()
     }
 
     fn backlinks_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
@@ -1353,6 +1385,79 @@ impl AppModel {
         }
         self.dirty = true;
         self.last_edit = Instant::now();
+    }
+
+    /// In-app image picker: folders first, then image files.
+    fn file_picker(&self) -> Element<'_, Message> {
+        let mut col = widget::column::with_capacity(4)
+            .spacing(8)
+            .width(Length::Fill);
+
+        let mut places = widget::row::with_capacity(3).spacing(6);
+        for (icon_name, label, dir) in [
+            ("user-home-symbolic", fl!("picker-home"), dirs::home_dir()),
+            (
+                "folder-pictures-symbolic",
+                fl!("picker-pictures"),
+                dirs::picture_dir(),
+            ),
+            (
+                "folder-download-symbolic",
+                fl!("picker-downloads"),
+                dirs::download_dir(),
+            ),
+        ] {
+            if let Some(dir) = dir {
+                places = places.push(
+                    widget::button::text(label)
+                        .leading_icon(icon::from_name(icon_name))
+                        .on_press(Message::PickerNavigate(dir)),
+                );
+            }
+        }
+        col = col.push(places);
+        col = col.push(widget::text::caption(self.picker_dir.display().to_string()));
+
+        let mut list = widget::list_column();
+        if let Some(parent) = self.picker_dir.parent() {
+            list = list.add(
+                widget::list::button(
+                    widget::row::with_capacity(2)
+                        .push(icon::from_name("go-up-symbolic").size(16))
+                        .push(widget::text::body(".."))
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                )
+                .on_press(Message::PickerNavigate(parent.to_owned())),
+            );
+        }
+        for entry in &self.picker_entries {
+            let icon_name = if entry.is_dir {
+                "folder-symbolic"
+            } else {
+                "image-x-generic-symbolic"
+            };
+            let msg = if entry.is_dir {
+                Message::PickerNavigate(entry.path.clone())
+            } else {
+                Message::PickerChoose(entry.path.clone())
+            };
+            list = list.add(
+                widget::list::button(
+                    widget::row::with_capacity(2)
+                        .push(icon::from_name(icon_name).size(16))
+                        .push(widget::text::body(entry.name.clone()))
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                )
+                .on_press(msg),
+            );
+        }
+        if self.picker_entries.is_empty() {
+            col = col.push(widget::text::caption(fl!("picker-empty")));
+        }
+        col = col.push(list);
+        widget::scrollable(col).into()
     }
 
     // ----- images -----
@@ -1752,6 +1857,7 @@ impl AppModel {
             Step::Themes => self.update(Message::ToggleContextPage(ContextPage::Themes)),
             Step::Solo => self.update(Message::ToggleSolo),
             Step::Image(path) => self.update(Message::ImagesDropped(vec![PathBuf::from(path)])),
+            Step::Pick => self.update(Message::PickImage),
             Step::CycleFrame(i) => self.update(Message::CycleFrame(i)),
             Step::CycleSize(i) => self.update(Message::CycleSize(i)),
             Step::Placement(key) => self.update(Message::SetPlacement(Placement::from_key(&key))),
@@ -2031,6 +2137,7 @@ pub enum ContextPage {
     #[default]
     About,
     Themes,
+    Picker,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
