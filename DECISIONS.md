@@ -225,3 +225,7 @@ in the text, resizable, with a click-for-options menu.
   (Giant Goldfish), Blade Thinker (Thought Provoking), Cheer Up, Karate Kid
   (Cheer Up Emo Kid), The Abyss Five (Ocean Five), Adrift in Dreamscape
   (Adrift in Dreams). Blurbs credit the source palette.
+
+## 2026-08-29 — Little Fish in Big China
+Copy of Big Fish in Little China with the tangerine accent muted
+(#fa6900 → #c9773f); every other colour identical. User request.

@@ -43,6 +43,8 @@ pub enum Theme {
     White,
     /// After "Giant Goldfish" on COLOURlovers.
     Goldfish,
+    /// Giant Goldfish with the tangerine turned down.
+    GoldfishMuted,
     /// After "Thought Provoking" on COLOURlovers.
     Provoking,
     /// After "Cheer Up Emo Kid" on COLOURlovers.
@@ -56,7 +58,7 @@ pub enum Theme {
 }
 
 impl Theme {
-    pub const ALL: [Theme; 15] = [
+    pub const ALL: [Theme; 16] = [
         Theme::Phosphor,
         Theme::Amber,
         Theme::WordPerfect,
@@ -67,6 +69,7 @@ impl Theme {
         Theme::GameBoy,
         Theme::Synthwave,
         Theme::Goldfish,
+        Theme::GoldfishMuted,
         Theme::Provoking,
         Theme::EmoKid,
         Theme::OceanFive,
@@ -86,6 +89,7 @@ impl Theme {
             Theme::Synthwave => "synthwave",
             Theme::White => "white",
             Theme::Goldfish => "goldfish",
+            Theme::GoldfishMuted => "goldfish-muted",
             Theme::Provoking => "provoking",
             Theme::EmoKid => "emokid",
             Theme::OceanFive => "oceanfive",
@@ -113,6 +117,7 @@ impl Theme {
             Theme::Synthwave => "Streets of Neon",
             Theme::White => "Ghostwriters",
             Theme::Goldfish => "Big Fish in Little China",
+            Theme::GoldfishMuted => "Little Fish in Big China",
             Theme::Provoking => "Blade Thinker",
             Theme::EmoKid => "Cheer Up, Karate Kid",
             Theme::OceanFive => "The Abyss Five",
@@ -134,6 +139,7 @@ impl Theme {
             Theme::Synthwave => "pink and cyan, 1984 forever",
             Theme::White => "plain white, #0c0c0c ink. Who you gonna call?",
             Theme::Goldfish => "COLOURlovers 'Giant Goldfish' — teal, tangerine, cream",
+            Theme::GoldfishMuted => "Giant Goldfish with the tangerine turned down",
             Theme::Provoking => "COLOURlovers 'Thought Provoking' — plum, brick, mustard",
             Theme::EmoKid => "COLOURlovers 'Cheer Up Emo Kid' — slate, mint, lime",
             Theme::OceanFive => "COLOURlovers 'Ocean Five' — deep sea, coral, sand",
@@ -260,6 +266,18 @@ impl Theme {
                 dim: hex(0x8fbcbc),
                 mute: hex(0x2f4d56),
                 accent: hex(0xfa6900),
+                accent2: hex(0x69d2e7),
+                border: hex(0x2f5260),
+                sel: hex(0x1f3d48),
+                selfg: hex(0xffffff),
+            },
+            Theme::GoldfishMuted => Palette {
+                bg: hex(0x0f1a1e),
+                panel: hex(0x13222a),
+                fg: hex(0xe0e4cc),
+                dim: hex(0x8fbcbc),
+                mute: hex(0x2f4d56),
+                accent: hex(0xc9773f),
                 accent2: hex(0x69d2e7),
                 border: hex(0x2f5260),
                 sel: hex(0x1f3d48),
