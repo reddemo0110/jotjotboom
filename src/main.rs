@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 mod app;
+mod blocks;
 mod config;
 mod debug_script;
 mod i18n;

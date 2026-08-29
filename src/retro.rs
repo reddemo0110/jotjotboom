@@ -298,13 +298,25 @@ pub fn frame<'a, M: 'static>(
     badge: Option<String>,
     content: impl Into<Element<'a, M>>,
 ) -> Element<'a, M> {
+    frame_sized(p, title_text, badge, content, Length::Fill, 21.0)
+}
+
+/// [`frame`] with an explicit height (`Length::Shrink` for inline cards).
+pub fn frame_sized<'a, M: 'static>(
+    p: &Palette,
+    title_text: impl Into<std::borrow::Cow<'a, str>> + 'a,
+    badge: Option<String>,
+    content: impl Into<Element<'a, M>>,
+    height: Length,
+    title_size: f32,
+) -> Element<'a, M> {
     let panel = p.panel;
     let border = p.border;
 
     let boxed = widget::container(content)
         .padding([14, 12, 10, 12])
         .width(Length::Fill)
-        .height(Length::Fill)
+        .height(height)
         .class(theme::Container::custom(move |_| {
             widget::container::Style {
                 background: Some(Background::Color(panel)),
@@ -320,7 +332,7 @@ pub fn frame<'a, M: 'static>(
     let outer = widget::container(boxed)
         .padding([9, 0, 0, 0])
         .width(Length::Fill)
-        .height(Length::Fill);
+        .height(height);
 
     let chip = move |el: Element<'a, M>| {
         widget::container(el)
@@ -333,7 +345,7 @@ pub fn frame<'a, M: 'static>(
             }))
     };
     let mut bar = widget::row::with_capacity(3)
-        .push(chip(title(p, title_text).into()))
+        .push(chip(title(p, title_text).size(title_size).into()))
         .push(widget::Space::new().width(Length::Fill))
         .align_y(Alignment::Center);
     if let Some(badge) = badge {
@@ -346,7 +358,7 @@ pub fn frame<'a, M: 'static>(
 
     cosmic::iced::widget::stack([outer.into(), title_bar.into()])
         .width(Length::Fill)
-        .height(Length::Fill)
+        .height(height)
         .into()
 }
 

@@ -171,3 +171,26 @@ option; placement is a setting with all three feasible layouts.
   so the X11 capture harness and real Wayland use both work.
 - Lesson: the script harness proves logic, not integration with the
   compositor/portals — anything touching those needs a hands-on check.
+
+## 2026-08-29 — Inline images, magazine style (third pass)
+User: the strip "looks like an attachment to an email"; wants pictures sitting
+in the text, resizable, with a click-for-options menu.
+- **Block editor** (`blocks.rs`): the body is split at image lines into
+  text runs and images; every text run is its own text editor widget, images
+  render between them exactly where their `![…]` line is. Cursor/selection
+  do not cross blocks (images are atomic blocks); ↑/↓ at a block edge hop
+  over the picture; Backspace at the start of the block below an image
+  deletes it. The body is re-joined on save, so files are unchanged in form.
+- `align=left|right` puts the paragraphs that follow the image beside it
+  (a two-column region until the next image); `center` is a full-width block
+  capped by `w=`. Widths are pixels: drag the `◢` grip (global mouse
+  tracking, committed on release) or pick a preset in the menu.
+- The `⋯` menu is a popover: 8 frame styles, sits left/centre/right, width
+  presets + full, open, remove. Clicking the picture opens it too.
+- Rail/top/bottom placements removed. Empty text runs around images
+  contribute no lines when joining (a blank line between two adjacent
+  images is normalised away — the one known lossy case).
+- Gotcha: a text editor emits `ClearSelection` when it loses focus; only
+  real interaction (click/drag/edit/move/select) may claim block focus.
+- Gotcha: `retro::frame` was height Fill; inside a shrink row that collapses
+  to nothing → `frame_sized(.., Length::Shrink, title_size)` for cards.

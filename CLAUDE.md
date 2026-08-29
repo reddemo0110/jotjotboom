@@ -35,6 +35,7 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
 - `src/retro.rs` — palettes, btop-style `frame`, style classes, swatches.
 - `src/markdown.rs` — per-line markdown scanner + the editor highlighter.
 - `src/images.rs` — image reference format, assets store, retro pixel treatments.
+- `src/blocks.rs` — the note body as text/image blocks (one editor per text run).
 - `src/config.rs` — cosmic-config entry (`notes_dir`, `device_id`).
 - `src/secrets.rs` — keyring wrapper; unused until sync, deliberately present.
 

@@ -37,12 +37,14 @@ pub enum Step {
     Image(String),
     /// Open the image picker (portal dialog).
     Pick,
-    /// Cycle the frame style of the n-th image reference.
-    CycleFrame(usize),
-    /// Cycle the size of the n-th image reference.
-    CycleSize(usize),
-    /// Set image placement: rail, top, bottom.
-    Placement(String),
+    /// Set the frame style of the n-th image: `imgframe:n:key`.
+    ImgFrame(usize, String),
+    /// Set alignment of the n-th image: `imgalign:n:left|center|right`.
+    ImgAlign(usize, String),
+    /// Set width in px of the n-th image (0 = full): `imgwidth:n:px`.
+    ImgWidth(usize, u32),
+    /// Open the ⋯ menu of the n-th image.
+    ImgMenu(usize),
     /// Switch theme by key.
     Theme(String),
     /// Pause for the given milliseconds (lets autosave run).
@@ -77,9 +79,19 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "solo" => Step::Solo,
                 "image" => Step::Image(unescape(arg)),
                 "pick" => Step::Pick,
-                "cycleframe" => Step::CycleFrame(arg.trim().parse().ok()?),
-                "cyclesize" => Step::CycleSize(arg.trim().parse().ok()?),
-                "placement" => Step::Placement(arg.trim().to_owned()),
+                "imgframe" => {
+                    let (n, key) = arg.trim().split_once(':')?;
+                    Step::ImgFrame(n.parse().ok()?, key.to_owned())
+                }
+                "imgalign" => {
+                    let (n, key) = arg.trim().split_once(':')?;
+                    Step::ImgAlign(n.parse().ok()?, key.to_owned())
+                }
+                "imgwidth" => {
+                    let (n, w) = arg.trim().split_once(':')?;
+                    Step::ImgWidth(n.parse().ok()?, w.parse().ok()?)
+                }
+                "imgmenu" => Step::ImgMenu(arg.trim().parse().ok()?),
                 "theme" => Step::Theme(arg.trim().to_owned()),
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
                 "exit" => Step::Exit,

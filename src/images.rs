@@ -69,11 +69,6 @@ impl FrameStyle {
         }
     }
 
-    pub fn next(self) -> FrameStyle {
-        let i = FrameStyle::ALL.iter().position(|f| *f == self).unwrap_or(0);
-        FrameStyle::ALL[(i + 1) % FrameStyle::ALL.len()]
-    }
-
     /// Whether the pixels depend on the theme palette (cache key needs it).
     pub fn themed(self) -> bool {
         matches!(
@@ -83,45 +78,48 @@ impl FrameStyle {
     }
 }
 
+/// How an inline image sits against the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
-pub enum Size {
-    S,
+pub enum Align {
+    /// Full-width block between paragraphs (centred when narrower).
     #[default]
-    M,
-    L,
+    Center,
+    /// Picture on the left, the following paragraphs beside it.
+    Left,
+    /// Picture on the right, the following paragraphs beside it.
+    Right,
 }
 
-impl Size {
+impl Align {
+    pub const ALL: [Align; 3] = [Align::Left, Align::Center, Align::Right];
     pub fn key(self) -> &'static str {
         match self {
-            Size::S => "s",
-            Size::M => "m",
-            Size::L => "l",
+            Align::Center => "center",
+            Align::Left => "left",
+            Align::Right => "right",
         }
     }
-    pub fn from_key(key: &str) -> Option<Size> {
+    pub fn from_key(key: &str) -> Option<Align> {
         match key {
-            "s" => Some(Size::S),
-            "m" => Some(Size::M),
-            "l" => Some(Size::L),
+            "center" | "centre" => Some(Align::Center),
+            "left" => Some(Align::Left),
+            "right" => Some(Align::Right),
             _ => None,
-        }
-    }
-    pub fn next(self) -> Size {
-        match self {
-            Size::S => Size::M,
-            Size::M => Size::L,
-            Size::L => Size::S,
         }
     }
     pub fn label(self) -> &'static str {
         match self {
-            Size::S => "S",
-            Size::M => "M",
-            Size::L => "L",
+            Align::Center => "centre",
+            Align::Left => "left",
+            Align::Right => "right",
         }
     }
 }
+
+/// Width presets offered in the menu (pixels).
+pub const WIDTH_PRESETS: [(&str, u32); 3] = [("small", 240), ("medium", 420), ("large", 720)];
+pub const MIN_WIDTH: u32 = 96;
+pub const MAX_WIDTH: u32 = 2000;
 
 /// One `![alt](path){attrs}` reference in a note body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,7 +130,9 @@ pub struct ImageRef {
     /// As written (relative to the notes dir, usually `assets/…`).
     pub path: String,
     pub frame: FrameStyle,
-    pub size: Size,
+    pub align: Align,
+    /// Display width in pixels; `None` = as wide as the text column.
+    pub width: Option<u32>,
 }
 
 impl ImageRef {
@@ -142,8 +142,11 @@ impl ImageRef {
         if self.frame != FrameStyle::default() {
             attrs.push(format!("frame={}", self.frame.key()));
         }
-        if self.size != Size::default() {
-            attrs.push(format!("size={}", self.size.key()));
+        if self.align != Align::default() {
+            attrs.push(format!("align={}", self.align.key()));
+        }
+        if let Some(w) = self.width {
+            attrs.push(format!("w={w}"));
         }
         if attrs.is_empty() {
             format!("![{}]({})", self.alt, self.path)
@@ -159,22 +162,21 @@ impl ImageRef {
 
 /// Find every image line. Only whole-line references count (an image in the
 /// middle of a sentence stays plain markdown).
+#[cfg(test)]
 pub fn parse_refs(body: &str) -> Vec<ImageRef> {
     body.lines()
         .enumerate()
         .filter_map(|(line, text)| {
-            parse_line(text).map(|(alt, path, frame, size)| ImageRef {
-                line,
-                alt,
-                path,
-                frame,
-                size,
+            parse_line(text).map(|mut r| {
+                r.line = line;
+                r
             })
         })
         .collect()
 }
 
-fn parse_line(text: &str) -> Option<(String, String, FrameStyle, Size)> {
+/// Parse a single line as an image reference (line index left at 0).
+pub fn parse_line(text: &str) -> Option<ImageRef> {
     let t = text.trim();
     let rest = t.strip_prefix("![")?;
     let close = rest.find("](")?;
@@ -187,22 +189,38 @@ fn parse_line(text: &str) -> Option<(String, String, FrameStyle, Size)> {
     }
     let tail = after[end + 1..].trim();
     let mut frame = FrameStyle::default();
-    let mut size = Size::default();
+    let mut align = Align::default();
+    let mut width = None;
     if let Some(attrs) = tail.strip_prefix('{').and_then(|a| a.strip_suffix('}')) {
         for attr in attrs.split_whitespace() {
             match attr.split_once('=') {
                 Some(("frame", v)) => frame = FrameStyle::from_key(v).unwrap_or_default(),
-                Some(("size", v)) => size = Size::from_key(v).unwrap_or_default(),
+                Some(("align", v)) => align = Align::from_key(v).unwrap_or_default(),
+                Some(("w", v)) => {
+                    width = v.parse::<u32>().ok().map(|w| w.clamp(MIN_WIDTH, MAX_WIDTH))
+                }
+                // Legacy size presets from the first cut.
+                Some(("size", "s")) => width = Some(240),
+                Some(("size", "m")) => width = Some(420),
+                Some(("size", "l")) => width = None,
                 _ => {}
             }
         }
     } else if !tail.is_empty() {
         return None;
     }
-    Some((alt, path, frame, size))
+    Some(ImageRef {
+        line: 0,
+        alt,
+        path,
+        frame,
+        align,
+        width,
+    })
 }
 
 /// Replace the line `line` of `body` with `new_line`, keeping everything else.
+#[cfg(test)]
 pub fn replace_line(body: &str, line: usize, new_line: &str) -> String {
     let mut out = String::with_capacity(body.len() + new_line.len());
     for (i, l) in body.split_inclusive('\n').enumerate() {
@@ -216,6 +234,51 @@ pub fn replace_line(body: &str, line: usize, new_line: &str) -> String {
         }
     }
     out
+}
+
+// ---------- block segments ----------
+
+/// A note body split into runs of text and standalone images. Text segments
+/// always bracket images (possibly empty) so there is somewhere to type
+/// before, between and after pictures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Segment {
+    Text(String),
+    Image(ImageRef),
+}
+
+pub fn split(body: &str) -> Vec<Segment> {
+    let mut out: Vec<Segment> = Vec::new();
+    let mut text: Vec<&str> = Vec::new();
+    for line in body.lines() {
+        if let Some(r) = parse_line(line) {
+            out.push(Segment::Text(text.join("\n")));
+            text.clear();
+            out.push(Segment::Image(r));
+        } else {
+            text.push(line);
+        }
+    }
+    out.push(Segment::Text(text.join("\n")));
+    out
+}
+
+pub fn join(segments: &[Segment]) -> String {
+    // Empty text segments are just the gaps between/around images; they
+    // contribute no line of their own.
+    let mut parts: Vec<String> = Vec::with_capacity(segments.len());
+    for seg in segments {
+        match seg {
+            Segment::Text(t) if t.is_empty() => {}
+            Segment::Text(t) => parts.push(t.clone()),
+            Segment::Image(r) => parts.push(r.to_markdown()),
+        }
+    }
+    let mut body = parts.join("\n");
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    body
 }
 
 // ---------- drag and drop payload ----------
@@ -540,23 +603,50 @@ mod tests {
 
     #[test]
     fn parse_and_serialise_refs() {
-        let body = "# T\n![sunset](assets/sunset.png)\ntext ![inline](x.png) more\n![ridge](assets/ridge.png){frame=tint size=l}\n![web](https://x/y.png)\n";
+        let body = "# T\n![sunset](assets/sunset.png)\ntext ![inline](x.png) more\n![ridge](assets/ridge.png){frame=tint align=left w=300}\n![web](https://x/y.png)\n![old](a.png){size=m}\n";
         let refs = parse_refs(body);
-        assert_eq!(refs.len(), 2);
+        assert_eq!(refs.len(), 3);
         assert_eq!(refs[0].line, 1);
         assert_eq!(refs[0].frame, FrameStyle::Box);
-        assert_eq!(refs[1].frame, FrameStyle::Tint);
-        assert_eq!(refs[1].size, Size::L);
+        assert_eq!(
+            (refs[1].frame, refs[1].align, refs[1].width),
+            (FrameStyle::Tint, Align::Left, Some(300))
+        );
+        assert_eq!(refs[2].width, Some(420));
         assert_eq!(refs[0].to_markdown(), "![sunset](assets/sunset.png)");
         assert_eq!(
             refs[1].to_markdown(),
-            "![ridge](assets/ridge.png){frame=tint size=l}"
+            "![ridge](assets/ridge.png){frame=tint align=left w=300}"
         );
         let mut r = refs[0].clone();
-        r.frame = r.frame.next();
+        r.frame = FrameStyle::Tint;
         let new = replace_line(body, r.line, &r.to_markdown());
         assert!(new.contains("![sunset](assets/sunset.png){frame=tint}\n"));
         assert_eq!(new.lines().count(), body.lines().count());
+    }
+
+    #[test]
+    fn split_and_join_round_trip() {
+        for body in [
+            "a\n![x](p.png)\nb\n",
+            "a\n\n![x](p.png)\n\nb\n",
+            "![x](p.png)\n",
+            "![x](p.png)\n![y](q.png)\n",
+            "just text\n",
+            "",
+        ] {
+            let segs = split(body);
+            assert!(matches!(segs.first(), Some(Segment::Text(_))));
+            assert!(matches!(segs.last(), Some(Segment::Text(_))));
+            let expect = if body.is_empty() {
+                "\n".to_owned()
+            } else {
+                body.to_owned()
+            };
+            assert_eq!(join(&segs), expect, "{body:?}");
+        }
+        let segs = split("a\n![x](p.png)\n![y](q.png)\nb");
+        assert_eq!(segs.len(), 5);
     }
 
     #[test]

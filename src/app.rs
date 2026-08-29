@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use crate::blocks::{Block, Blocks};
 use crate::config::Config;
 use crate::debug_script::{self, Step};
 use crate::fl;
-use crate::images::{self, FrameStyle, ImageRef, PickerEntry, Processed, UriList};
+use crate::images::{self, Align, FrameStyle, ImageRef, PickerEntry, Processed, UriList};
 use crate::markdown;
 use crate::note::{Note, NoteSummary};
 use crate::retro::{self, Palette};
@@ -13,7 +14,7 @@ use cosmic::Application as _;
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::keyboard::{self, key::Physical};
-use cosmic::iced::{Alignment, Event, Length, Subscription, event, window};
+use cosmic::iced::{Alignment, Event, Length, Point, Subscription, event, mouse, window};
 use cosmic::prelude::*;
 use cosmic::widget::menu::action::MenuAction as _;
 use cosmic::widget::{self, about::About, icon, menu, nav_bar, text_editor};
@@ -41,9 +42,16 @@ pub struct AppModel {
     show_markers: bool,
     show_nav: bool,
     show_list: bool,
-    placement: Placement,
     /// Processed images keyed by path|mtime|style|theme.
     image_cache: HashMap<String, ImageState>,
+    /// Block index of the image whose ⋯ menu is open.
+    image_menu: Option<usize>,
+    /// Drag-resize in progress.
+    resizing: Option<Resize>,
+    /// Last known cursor x (window coords), for resize deltas.
+    mouse_x: f32,
+    /// Width being dragged, shown live before it is written to the note.
+    live_width: Option<(usize, u32)>,
     /// In-app image picker (context drawer).
     picker_dir: PathBuf,
     picker_entries: Vec<PickerEntry>,
@@ -59,14 +67,14 @@ pub struct AppModel {
     tags: Vec<(String, usize)>,
     query: String,
     search_id: widget::Id,
-    editor_id: widget::Id,
     /// The dock's `+` is expanded, showing new-note / new-folder.
     dock_open: bool,
     new_folder: String,
     folder_id: widget::Id,
     notes: Vec<NoteSummary>,
     current: Option<Note>,
-    editor: text_editor::Content,
+    /// The open note's body as text/image blocks.
+    blocks: Blocks,
     dirty: bool,
     last_edit: Instant,
     backlinks: Vec<NoteSummary>,
@@ -89,7 +97,6 @@ pub enum Message {
     ToggleNav,
     ToggleList,
     ToggleSolo,
-    SetPlacement(Placement),
     ImagesDropped(Vec<PathBuf>),
     PickImage,
     PickerNavigate(PathBuf),
@@ -98,12 +105,18 @@ pub enum Message {
     DragLeave,
     Dropped(Option<UriList>),
     ImageLoaded(String, Result<Processed, String>),
-    CycleFrame(usize),
-    CycleSize(usize),
+    ImageMenu(Option<usize>),
+    SetFrame(usize, FrameStyle),
+    SetAlign(usize, Align),
+    SetWidth(usize, Option<u32>),
+    RemoveImage(usize),
+    ResizeStart(usize),
+    MouseMoved(Point),
+    MouseReleased,
     OpenImage(String),
     FontLoaded,
 
-    Editor(text_editor::Action),
+    Editor(usize, text_editor::Action),
     AutosaveTick,
     SetView(View),
     Select(String),
@@ -189,7 +202,6 @@ impl cosmic::Application for AppModel {
         let theme = retro::Theme::from_key(&config.theme);
         let show_markers = config.show_markers;
         let (show_nav, show_list) = (!config.hide_nav, !config.hide_list);
-        let placement = Placement::from_key(&config.image_placement);
         let mut app = AppModel {
             core,
             context_page: ContextPage::default(),
@@ -201,8 +213,11 @@ impl cosmic::Application for AppModel {
             show_markers,
             show_nav,
             show_list,
-            placement,
             image_cache: HashMap::new(),
+            image_menu: None,
+            resizing: None,
+            mouse_x: 0.0,
+            live_width: None,
             picker_dir: dirs::picture_dir()
                 .or_else(dirs::home_dir)
                 .unwrap_or_else(|| PathBuf::from("/")),
@@ -215,13 +230,12 @@ impl cosmic::Application for AppModel {
             tags: Vec::new(),
             query: String::new(),
             search_id: widget::Id::unique(),
-            editor_id: widget::Id::unique(),
             dock_open: false,
             new_folder: String::new(),
             folder_id: widget::Id::unique(),
             notes: Vec::new(),
             current: None,
-            editor: text_editor::Content::new(),
+            blocks: Blocks::default(),
             dirty: false,
             last_edit: Instant::now(),
             backlinks: Vec::new(),
@@ -260,25 +274,6 @@ impl cosmic::Application for AppModel {
                 MenuAction::ToggleList,
             ),
             menu::Item::Button(fl!("editor-only"), None, MenuAction::Solo),
-            menu::Item::Divider,
-            menu::Item::CheckBox(
-                fl!("images-rail"),
-                None,
-                self.placement == Placement::Rail,
-                MenuAction::Placement(Placement::Rail),
-            ),
-            menu::Item::CheckBox(
-                fl!("images-top"),
-                None,
-                self.placement == Placement::Top,
-                MenuAction::Placement(Placement::Top),
-            ),
-            menu::Item::CheckBox(
-                fl!("images-bottom"),
-                None,
-                self.placement == Placement::Bottom,
-                MenuAction::Placement(Placement::Bottom),
-            ),
             menu::Item::Divider,
             menu::Item::Button(fl!("theme-colours"), None, MenuAction::Themes),
             menu::Item::CheckBox(
@@ -485,6 +480,12 @@ impl cosmic::Application for AppModel {
                 Event::Window(window::Event::FileDropped(paths)) => {
                     Some(Message::ImagesDropped(paths))
                 }
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Message::MouseMoved(position))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Message::MouseReleased)
+                }
                 _ => None,
             }),
         ];
@@ -545,17 +546,6 @@ impl cosmic::Application for AppModel {
 impl AppModel {
     fn update_inner(&mut self, message: Message) -> Task<cosmic::Action<Message>> {
         match message {
-            Message::SetPlacement(placement) => {
-                self.placement = placement;
-                if let Some(handler) = &self.config_handler
-                    && let Err(why) = self
-                        .config
-                        .set_image_placement(handler, placement.key().to_owned())
-                {
-                    tracing::warn!(%why, "could not persist image placement");
-                }
-            }
-
             Message::ImagesDropped(paths) => {
                 let mut task = Task::none();
                 for path in paths.into_iter().filter(|p| images::is_image_file(p)) {
@@ -614,8 +604,70 @@ impl AppModel {
                 self.image_cache.insert(key, state);
             }
 
-            Message::CycleFrame(index) => self.edit_image_ref(index, |r| r.frame = r.frame.next()),
-            Message::CycleSize(index) => self.edit_image_ref(index, |r| r.size = r.size.next()),
+            Message::ImageMenu(block) => {
+                self.image_menu = if self.image_menu == block {
+                    None
+                } else {
+                    block
+                };
+            }
+
+            Message::SetFrame(block, frame) => {
+                self.image_menu = None;
+                self.edit_ref(block, |r| r.frame = frame);
+            }
+
+            Message::SetAlign(block, align) => {
+                self.image_menu = None;
+                self.edit_ref(block, |r| r.align = align);
+            }
+
+            Message::SetWidth(block, width) => {
+                self.image_menu = None;
+                self.edit_ref(block, |r| r.width = width);
+            }
+
+            Message::RemoveImage(block) => {
+                self.image_menu = None;
+                self.blocks.remove_image(block);
+                self.dirty = true;
+                self.last_edit = Instant::now();
+                return self.focus_editor();
+            }
+
+            Message::ResizeStart(block) => {
+                self.image_menu = None;
+                let start_w = self
+                    .blocks
+                    .images()
+                    .iter()
+                    .find(|(b, _)| *b == block)
+                    .and_then(|(_, r)| r.width)
+                    .unwrap_or(420);
+                self.resizing = Some(Resize {
+                    block,
+                    start_x: self.mouse_x,
+                    start_w,
+                });
+            }
+
+            Message::MouseMoved(position) => {
+                self.mouse_x = position.x;
+                if let Some(rz) = &self.resizing {
+                    let w = (rz.start_w as f32 + (position.x - rz.start_x))
+                        .clamp(images::MIN_WIDTH as f32, images::MAX_WIDTH as f32)
+                        as u32;
+                    self.live_width = Some((rz.block, w));
+                }
+            }
+
+            Message::MouseReleased => {
+                if let Some(rz) = self.resizing.take()
+                    && let Some((_, w)) = self.live_width.take()
+                {
+                    self.edit_ref(rz.block, |r| r.width = Some(w));
+                }
+            }
 
             Message::OpenImage(rel) => {
                 if let Some(store) = &self.store {
@@ -653,7 +705,7 @@ impl AppModel {
                 self.show_list = solo;
                 self.persist_layout();
                 if !solo {
-                    return widget::text_input::focus(self.editor_id.clone());
+                    return self.focus_editor();
                 }
             }
 
@@ -666,10 +718,68 @@ impl AppModel {
                 }
             }
 
-            Message::Editor(action) => {
+            Message::Editor(block, action) => {
+                use text_editor::{Action, Edit, Motion};
+                tracing::trace!(
+                    block,
+                    focused = self.blocks.focused,
+                    ?action,
+                    "editor action"
+                );
+                // A widget losing focus emits ClearSelection; only real
+                // interaction with a block moves the caret there.
+                let claims_focus =
+                    !matches!(action, Action::ClearSelection | Action::Scroll { .. });
+                if claims_focus {
+                    self.blocks.focused = block;
+                }
+
+                self.image_menu = None;
+                let editable = self.current.as_ref().is_some_and(|n| !n.trashed);
+                // Edges of a block: step over images, or delete the one above.
+                if let Some(content) = self.blocks.text(block) {
+                    let cursor = content.cursor();
+                    let at_start = cursor.position.line == 0
+                        && cursor.position.column == 0
+                        && cursor.selection.is_none();
+                    let on_last_line = cursor.position.line + 1 >= content.line_count();
+                    match &action {
+                        Action::Edit(Edit::Backspace) if at_start && editable => {
+                            if let Some(prev) = block.checked_sub(1)
+                                && matches!(self.blocks.items.get(prev), Some(Block::Image(_)))
+                            {
+                                self.blocks.remove_image(prev);
+                                self.dirty = true;
+                                self.last_edit = Instant::now();
+                                return self.focus_editor();
+                            }
+                        }
+                        Action::Move(Motion::Up) if cursor.position.line == 0 => {
+                            if let Some(prev) = self.blocks.text_before(block) {
+                                self.blocks.focused = prev;
+                                if let Some(c) = self.blocks.text_mut(prev) {
+                                    c.perform(Action::Move(Motion::DocumentEnd));
+                                }
+                                return self.focus_editor();
+                            }
+                        }
+                        Action::Move(Motion::Down) if on_last_line => {
+                            if let Some(next) = self.blocks.text_after(block) {
+                                self.blocks.focused = next;
+                                if let Some(c) = self.blocks.text_mut(next) {
+                                    c.perform(Action::Move(Motion::DocumentStart));
+                                }
+                                return self.focus_editor();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 let is_edit = action.is_edit();
-                self.editor.perform(action);
-                if is_edit && self.current.as_ref().is_some_and(|n| !n.trashed) {
+                if let Some(content) = self.blocks.text_mut(block) {
+                    content.perform(action);
+                }
+                if is_edit && editable {
                     self.dirty = true;
                     self.last_edit = Instant::now();
                 }
@@ -735,10 +845,7 @@ impl AppModel {
                     self.refresh_tags();
                     self.refresh_list();
                     self.open_note(&note.id);
-                    return Task::batch([
-                        self.update_title(),
-                        widget::text_input::focus(self.editor_id.clone()),
-                    ]);
+                    return Task::batch([self.update_title(), self.focus_editor()]);
                 }
                 return self.update_title();
             }
@@ -815,7 +922,7 @@ impl AppModel {
             Message::Format(format) => {
                 if self.current.as_ref().is_some_and(|n| !n.trashed) {
                     self.apply_format(format);
-                    return widget::text_input::focus(self.editor_id.clone());
+                    return self.focus_editor();
                 }
             }
 
@@ -1087,60 +1194,7 @@ impl AppModel {
             fl!("badge-saved", time = format_time(note.modified))
         };
 
-        let settings = markdown::Settings {
-            palette: *p,
-            show_markers: self.show_markers,
-            font: retro::mono(),
-        };
-        let mut editor = cosmic::iced::widget::text_editor(&self.editor)
-            .id(self.editor_id.clone())
-            .placeholder(fl!("untitled"))
-            .font(retro::mono())
-            .size(15)
-            .line_height(1.5)
-            .padding([6, 10])
-            .style(retro::editor_style(*p))
-            .height(Length::Fill)
-            .highlight_with::<markdown::MarkdownHighlighter>(settings, markdown::to_format);
-        if !note.trashed {
-            editor = editor.on_action(Message::Editor);
-        }
-
-        let refs = images::parse_refs(&self.editor.text());
-        let placement = self.note_placement(note);
-        let text_area: Element<'a, Message> = if refs.is_empty() {
-            editor.into()
-        } else {
-            match placement {
-                Placement::Rail => widget::row::with_capacity(2)
-                    .push(editor)
-                    .push(
-                        widget::container(widget::scrollable(self.image_stack(p, &refs, 232.0)))
-                            .width(Length::Fixed(240.0))
-                            .height(Length::Fill)
-                            .padding([4, 0, 0, 4]),
-                    )
-                    .spacing(8)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into(),
-                Placement::Top => widget::column::with_capacity(2)
-                    .push(self.image_strip(p, &refs))
-                    .push(editor)
-                    .spacing(8)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into(),
-                Placement::Bottom => widget::column::with_capacity(2)
-                    .push(editor)
-                    .push(self.image_strip(p, &refs))
-                    .spacing(8)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into(),
-            }
-        };
-
+        let text_area: Element<'a, Message> = self.blocks_view(p, note.trashed);
         let mut column = widget::column::with_capacity(3)
             .push(text_area)
             .spacing(8)
@@ -1321,6 +1375,9 @@ impl AppModel {
     /// Apply a dock format action to the editor buffer.
     fn apply_format(&mut self, format: Format) {
         use text_editor::{Action, Edit, Motion};
+        let Some(editor) = self.blocks.focused_text() else {
+            return;
+        };
         let perform = |editor: &mut text_editor::Content, action: Action| editor.perform(action);
         let insert_str = |editor: &mut text_editor::Content, s: &str| {
             for c in s.chars() {
@@ -1340,14 +1397,14 @@ impl AppModel {
                     Format::Code => ("`", "`"),
                     _ => ("[[", "]]"),
                 };
-                if let Some(selection) = self.editor.selection() {
+                if let Some(selection) = editor.selection() {
                     let text = format!("{before}{selection}{after}");
-                    perform(&mut self.editor, Action::Edit(Edit::Paste(Arc::new(text))));
+                    perform(editor, Action::Edit(Edit::Paste(Arc::new(text))));
                 } else {
-                    insert_str(&mut self.editor, before);
-                    insert_str(&mut self.editor, after);
+                    insert_str(editor, before);
+                    insert_str(editor, after);
                     for _ in 0..after.chars().count() {
-                        perform(&mut self.editor, Action::Move(Motion::Left));
+                        perform(editor, Action::Move(Motion::Left));
                     }
                 }
             }
@@ -1358,13 +1415,12 @@ impl AppModel {
                     Format::Bullet => "- ",
                     _ => "- [ ] ",
                 };
-                let cursor = self.editor.cursor();
-                let line = self
-                    .editor
+                let cursor = editor.cursor();
+                let line = editor
                     .line(cursor.position.line)
                     .map(|l| l.text.into_owned())
                     .unwrap_or_default();
-                perform(&mut self.editor, Action::Move(Motion::Home));
+                perform(editor, Action::Move(Motion::Home));
                 // Toggle: strip the same prefix if the line already carries it,
                 // otherwise replace a different line prefix and add ours.
                 let existing = ["- [ ] ", "- [x] ", "## ", "# ", "- "]
@@ -1372,16 +1428,16 @@ impl AppModel {
                     .find(|p| line.starts_with(p));
                 if let Some(existing) = existing {
                     for _ in 0..existing.chars().count() {
-                        perform(&mut self.editor, Action::Edit(Edit::Delete));
+                        perform(editor, Action::Edit(Edit::Delete));
                     }
                 }
                 if existing != Some(prefix) {
-                    insert_str(&mut self.editor, prefix);
+                    insert_str(editor, prefix);
                 }
-                perform(&mut self.editor, Action::Move(Motion::End));
+                perform(editor, Action::Move(Motion::End));
             }
-            Format::Tag => insert_str(&mut self.editor, "#"),
-            Format::Rule => insert_str(&mut self.editor, "\n---\n"),
+            Format::Tag => insert_str(editor, "#"),
+            Format::Rule => insert_str(editor, "\n---\n"),
         }
         self.dirty = true;
         self.last_edit = Instant::now();
@@ -1460,15 +1516,124 @@ impl AppModel {
         widget::scrollable(col).into()
     }
 
-    // ----- images -----
+    // ----- blocks & images -----
 
-    /// Per-note `images:` frontmatter overrides the global placement.
-    fn note_placement(&self, note: &Note) -> Placement {
-        note.extra_frontmatter
-            .iter()
-            .find_map(|l| l.strip_prefix("images:").map(str::trim))
-            .and_then(Placement::from_key_opt)
-            .unwrap_or(self.placement)
+    /// Focus the text block that currently has the caret.
+    fn focus_editor(&self) -> Task<cosmic::Action<Message>> {
+        match self.blocks.focused_id() {
+            Some(id) => widget::text_input::focus(id),
+            None => Task::none(),
+        }
+    }
+
+    /// The note body as a column of text editors and inline images.
+    fn blocks_view<'a>(&'a self, p: &Palette, trashed: bool) -> Element<'a, Message> {
+        let items = &self.blocks.items;
+        let last_text = self.blocks.last_text();
+        let mut col = widget::column::with_capacity(items.len())
+            .spacing(6)
+            .width(Length::Fill);
+        let mut i = 0;
+        while i < items.len() {
+            match &items[i] {
+                Block::Text { content, id } => {
+                    col = col.push(self.text_block(
+                        p,
+                        i,
+                        content,
+                        id.clone(),
+                        trashed,
+                        i == last_text,
+                    ));
+                    i += 1;
+                }
+                Block::Image(r) => {
+                    let card = self.image_card(p, r, i);
+                    match r.align {
+                        Align::Center => {
+                            col = col.push(
+                                widget::container(card)
+                                    .width(Length::Fill)
+                                    .align_x(Alignment::Center)
+                                    .padding([4, 10]),
+                            );
+                            i += 1;
+                        }
+                        Align::Left | Align::Right => {
+                            let paired = match items.get(i + 1) {
+                                Some(Block::Text { content, id }) => Some(self.text_block(
+                                    p,
+                                    i + 1,
+                                    content,
+                                    id.clone(),
+                                    trashed,
+                                    i + 1 == last_text,
+                                )),
+                                _ => None,
+                            };
+                            let has_pair = paired.is_some();
+                            let card = widget::container(card).padding([4, 10]);
+                            let row = match (r.align, paired) {
+                                (Align::Left, Some(text)) => {
+                                    widget::row::with_capacity(2).push(card).push(text)
+                                }
+                                (_, Some(text)) => {
+                                    widget::row::with_capacity(2).push(text).push(card)
+                                }
+                                (Align::Left, None) => widget::row::with_capacity(1).push(card),
+                                (_, None) => widget::row::with_capacity(2)
+                                    .push(widget::Space::new().width(Length::Fill))
+                                    .push(card),
+                            };
+                            col = col
+                                .push(row.spacing(8).align_y(Alignment::Start).width(Length::Fill));
+                            i += if has_pair { 2 } else { 1 };
+                        }
+                    }
+                }
+            }
+        }
+        widget::scrollable(col)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into()
+    }
+
+    fn text_block<'a>(
+        &'a self,
+        p: &Palette,
+        block: usize,
+        content: &'a text_editor::Content,
+        id: widget::Id,
+        trashed: bool,
+        is_last: bool,
+    ) -> Element<'a, Message> {
+        let settings = markdown::Settings {
+            palette: *p,
+            show_markers: self.show_markers,
+            font: retro::mono(),
+        };
+        let mut editor = cosmic::iced::widget::text_editor(content)
+            .id(id)
+            .placeholder(if block == 0 {
+                fl!("untitled")
+            } else {
+                String::new()
+            })
+            .font(retro::mono())
+            .size(15)
+            .line_height(1.5)
+            .padding([6, 10])
+            .style(retro::editor_style(*p))
+            .height(Length::Shrink)
+            .highlight_with::<markdown::MarkdownHighlighter>(settings, markdown::to_format);
+        if is_last {
+            editor = editor.min_height(220.0);
+        }
+        if !trashed {
+            editor = editor.on_action(move |a| Message::Editor(block, a));
+        }
+        editor.into()
     }
 
     fn image_key(&self, r: &ImageRef) -> Option<(String, PathBuf)> {
@@ -1499,7 +1664,12 @@ impl AppModel {
             return Vec::new();
         }
         let palette = self.palette();
-        let refs = images::parse_refs(&self.editor.text());
+        let refs: Vec<ImageRef> = self
+            .blocks
+            .images()
+            .into_iter()
+            .map(|(_, r)| r.clone())
+            .collect();
         let mut tasks = Vec::new();
         for r in refs {
             let Some((key, path)) = self.image_key(&r) else {
@@ -1525,7 +1695,7 @@ impl AppModel {
         tasks
     }
 
-    /// Copy a file into assets/ and add its line to the note at the cursor.
+    /// Copy a file into assets/ and drop it into the note at the caret.
     fn import_image(&mut self, path: &std::path::Path) -> Task<cosmic::Action<Message>> {
         if self.current.as_ref().is_none_or(|n| n.trashed) {
             return Task::none();
@@ -1545,99 +1715,31 @@ impl AppModel {
             .and_then(|s| s.to_str())
             .unwrap_or("image")
             .to_owned();
-        let line = ImageRef {
+        let r = ImageRef {
             line: 0,
             alt,
             path: rel,
             frame: FrameStyle::default(),
-            size: images::Size::default(),
-        }
-        .to_markdown();
-        use text_editor::{Action, Edit, Motion};
-        let cursor = self.editor.cursor();
-        let current_line_empty = self
-            .editor
-            .line(cursor.position.line)
-            .is_none_or(|l| l.text.trim().is_empty());
-        self.editor.perform(Action::Move(Motion::End));
-        if !current_line_empty {
-            self.editor.perform(Action::Edit(Edit::Enter));
-        }
-        for c in line.chars() {
-            self.editor.perform(Action::Edit(Edit::Insert(c)));
-        }
-        self.editor.perform(Action::Edit(Edit::Enter));
-        self.dirty = true;
-        self.last_edit = Instant::now();
-        widget::text_input::focus(self.editor_id.clone())
-    }
-
-    /// Rewrite the n-th image line after mutating its reference.
-    fn edit_image_ref(&mut self, index: usize, f: impl FnOnce(&mut ImageRef)) {
-        let body = self.editor.text();
-        let refs = images::parse_refs(&body);
-        let Some(mut r) = refs.get(index).cloned() else {
-            return;
+            align: Align::default(),
+            width: None,
         };
-        f(&mut r);
-        let new_body = images::replace_line(&body, r.line, &r.to_markdown());
-        let cursor = self.editor.cursor();
-        self.editor = text_editor::Content::with_text(&new_body);
-        self.editor.move_to(cursor);
+        self.blocks.insert_image(r);
         self.dirty = true;
         self.last_edit = Instant::now();
+        self.focus_editor()
     }
 
-    fn image_stack<'a>(
-        &'a self,
-        p: &Palette,
-        refs: &[ImageRef],
-        width: f32,
-    ) -> Element<'a, Message> {
-        let mut col = widget::column::with_capacity(refs.len())
-            .spacing(14)
-            .width(Length::Fixed(width));
-        for (i, r) in refs.iter().enumerate() {
-            let w = match r.size {
-                images::Size::S => width * 0.55,
-                images::Size::M => width * 0.8,
-                images::Size::L => width,
-            };
-            col = col.push(self.image_card(p, r, i, w));
+    /// Change one image's attributes in place.
+    fn edit_ref(&mut self, block: usize, f: impl FnOnce(&mut ImageRef)) {
+        if let Some(r) = self.blocks.image_mut(block) {
+            f(r);
+            self.dirty = true;
+            self.last_edit = Instant::now();
         }
-        col.into()
     }
 
-    fn image_strip<'a>(&'a self, p: &Palette, refs: &[ImageRef]) -> Element<'a, Message> {
-        let mut row = widget::row::with_capacity(refs.len())
-            .spacing(14)
-            .align_y(Alignment::Start);
-        for (i, r) in refs.iter().enumerate() {
-            let w = match r.size {
-                images::Size::S => 130.0,
-                images::Size::M => 210.0,
-                images::Size::L => 320.0,
-            };
-            row = row.push(self.image_card(p, r, i, w));
-        }
-        widget::container(widget::scrollable(row).direction(
-            cosmic::iced::widget::scrollable::Direction::Horizontal(
-                cosmic::iced::widget::scrollable::Scrollbar::default(),
-            ),
-        ))
-        .padding([6, 4])
-        .width(Length::Fill)
-        .into()
-    }
-
-    /// One image with its frame treatment and the chips to change it.
-    fn image_card<'a>(
-        &'a self,
-        p: &Palette,
-        r: &ImageRef,
-        index: usize,
-        width: f32,
-    ) -> Element<'a, Message> {
+    /// One inline image: frame treatment, ⋯ menu, drag grip, and the popup menu.
+    fn image_card<'a>(&'a self, p: &Palette, r: &ImageRef, block: usize) -> Element<'a, Message> {
         let state = self
             .image_key(r)
             .and_then(|(k, _)| self.image_cache.get(&k));
@@ -1648,16 +1750,21 @@ impl AppModel {
                     .width(Length::Fill)
                     .content_fit(cosmic::iced::ContentFit::Contain);
                 match r.frame {
-                    FrameStyle::Box => {
-                        retro::frame(p, r.file_name().to_owned(), Some(format!("{w}×{h}")), img)
-                    }
-                    FrameStyle::Tint | FrameStyle::Dither | FrameStyle::Pixel => {
-                        retro::bordered(p, img.into())
-                    }
+                    FrameStyle::Box => retro::frame_sized(
+                        p,
+                        r.file_name().to_owned(),
+                        Some(format!("{w}×{h}")),
+                        img,
+                        Length::Shrink,
+                        16.0,
+                    ),
+                    FrameStyle::Tint
+                    | FrameStyle::Dither
+                    | FrameStyle::Pixel
+                    | FrameStyle::Ascii => retro::bordered(p, img.into()),
                     FrameStyle::Bezel => retro::bezel(p, img.into()),
                     FrameStyle::Print => retro::print(p, img.into(), r.alt.clone()),
-                    FrameStyle::Film => retro::film(p, img.into(), index + 1),
-                    FrameStyle::Ascii => retro::bordered(p, img.into()),
+                    FrameStyle::Film => retro::film(p, img.into(), self.image_number(block)),
                 }
             }
             Some(ImageState::Ascii(text)) => retro::ascii_card(p, text.clone()),
@@ -1672,27 +1779,140 @@ impl AppModel {
                 .into(),
         };
 
-        let chip = |label: String, msg: Message| {
-            widget::button::custom(retro::dim(p, label).size(11))
-                .padding([1, 5])
-                .class(retro::row_class(p, false))
-                .on_press(msg)
-        };
-        let chips = widget::row::with_capacity(4)
-            .push(chip(
-                format!("{} ▸", r.frame.label()),
-                Message::CycleFrame(index),
-            ))
-            .push(chip(r.size.label().to_owned(), Message::CycleSize(index)))
-            .push(chip(fl!("open-image"), Message::OpenImage(r.path.clone())))
-            .spacing(2)
-            .align_y(Alignment::Center);
+        // Click the picture (or ⋯) for the menu; drag ◢ to resize.
+        let clickable = widget::mouse_area(pic)
+            .on_press(Message::ImageMenu(Some(block)))
+            .interaction(mouse::Interaction::Pointer);
+        let menu_open = self.image_menu == Some(block);
+        let dots = widget::container(
+            widget::button::custom(retro::accent(p, "⋯").size(14))
+                .padding([0, 6])
+                .class(retro::row_class(p, menu_open))
+                .on_press(Message::ImageMenu(Some(block))),
+        )
+        .width(Length::Fill)
+        .align_x(Alignment::End)
+        .padding([14, 6, 0, 0]);
+        let grip = widget::container(
+            widget::mouse_area(widget::container(retro::accent(p, "◢").size(13)).padding([0, 3]))
+                .on_press(Message::ResizeStart(block))
+                .interaction(mouse::Interaction::ResizingHorizontally),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Alignment::End)
+        .align_y(Alignment::End)
+        .padding(2);
+        let stacked = cosmic::iced::widget::stack([clickable.into(), dots.into(), grip.into()])
+            .width(Length::Fill);
 
-        widget::column::with_capacity(2)
-            .push(pic)
-            .push(chips)
-            .spacing(3)
-            .width(Length::Fixed(width))
+        let width = self
+            .live_width
+            .filter(|(b, _)| *b == block)
+            .map(|(_, w)| w)
+            .or(r.width);
+        let sized = match (r.align, width) {
+            (Align::Center, Some(w)) => widget::container(stacked)
+                .max_width(w as f32)
+                .width(Length::Fill),
+            (Align::Center, None) => widget::container(stacked).width(Length::Fill),
+            (_, w) => widget::container(stacked).width(Length::Fixed(w.unwrap_or(360) as f32)),
+        };
+
+        if menu_open {
+            widget::popover(sized)
+                .popup(self.image_menu_view(p, r, block))
+                .position(widget::popover::Position::Bottom)
+                .on_close(Message::ImageMenu(None))
+                .into()
+        } else {
+            sized.into()
+        }
+    }
+
+    /// 1-based position of this image among the note's images (film frame number).
+    fn image_number(&self, block: usize) -> usize {
+        self.blocks
+            .images()
+            .iter()
+            .position(|(b, _)| *b == block)
+            .map_or(1, |i| i + 1)
+    }
+
+    /// The ⋯ menu: frame styles, alignment, width, open, remove.
+    fn image_menu_view<'a>(
+        &'a self,
+        p: &Palette,
+        r: &ImageRef,
+        block: usize,
+    ) -> Element<'a, Message> {
+        let item = |label: String, selected: bool, msg: Message| {
+            widget::button::custom(
+                widget::row::with_capacity(2)
+                    .push(retro::accent(p, if selected { "▌" } else { " " }))
+                    .push(retro::text(p, label))
+                    .spacing(6),
+            )
+            .padding([2, 8])
+            .width(Length::Fill)
+            .class(retro::row_class(p, selected))
+            .on_press(msg)
+        };
+        let mut col = widget::column::with_capacity(20)
+            .spacing(1)
+            .width(Length::Fixed(220.0));
+        col = col.push(widget::container(retro::dim(p, fl!("menu-frame"))).padding([2, 8]));
+        for style in FrameStyle::ALL {
+            col = col.push(item(
+                style.label().to_owned(),
+                r.frame == style,
+                Message::SetFrame(block, style),
+            ));
+        }
+        col = col.push(widget::container(retro::dim(p, fl!("menu-align"))).padding([6, 8, 2, 8]));
+        let mut align_row = widget::row::with_capacity(3).spacing(2);
+        for a in Align::ALL {
+            align_row = align_row.push(
+                widget::button::custom(retro::text(p, a.label()))
+                    .padding([2, 8])
+                    .class(retro::row_class(p, r.align == a))
+                    .on_press(Message::SetAlign(block, a)),
+            );
+        }
+        col = col.push(widget::container(align_row).padding([0, 6]));
+        col = col.push(widget::container(retro::dim(p, fl!("menu-width"))).padding([6, 8, 2, 8]));
+        let mut width_row = widget::row::with_capacity(4).spacing(2);
+        for (label, px) in images::WIDTH_PRESETS {
+            width_row = width_row.push(
+                widget::button::custom(retro::text(p, label))
+                    .padding([2, 6])
+                    .class(retro::row_class(p, r.width == Some(px)))
+                    .on_press(Message::SetWidth(block, Some(px))),
+            );
+        }
+        width_row = width_row.push(
+            widget::button::custom(retro::text(p, fl!("menu-full")))
+                .padding([2, 6])
+                .class(retro::row_class(p, r.width.is_none()))
+                .on_press(Message::SetWidth(block, None)),
+        );
+        col = col.push(widget::container(width_row).padding([0, 6]));
+        col = col.push(
+            widget::container(retro::dim(p, fl!("menu-resize-hint")).size(11)).padding([2, 8]),
+        );
+        col = col.push(
+            widget::row::with_capacity(2)
+                .push(item(
+                    fl!("open-image"),
+                    false,
+                    Message::OpenImage(r.path.clone()),
+                ))
+                .push(item(fl!("menu-remove"), false, Message::RemoveImage(block)))
+                .spacing(2),
+        );
+        widget::container(col)
+            .padding([6, 4])
+            .class(retro::dock_class(p))
             .into()
     }
 
@@ -1755,7 +1975,8 @@ impl AppModel {
         };
         match store.load(id) {
             Ok(Some(note)) => {
-                self.editor = text_editor::Content::with_text(&note.body);
+                self.blocks = Blocks::from_body(&note.body);
+                self.image_menu = None;
                 self.backlinks = store.backlinks(&note.title).unwrap_or_default();
                 self.current = Some(note);
                 self.dirty = false;
@@ -1797,7 +2018,7 @@ impl AppModel {
             return;
         };
         let old_title = note.title.clone();
-        note.body = self.editor.text();
+        note.body = self.blocks.body();
         if let Err(err) = store.save(note) {
             tracing::error!(%err, "saving note");
             return;
@@ -1834,7 +2055,10 @@ impl AppModel {
                     } else {
                         text_editor::Edit::Insert(c)
                     };
-                    task = self.update(Message::Editor(text_editor::Action::Edit(edit)));
+                    task = self.update(Message::Editor(
+                        self.blocks.focused,
+                        text_editor::Action::Edit(edit),
+                    ));
                 }
                 task
             }
@@ -1852,15 +2076,31 @@ impl AppModel {
                 Some(format) => self.update(Message::Format(format)),
                 None => Task::none(),
             },
-            Step::SelectAll => self.update(Message::Editor(text_editor::Action::SelectAll)),
+            Step::SelectAll => self.update(Message::Editor(
+                self.blocks.focused,
+                text_editor::Action::SelectAll,
+            )),
             Step::Dock => self.update(Message::ToggleDock),
             Step::Themes => self.update(Message::ToggleContextPage(ContextPage::Themes)),
             Step::Solo => self.update(Message::ToggleSolo),
             Step::Image(path) => self.update(Message::ImagesDropped(vec![PathBuf::from(path)])),
             Step::Pick => self.update(Message::PickImage),
-            Step::CycleFrame(i) => self.update(Message::CycleFrame(i)),
-            Step::CycleSize(i) => self.update(Message::CycleSize(i)),
-            Step::Placement(key) => self.update(Message::SetPlacement(Placement::from_key(&key))),
+            Step::ImgFrame(n, key) => match (self.nth_image_block(n), FrameStyle::from_key(&key)) {
+                (Some(b), Some(f)) => self.update(Message::SetFrame(b, f)),
+                _ => Task::none(),
+            },
+            Step::ImgAlign(n, key) => match (self.nth_image_block(n), Align::from_key(&key)) {
+                (Some(b), Some(a)) => self.update(Message::SetAlign(b, a)),
+                _ => Task::none(),
+            },
+            Step::ImgWidth(n, w) => match self.nth_image_block(n) {
+                Some(b) => self.update(Message::SetWidth(b, (w > 0).then_some(w))),
+                None => Task::none(),
+            },
+            Step::ImgMenu(n) => match self.nth_image_block(n) {
+                Some(b) => self.update(Message::ImageMenu(Some(b))),
+                None => Task::none(),
+            },
             Step::Theme(key) => self.update(Message::SetTheme(retro::Theme::from_key(&key))),
             Step::Trash => self.update(Message::TrashCurrent),
             Step::Wait(_) => Task::none(),
@@ -1869,6 +2109,10 @@ impl AppModel {
                 std::process::exit(0);
             }
         }
+    }
+
+    fn nth_image_block(&self, n: usize) -> Option<usize> {
+        self.blocks.images().get(n).map(|(b, _)| *b)
     }
 
     fn update_title(&mut self) -> Task<cosmic::Action<Message>> {
@@ -2018,34 +2262,12 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     binds
 }
 
-/// Where images sit relative to the text.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub enum Placement {
-    #[default]
-    Rail,
-    Top,
-    Bottom,
-}
-
-impl Placement {
-    pub fn key(self) -> &'static str {
-        match self {
-            Placement::Rail => "rail",
-            Placement::Top => "top",
-            Placement::Bottom => "bottom",
-        }
-    }
-    pub fn from_key_opt(key: &str) -> Option<Placement> {
-        match key {
-            "rail" => Some(Placement::Rail),
-            "top" => Some(Placement::Top),
-            "bottom" => Some(Placement::Bottom),
-            _ => None,
-        }
-    }
-    pub fn from_key(key: &str) -> Placement {
-        Placement::from_key_opt(key).unwrap_or_default()
-    }
+/// A drag-resize in progress on an image block.
+#[derive(Debug, Clone, Copy)]
+pub struct Resize {
+    block: usize,
+    start_x: f32,
+    start_w: u32,
 }
 
 /// A processed image ready for display (or on its way).
@@ -2151,7 +2373,6 @@ pub enum MenuAction {
     ToggleNav,
     ToggleList,
     Solo,
-    Placement(Placement),
 }
 
 impl menu::action::MenuAction for MenuAction {
@@ -2168,7 +2389,6 @@ impl menu::action::MenuAction for MenuAction {
             MenuAction::ToggleNav => Message::ToggleNav,
             MenuAction::ToggleList => Message::ToggleList,
             MenuAction::Solo => Message::ToggleSolo,
-            MenuAction::Placement(p) => Message::SetPlacement(*p),
         }
     }
 }

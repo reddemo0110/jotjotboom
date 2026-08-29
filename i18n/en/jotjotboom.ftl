@@ -87,3 +87,11 @@ picker-pictures = Pictures
 picker-downloads = Downloads
 picker-empty = No folders or images here.
 badge-drop = drop to add
+
+# Image menu
+menu-frame = frame
+menu-align = sits
+menu-width = width
+menu-full = full
+menu-resize-hint = drag ◢ on the picture to resize
+menu-remove = remove

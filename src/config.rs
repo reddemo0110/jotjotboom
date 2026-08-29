@@ -18,8 +18,6 @@ pub struct Config {
     pub hide_nav: bool,
     /// Collapse the notes list.
     pub hide_list: bool,
-    /// Where images sit in a note: "rail" (default), "top", "bottom".
-    pub image_placement: String,
 }
 
 impl Config {
