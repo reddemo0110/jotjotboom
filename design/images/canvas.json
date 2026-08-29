@@ -1,0 +1,144 @@
+{
+  "pages": [
+    {
+      "id": "frames",
+      "name": "Frame styles"
+    },
+    {
+      "id": "placement",
+      "name": "Placement in the note"
+    }
+  ],
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "F1 \u00b7 Box frame",
+      "x": 0,
+      "y": 0,
+      "w": 640,
+      "h": 560,
+      "page": "frames"
+    },
+    {
+      "file": "FrameTint.dc.html",
+      "title": "F2 \u00b7 Phosphor tint",
+      "x": 740,
+      "y": 0,
+      "w": 640,
+      "h": 560,
+      "page": "frames"
+    },
+    {
+      "file": "FrameDither.dc.html",
+      "title": "F3 \u00b7 Dithered",
+      "x": 1480,
+      "y": 0,
+      "w": 640,
+      "h": 560,
+      "page": "frames"
+    },
+    {
+      "file": "FrameBezel.dc.html",
+      "title": "F4 \u00b7 CRT bezel",
+      "x": 2220,
+      "y": 0,
+      "w": 640,
+      "h": 560,
+      "page": "frames"
+    },
+    {
+      "file": "FramePolaroid.dc.html",
+      "title": "F5 \u00b7 Instant print",
+      "x": 0,
+      "y": 700,
+      "w": 640,
+      "h": 560,
+      "page": "frames"
+    },
+    {
+      "file": "FrameAscii.dc.html",
+      "title": "F6 \u00b7 ASCII",
+      "x": 740,
+      "y": 700,
+      "w": 640,
+      "h": 560,
+      "page": "frames"
+    },
+    {
+      "file": "FrameFilm.dc.html",
+      "title": "F7 \u00b7 Film strip",
+      "x": 1480,
+      "y": 700,
+      "w": 640,
+      "h": 560,
+      "page": "frames"
+    },
+    {
+      "file": "FramePixel.dc.html",
+      "title": "F8 \u00b7 Chunky pixels",
+      "x": 2220,
+      "y": 700,
+      "w": 640,
+      "h": 560,
+      "page": "frames"
+    },
+    {
+      "file": "PlaceBottom.dc.html",
+      "title": "P1 \u00b7 Bottom strip",
+      "x": 0,
+      "y": 0,
+      "w": 820,
+      "h": 600,
+      "page": "placement"
+    },
+    {
+      "file": "PlaceTop.dc.html",
+      "title": "P2 \u00b7 Top strip",
+      "x": 920,
+      "y": 0,
+      "w": 820,
+      "h": 600,
+      "page": "placement"
+    },
+    {
+      "file": "PlaceRail.dc.html",
+      "title": "P3 \u00b7 Right rail",
+      "x": 0,
+      "y": 740,
+      "w": 820,
+      "h": 600,
+      "page": "placement"
+    },
+    {
+      "file": "PlaceInline.dc.html",
+      "title": "P4 \u00b7 Inline (later)",
+      "x": 920,
+      "y": 740,
+      "w": 820,
+      "h": 600,
+      "page": "placement"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "how-to-read",
+      "page": "frames",
+      "x": 0,
+      "y": -330,
+      "w": 700,
+      "text": "IMAGES IN JOTJOTBOOM \u2014 pick from two axes.\n\nPage 1 (this one): how a picture is FRAMED. Pick any number; they become per-image options in the editor (right-click or the dock), with one as the default.\nPage 2: WHERE pictures sit relative to the text. Pick one default; the inline option is shown for comparison but arrives with the custom editor.\n\nAdding images will work three ways: drag a file onto the note, paste from the clipboard, or the \u29c9 button on the dock (file picker). The file is copied to ~/Documents/JotJotBoom/assets/ and the note gets an ![alt](assets/\u2026) line, ghosted like other syntax.\n\nAll previews use the real conversions (tint, dither, ASCII, pixel) I'd ship, on the same sample photo."
+    },
+    {
+      "id": "sizes",
+      "page": "placement",
+      "x": 0,
+      "y": -170,
+      "w": 620,
+      "text": "Sizes: each image can be S (thumbnail), M, or L (full width of the strip/rail), per image, remembered in the note as ![alt](assets/x.png){size=m}. Frames from page 1 apply inside any placement."
+    }
+  ],
+  "launch": {
+    "view": "canvas",
+    "page": "frames"
+  }
+}
