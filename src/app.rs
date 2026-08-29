@@ -3,6 +3,7 @@
 use crate::config::Config;
 use crate::debug_script::{self, Step};
 use crate::fl;
+use crate::markdown;
 use crate::note::{Note, NoteSummary};
 use crate::retro::{self, Palette};
 use crate::store::{Store, View};
@@ -35,6 +36,7 @@ pub struct AppModel {
     config: Config,
     config_handler: Option<cosmic_config::Config>,
     theme: retro::Theme,
+    show_markers: bool,
 
     store: Option<Store>,
     store_error: Option<String>,
@@ -71,6 +73,7 @@ pub enum Message {
     UpdateConfig(Config),
     Key(keyboard::Modifiers, keyboard::Key, Physical),
     SetTheme(retro::Theme),
+    ToggleMarkers,
     FontLoaded,
 
     Editor(text_editor::Action),
@@ -157,6 +160,7 @@ impl cosmic::Application for AppModel {
             .license(env!("CARGO_PKG_LICENSE"));
 
         let theme = retro::Theme::from_key(&config.theme);
+        let show_markers = config.show_markers;
         let mut app = AppModel {
             core,
             context_page: ContextPage::default(),
@@ -165,6 +169,7 @@ impl cosmic::Application for AppModel {
             config,
             config_handler,
             theme,
+            show_markers,
             store,
             store_error,
             view: View::All,
@@ -208,20 +213,17 @@ impl cosmic::Application for AppModel {
     }
 
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
-        let theme_items: Vec<menu::Item<MenuAction, String>> = retro::Theme::ALL
-            .into_iter()
-            .map(|t| {
-                menu::Item::CheckBox(
-                    t.label().to_owned(),
-                    None,
-                    self.theme == t,
-                    MenuAction::Theme(t),
-                )
-            })
-            .collect();
-        let mut view_items = theme_items;
-        view_items.push(menu::Item::Divider);
-        view_items.push(menu::Item::Button(fl!("about"), None, MenuAction::About));
+        let view_items = vec![
+            menu::Item::Button(fl!("theme-colours"), None, MenuAction::Themes),
+            menu::Item::CheckBox(
+                fl!("show-markers"),
+                None,
+                self.show_markers,
+                MenuAction::ToggleMarkers,
+            ),
+            menu::Item::Divider,
+            menu::Item::Button(fl!("about"), None, MenuAction::About),
+        ];
 
         let menu_bar = menu::bar(vec![
             menu::Tree::with_children(
@@ -310,6 +312,11 @@ impl cosmic::Application for AppModel {
                 |url| Message::LaunchUrl(url.to_string()),
                 Message::ToggleContextPage(ContextPage::About),
             ),
+            ContextPage::Themes => context_drawer::context_drawer(
+                self.theme_picker(),
+                Message::ToggleContextPage(ContextPage::Themes),
+            )
+            .title(fl!("theme-colours")),
         })
     }
 
@@ -426,6 +433,15 @@ impl cosmic::Application for AppModel {
                     && let Err(why) = self.config.set_theme(handler, theme.key().to_owned())
                 {
                     tracing::warn!(%why, "could not persist theme");
+                }
+            }
+
+            Message::ToggleMarkers => {
+                self.show_markers = !self.show_markers;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_show_markers(handler, self.show_markers)
+                {
+                    tracing::warn!(%why, "could not persist marker setting");
                 }
             }
 
@@ -670,6 +686,7 @@ impl cosmic::Application for AppModel {
             Message::UpdateConfig(config) => {
                 // A changed notes_dir takes effect on next launch; everything else is live.
                 self.theme = retro::Theme::from_key(&config.theme);
+                self.show_markers = config.show_markers;
                 self.config = config;
             }
 
@@ -851,7 +868,12 @@ impl AppModel {
             return retro::frame(p, fl!("app-title").to_lowercase(), None, hint);
         };
 
-        let mut editor = text_editor::text_editor(&self.editor)
+        let settings = markdown::Settings {
+            palette: *p,
+            show_markers: self.show_markers,
+            font: retro::mono(),
+        };
+        let mut editor = cosmic::iced::widget::text_editor(&self.editor)
             .id(self.editor_id.clone())
             .placeholder(fl!("untitled"))
             .font(retro::mono())
@@ -859,7 +881,8 @@ impl AppModel {
             .line_height(1.5)
             .padding([6, 10])
             .style(retro::editor_style(*p))
-            .height(Length::Fill);
+            .height(Length::Fill)
+            .highlight_with::<markdown::MarkdownHighlighter>(settings, markdown::to_format);
         if !note.trashed {
             editor = editor.on_action(Message::Editor);
         }
@@ -977,6 +1000,23 @@ impl AppModel {
                 );
         }
 
+        row = row
+            .push(
+                widget::container(retro::dim(p, "│").class(cosmic::theme::Text::Color(p.mute)))
+                    .padding([0, 4]),
+            )
+            .push(widget::tooltip(
+                widget::button::custom(retro::accent2(p, "◐").size(15))
+                    .padding([3, 9])
+                    .class(retro::row_class(
+                        p,
+                        self.core.window.show_context && self.context_page == ContextPage::Themes,
+                    ))
+                    .on_press(Message::ToggleContextPage(ContextPage::Themes)),
+                retro::dim(p, fl!("theme-colours")),
+                widget::tooltip::Position::Top,
+            ));
+
         widget::container(
             widget::container(row)
                 .padding([4, 8])
@@ -985,6 +1025,27 @@ impl AppModel {
         .width(Length::Fill)
         .align_x(Alignment::Center)
         .into()
+    }
+
+    /// The theme picker shown in the context drawer.
+    fn theme_picker(&self) -> Element<'_, Message> {
+        let system = self.core.system_theme();
+        let label_color: cosmic::iced::Color = system.cosmic().background(false).on.into();
+        let mut col = widget::column::with_capacity(retro::Theme::ALL.len() + 1)
+            .push(widget::text::caption(fl!("theme-picker-hint")))
+            .spacing(6)
+            .width(Length::Fill);
+        for theme in retro::Theme::ALL {
+            let palette = theme.palette(system);
+            col = col.push(retro::swatch(
+                theme,
+                &palette,
+                self.theme == theme,
+                label_color,
+                Message::SetTheme(theme),
+            ));
+        }
+        widget::scrollable(col).into()
     }
 
     /// Apply a dock format action to the editor buffer.
@@ -1164,6 +1225,18 @@ impl AppModel {
         match step {
             Step::New => self.update(Message::NewNote),
             Step::Type(text) => {
+                // Type one line per tick so the editor sees the same incremental
+                // edits a keyboard would produce.
+                let (now, rest) = match text.find('\n') {
+                    Some(i) => (text[..=i].to_owned(), text[i + 1..].to_owned()),
+                    None => (text, String::new()),
+                };
+                if !rest.is_empty()
+                    && let Some(runner) = self.script.as_mut()
+                {
+                    runner.push_front(Step::Type(rest));
+                }
+                let text = now;
                 let mut task = Task::none();
                 for c in text.chars() {
                     let edit = if c == '\n' {
@@ -1191,6 +1264,8 @@ impl AppModel {
             },
             Step::SelectAll => self.update(Message::Editor(text_editor::Action::SelectAll)),
             Step::Dock => self.update(Message::ToggleDock),
+            Step::Themes => self.update(Message::ToggleContextPage(ContextPage::Themes)),
+            Step::Theme(key) => self.update(Message::SetTheme(retro::Theme::from_key(&key))),
             Step::Trash => self.update(Message::TrashCurrent),
             Step::Wait(_) => Task::none(),
             Step::Exit => {
@@ -1405,6 +1480,7 @@ impl Format {
 pub enum ContextPage {
     #[default]
     About,
+    Themes,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1413,7 +1489,8 @@ pub enum MenuAction {
     NewNote,
     TrashNote,
     FocusSearch,
-    Theme(retro::Theme),
+    Themes,
+    ToggleMarkers,
 }
 
 impl menu::action::MenuAction for MenuAction {
@@ -1425,7 +1502,8 @@ impl menu::action::MenuAction for MenuAction {
             MenuAction::NewNote => Message::NewNote,
             MenuAction::TrashNote => Message::TrashCurrent,
             MenuAction::FocusSearch => Message::FocusSearch,
-            MenuAction::Theme(theme) => Message::SetTheme(*theme),
+            MenuAction::Themes => Message::ToggleContextPage(ContextPage::Themes),
+            MenuAction::ToggleMarkers => Message::ToggleMarkers,
         }
     }
 }

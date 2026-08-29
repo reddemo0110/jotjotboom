@@ -61,3 +61,13 @@ dock-plus = New note or folder
 dock-new-note = note
 dock-new-folder = folder
 folder-name-placeholder = folder name
+
+# Themes
+theme-colours = Theme colours
+show-markers = Show markdown syntax
+theme-picker-hint = Eight retro palettes and one that follows your desktop. Click to apply.
+
+# Themes
+theme-colours = Theme colours
+show-markers = Show markdown syntax
+theme-picker-hint = Eight retro palettes and one that follows your desktop. Click to apply.

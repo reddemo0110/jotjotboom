@@ -13,8 +13,10 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
 - `just run` — release build + run; `just check` — clippy pedantic
 - `RUST_LOG=jotjotboom=debug cargo run` for tracing output
 - Visual check without a human: `tools/xshot.py out.png [--keys ctrl+n --type 'text']`
-  runs the app on Xwayland, drives it with XTEST keystrokes, captures the
-  window. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
+  runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (steps:
+  new, type, search, select, pin, trash, folder, format, selectall, dock,
+  themes, theme, wait, exit; `;` separates steps — write `\;` inside text),
+  and captures the window with X auto-repeat switched off. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
   hook (iced `window::screenshot`) silently drops editor text and menu labels.
 
 libcosmic is pulled from git; its API moves. When in doubt, read the checkout
@@ -28,8 +30,10 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
 - `src/store/` — `fs.rs` (notes dir, atomic writes, `.trash/`), `db.rs`
   (rusqlite schema, FTS5 search, tag/link queries, oplog), `mod.rs` (the
   `Store` that ties them: reindex-from-disk, create/save/trash/restore).
-- `src/app.rs` — the libcosmic `Application`: nav (views + tag tree), note
-  list, editor, autosave, key binds.
+- `src/app.rs` — the libcosmic `Application`: framed views/tags/notes/editor,
+  dock, theme picker drawer, autosave, key binds.
+- `src/retro.rs` — palettes, btop-style `frame`, style classes, swatches.
+- `src/markdown.rs` — per-line markdown scanner + the editor highlighter.
 - `src/config.rs` — cosmic-config entry (`notes_dir`, `device_id`).
 - `src/secrets.rs` — keyring wrapper; unused until sync, deliberately present.
 

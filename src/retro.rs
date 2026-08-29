@@ -22,19 +22,37 @@ pub const TITLE_FONT: Font = Font {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Theme {
+    /// P1 green phosphor, the classic terminal.
     #[default]
     Phosphor,
+    /// P3 amber monochrome monitor.
     Amber,
+    /// White-on-blue word processor.
     WordPerfect,
+    /// P4 white phosphor — paper-white on black.
+    Paper,
+    /// Orange gas-plasma display (GRiD Compass, early Toshiba laptops).
+    Plasma,
+    /// Commodore 64 light-blue on blue.
+    C64,
+    /// Original Game Boy LCD: four greens, the only light theme.
+    GameBoy,
+    /// 80s synthwave: pink and cyan on deep purple.
+    Synthwave,
     /// Follows the COSMIC system theme; frames only.
     Cosmic,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 4] = [
+    pub const ALL: [Theme; 9] = [
         Theme::Phosphor,
         Theme::Amber,
         Theme::WordPerfect,
+        Theme::Paper,
+        Theme::Plasma,
+        Theme::C64,
+        Theme::GameBoy,
+        Theme::Synthwave,
         Theme::Cosmic,
     ];
 
@@ -43,6 +61,11 @@ impl Theme {
             Theme::Phosphor => "phosphor",
             Theme::Amber => "amber",
             Theme::WordPerfect => "wordperfect",
+            Theme::Paper => "paper",
+            Theme::Plasma => "plasma",
+            Theme::C64 => "c64",
+            Theme::GameBoy => "gameboy",
+            Theme::Synthwave => "synthwave",
             Theme::Cosmic => "cosmic",
         }
     }
@@ -59,7 +82,27 @@ impl Theme {
             Theme::Phosphor => "Green phosphor",
             Theme::Amber => "Amber",
             Theme::WordPerfect => "WordPerfect blue",
-            Theme::Cosmic => "COSMIC",
+            Theme::Paper => "Paper white",
+            Theme::Plasma => "Plasma orange",
+            Theme::C64 => "Commodore 64",
+            Theme::GameBoy => "Game Boy",
+            Theme::Synthwave => "Synthwave",
+            Theme::Cosmic => "COSMIC system",
+        }
+    }
+
+    /// One-line flavour text for the picker.
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Theme::Phosphor => "P1 green, the terminal you remember",
+            Theme::Amber => "P3 amber monochrome monitor",
+            Theme::WordPerfect => "white on blue, F-keys optional",
+            Theme::Paper => "P4 white phosphor on black glass",
+            Theme::Plasma => "orange gas-plasma laptop panel",
+            Theme::C64 => "load \"*\",8,1",
+            Theme::GameBoy => "four shades of LCD green",
+            Theme::Synthwave => "pink and cyan, 1986 forever",
+            Theme::Cosmic => "follows your desktop theme",
         }
     }
 
@@ -101,6 +144,66 @@ impl Theme {
                 sel: hex(0x0000ff),
                 selfg: hex(0xffffff),
             },
+            Theme::Paper => Palette {
+                bg: hex(0x0a0a0b),
+                panel: hex(0x0f0f11),
+                fg: hex(0xe8e8e8),
+                dim: hex(0x8c8c8c),
+                mute: hex(0x4c4c4c),
+                accent: hex(0xffffff),
+                accent2: hex(0xc9d3ff),
+                border: hex(0x3c3c3c),
+                sel: hex(0x2c2c30),
+                selfg: hex(0xffffff),
+            },
+            Theme::Plasma => Palette {
+                bg: hex(0x180500),
+                panel: hex(0x1f0700),
+                fg: hex(0xff8f3c),
+                dim: hex(0xa8521c),
+                mute: hex(0x5e2c0e),
+                accent: hex(0xffb66b),
+                accent2: hex(0xffdcbb),
+                border: hex(0x6e3414),
+                sel: hex(0x4c2009),
+                selfg: hex(0xffe6cf),
+            },
+            Theme::C64 => Palette {
+                bg: hex(0x40318d),
+                panel: hex(0x40318d),
+                fg: hex(0xaba4ff),
+                dim: hex(0x8078d0),
+                mute: hex(0x5f52b8),
+                accent: hex(0xd5df7c),
+                accent2: hex(0x94e089),
+                border: hex(0x7869c4),
+                sel: hex(0x5b4ab5),
+                selfg: hex(0xffffff),
+            },
+            Theme::GameBoy => Palette {
+                bg: hex(0x9bbc0f),
+                panel: hex(0x8bac0f),
+                fg: hex(0x0f380f),
+                dim: hex(0x306230),
+                mute: hex(0x5a8a2a),
+                accent: hex(0x0f380f),
+                accent2: hex(0x1f4f1f),
+                border: hex(0x306230),
+                sel: hex(0x306230),
+                selfg: hex(0x9bbc0f),
+            },
+            Theme::Synthwave => Palette {
+                bg: hex(0x120823),
+                panel: hex(0x190c2f),
+                fg: hex(0xf2dcff),
+                dim: hex(0x8f72b8),
+                mute: hex(0x4d3778),
+                accent: hex(0xff6ec7),
+                accent2: hex(0x00e5ff),
+                border: hex(0x5e3d94),
+                sel: hex(0x3b2063),
+                selfg: hex(0xffffff),
+            },
             Theme::Cosmic => {
                 let c = cosmic.cosmic();
                 let container = c.background(false);
@@ -124,7 +227,7 @@ impl Theme {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Palette {
     pub bg: Color,
     pub panel: Color,
@@ -320,6 +423,95 @@ pub fn editor_style(
         value: p.fg,
         selection: p.sel,
     }
+}
+
+/// A clickable theme swatch for the picker: a mini frame in that theme's
+/// own colours, with the name underneath.
+pub fn swatch<'a, M: Clone + 'static>(
+    theme: Theme,
+    p: &Palette,
+    selected: bool,
+    label_color: Color,
+    on_press: M,
+) -> Element<'a, M> {
+    let p = *p;
+    let border = if selected { p.accent } else { p.border };
+    let sample = widget::column::with_capacity(3)
+        .push(
+            widget::text("Aa")
+                .font(TITLE_FONT)
+                .size(24)
+                .class(theme::Text::Color(p.accent)),
+        )
+        .push(
+            widget::row::with_capacity(3)
+                .push(
+                    widget::text("bold")
+                        .font(Font {
+                            weight: Weight::Bold,
+                            ..mono()
+                        })
+                        .size(12)
+                        .class(theme::Text::Color(p.fg)),
+                )
+                .push(
+                    widget::text("#tag")
+                        .font(mono())
+                        .size(12)
+                        .class(theme::Text::Color(p.accent2)),
+                )
+                .push(
+                    widget::text("dim")
+                        .font(mono())
+                        .size(12)
+                        .class(theme::Text::Color(p.dim)),
+                )
+                .spacing(8),
+        )
+        .push(
+            widget::container(widget::Space::new().width(Length::Fill).height(3))
+                .width(Length::Fill)
+                .class(theme::Container::custom(move |_| {
+                    widget::container::Style {
+                        background: Some(Background::Color(p.sel)),
+                        ..Default::default()
+                    }
+                })),
+        )
+        .spacing(6);
+    let card = widget::container(sample)
+        .padding([10, 12])
+        .width(Length::Fill)
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(Background::Color(p.bg)),
+                border: Border {
+                    color: border,
+                    width: if selected { 2.0 } else { 1.0 },
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            }
+        }));
+    let label = widget::column::with_capacity(2)
+        .push(widget::text::body(theme.label()).class(theme::Text::Color(label_color)))
+        .push(
+            widget::text::caption(theme.blurb())
+                .class(theme::Text::Color(label_color.scale_alpha(0.7))),
+        )
+        .spacing(2);
+    widget::button::custom(
+        widget::column::with_capacity(2)
+            .push(card)
+            .push(label)
+            .spacing(8)
+            .width(Length::Fill),
+    )
+    .padding(6)
+    .width(Length::Fill)
+    .class(theme::Button::Transparent)
+    .on_press(on_press)
+    .into()
 }
 
 /// The floating dock tray at the bottom.

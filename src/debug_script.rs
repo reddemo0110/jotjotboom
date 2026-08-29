@@ -29,6 +29,10 @@ pub enum Step {
     SelectAll,
     /// Toggle the dock's `+` section.
     Dock,
+    /// Open the theme picker drawer.
+    Themes,
+    /// Switch theme by key.
+    Theme(String),
     /// Pause for the given milliseconds (lets autosave run).
     Wait(u64),
     /// Flush and quit.
@@ -57,6 +61,8 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "format" => Step::Format(arg.trim().to_owned()),
                 "selectall" => Step::SelectAll,
                 "dock" => Step::Dock,
+                "themes" => Step::Themes,
+                "theme" => Step::Theme(arg.trim().to_owned()),
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
                 "exit" => Step::Exit,
                 other => {
@@ -109,6 +115,11 @@ impl Runner {
             // Give the window a moment to appear before driving it.
             resume_at: Instant::now() + Duration::from_millis(1200),
         })
+    }
+
+    /// Re-queue a step to run on the next tick (used to split multi-line typing).
+    pub fn push_front(&mut self, step: Step) {
+        self.steps.push_front(step);
     }
 
     pub fn is_active(&self) -> bool {

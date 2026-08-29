@@ -96,3 +96,23 @@ window controls stay native COSMIC, the content area does not.
 - Folder names are normalised to tag form (lowercase, spaces → `-`,
   `parent/child` allowed). Removing a folder is `Store::remove_folder`, not
   yet exposed in the UI.
+
+## 2026-08-29 — Inline markdown rendering and eight retro themes
+- **Rendering without a custom editor.** iced's `text_editor` accepts a
+  per-span highlighter (colour + font, no size). `markdown.rs` scans each
+  line — headings, quotes, lists/tasks, fences, rules, `**`/`*`/`` ` ``/`~~`
+  emphasis, `[[wiki]]`, `[md](links)`, `#tags` — and paints bold as bold,
+  italic as italic, headings in the accent, tags/links in the second accent,
+  done tasks dimmed, and every syntax marker in a near-invisible "ghost"
+  colour. The markers still occupy space (the cursor walks over them), and
+  headings cannot be larger than body text. Both limits go away with the
+  cosmic-text editor in step 3; this gets 90% of the hybrid-editor feel today.
+  View → "Show markdown syntax" paints markers dim instead of ghosted.
+- **Nine palettes**: eight retro (green phosphor, amber, WordPerfect blue,
+  paper white, plasma orange, Commodore 64, Game Boy, synthwave) plus a
+  COSMIC one derived from the system theme. Picker lives in the context
+  drawer (View → Theme colours, or the `◐` on the dock) as swatch cards
+  drawn in each theme's own colours.
+- Gotcha recorded: `JJB_SCRIPT` splits on `;` — escape as `\;` in note
+  text or the tail of the step is silently dropped. Multi-line `type:` now
+  types one line per tick so the highlighter sees keystroke-like edits.

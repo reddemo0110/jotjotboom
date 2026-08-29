@@ -12,6 +12,8 @@ pub struct Config {
     pub device_id: String,
     /// Retro theme key (see `retro::Theme::key`). Empty = default.
     pub theme: String,
+    /// Paint markdown syntax markers visibly (dim) instead of ghosted.
+    pub show_markers: bool,
 }
 
 impl Config {
