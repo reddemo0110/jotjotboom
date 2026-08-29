@@ -91,6 +91,15 @@ def main():
     if args.script:
         env["JJB_SCRIPT"] = args.script
     proc = subprocess.Popen([args.binary], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # A key left held on the X server (e.g. by a broken injection tool) would
+    # auto-repeat into our window; switch X auto-repeat off while we capture.
+    kb = None
+    try:
+        kb = display.Display(args.display)
+        kb.change_keyboard_control(auto_repeat_mode=X.AutoRepeatModeOff)
+        kb.sync()
+    except Exception as e:
+        log("could not disable autorepeat:", e)
     try:
         time.sleep(args.wait)
         log("launched, searching")
@@ -107,6 +116,12 @@ def main():
         print("saved", args.out, f"{geom.width}x{geom.height}")
         return 0
     finally:
+        if kb is not None:
+            try:
+                kb.change_keyboard_control(auto_repeat_mode=X.AutoRepeatModeDefault)
+                kb.sync()
+            except Exception:
+                pass
         if not args.keep:
             proc.terminate()
             try:

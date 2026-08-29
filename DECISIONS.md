@@ -78,3 +78,21 @@ window controls stay native COSMIC, the content area does not.
   so the nav could be styled; `nav_model()` returns None.
 - Still to come from the mockup: CRT scanline/glow overlay (needs a custom
   shader widget — step 5) and focus mode (needs the hybrid editor — step 3).
+
+## 2026-08-29 — Dock and folders
+- **Dock**: a floating pill at the bottom of the content area with the
+  markdown format actions (bold, italic, code, H1, H2, bullet, to-do,
+  wiki-link, tag, rule) and a `+`. Wrapping actions wrap the selection or
+  insert an empty pair with the cursor inside; line actions toggle the
+  prefix on the current line (and swap one list/heading prefix for another).
+  Focus returns to the editor afterwards.
+- **Folders are tags.** `+` → `folder` creates a tag with no notes yet. They
+  are persisted in `<notes dir>/.folders` (one per line) — not in the
+  index, which stays disposable — and merged into the tag tree with a count
+  of 0. Creating a note while a folder is selected pre-fills `#folder` on
+  its own line; a line made only of tags is neither the title nor "content",
+  so an abandoned pre-filled note is still dropped and its title stays
+  Untitled until the user types one.
+- Folder names are normalised to tag form (lowercase, spaces → `-`,
+  `parent/child` allowed). Removing a folder is `Store::remove_folder`, not
+  yet exposed in the UI.

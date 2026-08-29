@@ -45,3 +45,19 @@ notes-of = { $shown } of { $total }
 badge-editing = editing…
 badge-in-trash = in trash
 badge-saved = saved { $time }
+
+# Dock
+dock-bold = Bold
+dock-italic = Italic
+dock-code = Code
+dock-h1 = Heading 1
+dock-h2 = Heading 2
+dock-bullet = Bullet list
+dock-todo = To-do
+dock-link = Wiki link
+dock-tag = Tag
+dock-rule = Divider
+dock-plus = New note or folder
+dock-new-note = note
+dock-new-folder = folder
+folder-name-placeholder = folder name

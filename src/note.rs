@@ -128,7 +128,11 @@ pub fn serialize_document(note: &Note) -> String {
 /// The title is the first non-blank line, with heading markers and light
 /// inline formatting stripped. Falls back to [`UNTITLED`].
 pub fn derive_title(body: &str) -> String {
-    let Some(line) = body.lines().map(str::trim).find(|l| !l.is_empty()) else {
+    let Some(line) = body
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !is_tag_only_line(l))
+    else {
         return UNTITLED.to_owned();
     };
     let line = line.trim_start_matches('#').trim();
@@ -142,6 +146,38 @@ pub fn derive_title(body: &str) -> String {
     }
 }
 
+/// A line made only of `#tags` (e.g. the line a folder pre-fills) is
+/// metadata, not a title.
+pub fn is_tag_only_line(line: &str) -> bool {
+    let mut tokens = line.split_whitespace().peekable();
+    tokens.peek().is_some()
+        && tokens.all(|t| t.starts_with('#') && t.len() > 1 && !t.starts_with("# "))
+}
+
+/// True when the body carries no real content — empty, whitespace, or tag-only lines.
+pub fn is_blank(body: &str) -> bool {
+    body.lines()
+        .map(str::trim)
+        .all(|l| l.is_empty() || is_tag_only_line(l))
+}
+
+/// Normalise a user-typed folder/tag name into tag form: lowercase, spaces to
+/// dashes, no leading `#`, only tag characters. Returns None if nothing usable is left.
+pub fn normalize_tag(name: &str) -> Option<String> {
+    let cleaned: String = name
+        .trim()
+        .trim_start_matches('#')
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_whitespace() { '-' } else { c })
+        .filter(|&c| is_tag_char(c))
+        .collect();
+    let cleaned = cleaned
+        .trim_matches(|c| matches!(c, '/' | '-' | '_'))
+        .to_owned();
+    (cleaned.chars().any(char::is_alphabetic) && !cleaned.contains("//")).then_some(cleaned)
+}
+
 /// Markdown-stripped preview of the body after the title line.
 pub fn preview(body: &str) -> String {
     let mut lines = body.lines().map(str::trim).filter(|l| !l.is_empty());
@@ -149,7 +185,11 @@ pub fn preview(body: &str) -> String {
     lines.next();
     let mut out = String::new();
     for line in lines {
-        if line.starts_with("```") || line.starts_with("---") || line.starts_with("***") {
+        if line.starts_with("```")
+            || line.starts_with("---")
+            || line.starts_with("***")
+            || is_tag_only_line(line)
+        {
             continue;
         }
         let line = strip_block_markup(line);
@@ -451,6 +491,21 @@ mod tests {
         assert_eq!(derive_title(""), UNTITLED);
         assert_eq!(derive_title("   \n#\n"), UNTITLED);
         assert_eq!(derive_title("plain first line"), "plain first line");
+    }
+
+    #[test]
+    fn tag_only_lines_are_not_titles() {
+        assert_eq!(derive_title("#work/incab\n\nReal title"), "Real title");
+        assert_eq!(derive_title("#work #home"), UNTITLED);
+        assert!(is_blank("\n\n#work\n  "));
+        assert!(!is_blank("#work\nhello"));
+        assert_eq!(preview("Title\n\n#work #home\nbody text"), "body text");
+        assert_eq!(
+            normalize_tag("  #Work Stuff/Sub "),
+            Some("work-stuff/sub".into())
+        );
+        assert_eq!(normalize_tag("123"), None);
+        assert_eq!(normalize_tag("##"), None);
     }
 
     #[test]

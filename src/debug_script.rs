@@ -21,6 +21,14 @@ pub enum Step {
     Pin,
     /// Move the current note to the trash.
     Trash,
+    /// Create a folder (tag) and switch to it.
+    Folder(String),
+    /// Apply a dock format action by key (bold, italic, code, h1, h2, bullet, todo, link, tag, rule).
+    Format(String),
+    /// Select all text in the editor.
+    SelectAll,
+    /// Toggle the dock's `+` section.
+    Dock,
     /// Pause for the given milliseconds (lets autosave run).
     Wait(u64),
     /// Flush and quit.
@@ -45,6 +53,10 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "select" => Step::Select(arg.trim().parse().ok()?),
                 "pin" => Step::Pin,
                 "trash" => Step::Trash,
+                "folder" => Step::Folder(unescape(arg)),
+                "format" => Step::Format(arg.trim().to_owned()),
+                "selectall" => Step::SelectAll,
+                "dock" => Step::Dock,
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
                 "exit" => Step::Exit,
                 other => {

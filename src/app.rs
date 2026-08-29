@@ -45,6 +45,11 @@ pub struct AppModel {
     tags: Vec<(String, usize)>,
     query: String,
     search_id: widget::Id,
+    editor_id: widget::Id,
+    /// The dock's `+` is expanded, showing new-note / new-folder.
+    dock_open: bool,
+    new_folder: String,
+    folder_id: widget::Id,
     notes: Vec<NoteSummary>,
     current: Option<Note>,
     editor: text_editor::Content,
@@ -80,6 +85,10 @@ pub enum Message {
     TogglePin,
     Search(String),
     FocusSearch,
+    Format(Format),
+    ToggleDock,
+    NewFolderName(String),
+    CreateFolder,
     TakeScreenshot,
     ScriptTick,
     ScreenshotTaken(Arc<cosmic::iced::window::Screenshot>),
@@ -163,6 +172,10 @@ impl cosmic::Application for AppModel {
             tags: Vec::new(),
             query: String::new(),
             search_id: widget::Id::unique(),
+            editor_id: widget::Id::unique(),
+            dock_open: false,
+            new_folder: String::new(),
+            folder_id: widget::Id::unique(),
             notes: Vec::new(),
             current: None,
             editor: text_editor::Content::new(),
@@ -340,11 +353,18 @@ impl cosmic::Application for AppModel {
             );
         }
 
+        let panes = widget::row::with_capacity(3)
+            .push(nav)
+            .push(list)
+            .push(editor_col)
+            .spacing(GAP)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
         widget::container(
-            widget::row::with_capacity(3)
-                .push(nav)
-                .push(list)
-                .push(editor_col)
+            widget::column::with_capacity(2)
+                .push(panes)
+                .push(self.dock(&p))
                 .spacing(GAP)
                 .width(Length::Fill)
                 .height(Length::Fill),
@@ -448,21 +468,40 @@ impl cosmic::Application for AppModel {
             }
 
             Message::NewNote => {
+                self.dock_open = false;
                 if matches!(self.view, View::Trash) {
                     self.view = View::All;
                 }
                 self.close_current();
                 self.query.clear();
+                // A note started inside a folder carries that tag from the outset.
+                let tag_line = match &self.view {
+                    View::Tag(t) => Some(format!("\n\n#{t}\n")),
+                    _ => None,
+                };
                 let created = self.store.as_mut().and_then(|s| match s.create() {
-                    Ok(note) => Some(note),
+                    Ok(mut note) => {
+                        if let Some(line) = tag_line {
+                            note.body = line;
+                            if let Err(err) = s.save(&mut note) {
+                                tracing::error!(%err, "pre-filling folder tag");
+                            }
+                        }
+                        Some(note)
+                    }
                     Err(err) => {
                         tracing::error!(%err, "creating note");
                         None
                     }
                 });
                 if let Some(note) = created {
+                    self.refresh_tags();
                     self.refresh_list();
                     self.open_note(&note.id);
+                    return Task::batch([
+                        self.update_title(),
+                        widget::text_input::focus(self.editor_id.clone()),
+                    ]);
                 }
                 return self.update_title();
             }
@@ -534,6 +573,40 @@ impl cosmic::Application for AppModel {
 
             Message::FocusSearch => {
                 return widget::text_input::focus(self.search_id.clone());
+            }
+
+            Message::Format(format) => {
+                if self.current.as_ref().is_some_and(|n| !n.trashed) {
+                    self.apply_format(format);
+                    return widget::text_input::focus(self.editor_id.clone());
+                }
+            }
+
+            Message::ToggleDock => {
+                self.dock_open = !self.dock_open;
+                if self.dock_open {
+                    return widget::text_input::focus(self.folder_id.clone());
+                }
+            }
+
+            Message::NewFolderName(name) => {
+                self.new_folder = name;
+            }
+
+            Message::CreateFolder => {
+                let name = std::mem::take(&mut self.new_folder);
+                let created = self.store.as_mut().and_then(|s| match s.add_folder(&name) {
+                    Ok(tag) => tag,
+                    Err(err) => {
+                        tracing::error!(%err, "creating folder");
+                        None
+                    }
+                });
+                self.dock_open = false;
+                if let Some(tag) = created {
+                    self.refresh_tags();
+                    return self.update(Message::SetView(View::Tag(tag)));
+                }
             }
 
             Message::ScriptTick => {
@@ -611,7 +684,9 @@ impl cosmic::Application for AppModel {
     }
 
     fn on_escape(&mut self) -> Task<cosmic::Action<Self::Message>> {
-        if self.core.window.show_context {
+        if self.dock_open {
+            self.dock_open = false;
+        } else if self.core.window.show_context {
             self.core.window.show_context = false;
         } else if !self.query.is_empty() {
             self.query.clear();
@@ -777,6 +852,7 @@ impl AppModel {
         };
 
         let mut editor = text_editor::text_editor(&self.editor)
+            .id(self.editor_id.clone())
             .placeholder(fl!("untitled"))
             .font(retro::mono())
             .size(15)
@@ -830,6 +906,154 @@ impl AppModel {
                 ),
             ),
         )
+    }
+
+    /// The bottom dock: format actions for the open note, and `+`.
+    fn dock<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
+        let editable = self.current.as_ref().is_some_and(|n| !n.trashed);
+        let mut row = widget::row::with_capacity(16)
+            .spacing(2)
+            .align_y(Alignment::Center);
+
+        for format in Format::ALL {
+            let label = retro::text(p, format.glyph()).size(14);
+            let button = widget::button::custom(label)
+                .padding([4, 9])
+                .class(retro::row_class(p, false))
+                .on_press_maybe(editable.then_some(Message::Format(format)));
+            row = row.push(widget::tooltip(
+                button,
+                retro::dim(p, format.label()),
+                widget::tooltip::Position::Top,
+            ));
+        }
+
+        row = row.push(
+            widget::container(retro::dim(p, "│").class(cosmic::theme::Text::Color(p.mute)))
+                .padding([0, 4]),
+        );
+
+        let plus = widget::button::custom(retro::accent(p, "+").size(16))
+            .padding([2, 9])
+            .class(retro::row_class(p, self.dock_open))
+            .on_press(Message::ToggleDock);
+        row = row.push(widget::tooltip(
+            plus,
+            retro::dim(p, fl!("dock-plus")),
+            widget::tooltip::Position::Top,
+        ));
+
+        if self.dock_open {
+            row = row
+                .push(
+                    widget::button::custom(retro::text(p, fl!("dock-new-note")))
+                        .padding([4, 9])
+                        .class(retro::row_class(p, false))
+                        .on_press(Message::NewNote),
+                )
+                .push(
+                    widget::text_input(fl!("folder-name-placeholder"), &self.new_folder)
+                        .id(self.folder_id.clone())
+                        .font(retro::mono())
+                        .size(13)
+                        .padding([3, 8])
+                        .width(Length::Fixed(180.0))
+                        .leading_icon(
+                            widget::container(retro::accent2(p, "#"))
+                                .padding([0, 0, 0, 8])
+                                .into(),
+                        )
+                        .style(retro::search_class(p))
+                        .on_input(Message::NewFolderName)
+                        .on_submit(|_| Message::CreateFolder),
+                )
+                .push(
+                    widget::button::custom(retro::text(p, fl!("dock-new-folder")))
+                        .padding([4, 9])
+                        .class(retro::row_class(p, false))
+                        .on_press_maybe(
+                            (!self.new_folder.trim().is_empty()).then_some(Message::CreateFolder),
+                        ),
+                );
+        }
+
+        widget::container(
+            widget::container(row)
+                .padding([4, 8])
+                .class(retro::dock_class(p)),
+        )
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .into()
+    }
+
+    /// Apply a dock format action to the editor buffer.
+    fn apply_format(&mut self, format: Format) {
+        use text_editor::{Action, Edit, Motion};
+        let perform = |editor: &mut text_editor::Content, action: Action| editor.perform(action);
+        let insert_str = |editor: &mut text_editor::Content, s: &str| {
+            for c in s.chars() {
+                editor.perform(Action::Edit(if c == '\n' {
+                    Edit::Enter
+                } else {
+                    Edit::Insert(c)
+                }));
+            }
+        };
+
+        match format {
+            Format::Bold | Format::Italic | Format::Code | Format::Link => {
+                let (before, after) = match format {
+                    Format::Bold => ("**", "**"),
+                    Format::Italic => ("*", "*"),
+                    Format::Code => ("`", "`"),
+                    _ => ("[[", "]]"),
+                };
+                if let Some(selection) = self.editor.selection() {
+                    let text = format!("{before}{selection}{after}");
+                    perform(&mut self.editor, Action::Edit(Edit::Paste(Arc::new(text))));
+                } else {
+                    insert_str(&mut self.editor, before);
+                    insert_str(&mut self.editor, after);
+                    for _ in 0..after.chars().count() {
+                        perform(&mut self.editor, Action::Move(Motion::Left));
+                    }
+                }
+            }
+            Format::H1 | Format::H2 | Format::Bullet | Format::Todo => {
+                let prefix = match format {
+                    Format::H1 => "# ",
+                    Format::H2 => "## ",
+                    Format::Bullet => "- ",
+                    _ => "- [ ] ",
+                };
+                let cursor = self.editor.cursor();
+                let line = self
+                    .editor
+                    .line(cursor.position.line)
+                    .map(|l| l.text.into_owned())
+                    .unwrap_or_default();
+                perform(&mut self.editor, Action::Move(Motion::Home));
+                // Toggle: strip the same prefix if the line already carries it,
+                // otherwise replace a different line prefix and add ours.
+                let existing = ["- [ ] ", "- [x] ", "## ", "# ", "- "]
+                    .into_iter()
+                    .find(|p| line.starts_with(p));
+                if let Some(existing) = existing {
+                    for _ in 0..existing.chars().count() {
+                        perform(&mut self.editor, Action::Edit(Edit::Delete));
+                    }
+                }
+                if existing != Some(prefix) {
+                    insert_str(&mut self.editor, prefix);
+                }
+                perform(&mut self.editor, Action::Move(Motion::End));
+            }
+            Format::Tag => insert_str(&mut self.editor, "#"),
+            Format::Rule => insert_str(&mut self.editor, "\n---\n"),
+        }
+        self.dirty = true;
+        self.last_edit = Instant::now();
     }
 
     // ----- state -----
@@ -957,6 +1181,16 @@ impl AppModel {
                 None => Task::none(),
             },
             Step::Pin => self.update(Message::TogglePin),
+            Step::Folder(name) => {
+                self.new_folder = name;
+                self.update(Message::CreateFolder)
+            }
+            Step::Format(key) => match Format::ALL.into_iter().find(|f| f.key() == key) {
+                Some(format) => self.update(Message::Format(format)),
+                None => Task::none(),
+            },
+            Step::SelectAll => self.update(Message::Editor(text_editor::Action::SelectAll)),
+            Step::Dock => self.update(Message::ToggleDock),
             Step::Trash => self.update(Message::TrashCurrent),
             Step::Wait(_) => Task::none(),
             Step::Exit => {
@@ -1090,6 +1324,81 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
         MenuAction::TrashNote,
     );
     binds
+}
+
+/// Markdown formatting actions offered by the dock.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Format {
+    Bold,
+    Italic,
+    Code,
+    H1,
+    H2,
+    Bullet,
+    Todo,
+    Link,
+    Tag,
+    Rule,
+}
+
+impl Format {
+    pub const ALL: [Format; 10] = [
+        Format::Bold,
+        Format::Italic,
+        Format::Code,
+        Format::H1,
+        Format::H2,
+        Format::Bullet,
+        Format::Todo,
+        Format::Link,
+        Format::Tag,
+        Format::Rule,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            Format::Bold => "bold",
+            Format::Italic => "italic",
+            Format::Code => "code",
+            Format::H1 => "h1",
+            Format::H2 => "h2",
+            Format::Bullet => "bullet",
+            Format::Todo => "todo",
+            Format::Link => "link",
+            Format::Tag => "tag",
+            Format::Rule => "rule",
+        }
+    }
+
+    fn glyph(self) -> &'static str {
+        match self {
+            Format::Bold => "B",
+            Format::Italic => "I",
+            Format::Code => "`",
+            Format::H1 => "H1",
+            Format::H2 => "H2",
+            Format::Bullet => "•",
+            Format::Todo => "☐",
+            Format::Link => "[[ ]]",
+            Format::Tag => "#",
+            Format::Rule => "—",
+        }
+    }
+
+    fn label(self) -> String {
+        match self {
+            Format::Bold => fl!("dock-bold"),
+            Format::Italic => fl!("dock-italic"),
+            Format::Code => fl!("dock-code"),
+            Format::H1 => fl!("dock-h1"),
+            Format::H2 => fl!("dock-h2"),
+            Format::Bullet => fl!("dock-bullet"),
+            Format::Todo => fl!("dock-todo"),
+            Format::Link => fl!("dock-link"),
+            Format::Tag => fl!("dock-tag"),
+            Format::Rule => fl!("dock-rule"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]

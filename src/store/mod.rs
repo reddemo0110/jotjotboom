@@ -22,13 +22,25 @@ pub struct Store {
     dir: NotesDir,
     db: Db,
     device_id: String,
+    /// Tags the user created as "folders" before any note carried them.
+    /// Persisted in `<notes dir>/.folders`, one per line, so they survive
+    /// an index rebuild.
+    folders: Vec<String>,
 }
+
+const FOLDERS_FILE: &str = ".folders";
 
 impl Store {
     pub fn open(notes_dir: PathBuf, index_path: &Path, device_id: String) -> Result<Self> {
         let dir = NotesDir::open(notes_dir)?;
         let db = Db::open(index_path)?;
-        let mut store = Self { dir, db, device_id };
+        let folders = read_folders(&dir.root().join(FOLDERS_FILE));
+        let mut store = Self {
+            dir,
+            db,
+            device_id,
+            folders,
+        };
         let changed = store.reindex()?;
         tracing::info!(notes = store.db.count()?, changed, dir = %store.dir.root().display(), "store opened");
         if store.db.count()? == 0 {
@@ -121,8 +133,44 @@ impl Store {
         self.db.search(query, view)
     }
 
+    /// Tags carried by notes plus user-created folders (count 0 when empty).
     pub fn tags(&self) -> Result<Vec<(String, usize)>> {
-        self.db.tags()
+        let mut tags = self.db.tags()?;
+        for folder in &self.folders {
+            if !tags.iter().any(|(t, _)| t == folder) {
+                tags.push((folder.clone(), 0));
+            }
+        }
+        tags.sort();
+        Ok(tags)
+    }
+
+    pub fn folders(&self) -> &[String] {
+        &self.folders
+    }
+
+    /// Create a folder (a tag with no notes yet). Returns the normalised name.
+    pub fn add_folder(&mut self, name: &str) -> Result<Option<String>> {
+        let Some(tag) = note::normalize_tag(name) else {
+            return Ok(None);
+        };
+        if !self.folders.contains(&tag) {
+            self.folders.push(tag.clone());
+            self.folders.sort();
+            self.write_folders()?;
+        }
+        Ok(Some(tag))
+    }
+
+    pub fn remove_folder(&mut self, name: &str) -> Result<()> {
+        self.folders.retain(|f| f != name);
+        self.write_folders()
+    }
+
+    fn write_folders(&self) -> Result<()> {
+        let text = self.folders.join("\n") + "\n";
+        self.dir
+            .write_atomic(&self.dir.root().join(FOLDERS_FILE), &text)
     }
 
     pub fn backlinks(&self, title: &str) -> Result<Vec<NoteSummary>> {
@@ -276,13 +324,14 @@ impl Store {
         self.db.remove(id)
     }
 
-    /// Notes created and never typed into are dropped rather than left as
-    /// `Untitled.md` litter. Returns true if it was deleted.
+    /// Notes created and never typed into (a pre-filled folder tag doesn't
+    /// count) are dropped rather than left as `Untitled.md` litter.
+    /// Returns true if it was deleted.
     pub fn delete_if_empty(&mut self, id: &str) -> Result<bool> {
         let Some(n) = self.load(id)? else {
             return Ok(false);
         };
-        if n.body.trim().is_empty() && !n.trashed {
+        if note::is_blank(&n.body) && !n.trashed {
             self.delete_forever(id)?;
             return Ok(true);
         }
@@ -301,6 +350,17 @@ impl Store {
         n.body = WELCOME.to_owned();
         self.save(&mut n)
     }
+}
+
+fn read_folders(path: &Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(note::normalize_tag)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 const WELCOME: &str = "# Welcome to JotJotBoom
@@ -384,6 +444,36 @@ mod tests {
         let e = store.create().unwrap();
         assert!(store.delete_if_empty(&e.id).unwrap());
         assert!(!e.path.exists());
+    }
+
+    #[test]
+    fn folders_persist_and_merge_into_tags() {
+        let (mut store, tmp) = temp_store();
+        assert_eq!(
+            store.add_folder("Work Stuff").unwrap().as_deref(),
+            Some("work-stuff")
+        );
+        assert_eq!(store.add_folder("#").unwrap(), None);
+        assert!(
+            store
+                .tags()
+                .unwrap()
+                .contains(&("work-stuff".to_string(), 0))
+        );
+        drop(store);
+        let mut store = Store::open(
+            tmp.path().join("notes"),
+            &tmp.path().join("index.db"),
+            "dev".into(),
+        )
+        .unwrap();
+        assert_eq!(store.folders(), ["work-stuff"]);
+        // A tag-only note is still "blank" and gets dropped.
+        let mut n = store.create().unwrap();
+        n.body = "\n\n#work-stuff\n".into();
+        store.save(&mut n).unwrap();
+        assert_eq!(n.title, note::UNTITLED);
+        assert!(store.delete_if_empty(&n.id).unwrap());
     }
 
     #[test]

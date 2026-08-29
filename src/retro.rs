@@ -322,6 +322,21 @@ pub fn editor_style(
     }
 }
 
+/// The floating dock tray at the bottom.
+pub fn dock_class(p: &Palette) -> theme::Container<'static> {
+    let panel = p.panel;
+    let border = p.border;
+    theme::Container::custom(move |_| widget::container::Style {
+        background: Some(Background::Color(panel)),
+        border: Border {
+            color: border,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        ..Default::default()
+    })
+}
+
 /// Window background/text defaults for the content area.
 pub fn app_style(p: &Palette) -> cosmic::iced::theme::Style {
     cosmic::iced::theme::Style {
