@@ -514,6 +514,140 @@ pub fn swatch<'a, M: Clone + 'static>(
     .into()
 }
 
+// ---------- image cards ----------
+
+fn plain_box<'a, M: 'static>(
+    p: &Palette,
+    content: Element<'a, M>,
+    bg: Color,
+    border: Color,
+    radius: f32,
+    padding: [u16; 4],
+) -> Element<'a, M> {
+    let _ = p;
+    widget::container(content)
+        .padding(padding)
+        .width(Length::Fill)
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(Background::Color(bg)),
+                border: Border {
+                    color: border,
+                    width: 1.0,
+                    radius: radius.into(),
+                },
+                ..Default::default()
+            }
+        }))
+        .into()
+}
+
+/// Thin 1px border, for tinted / dithered / pixel images.
+pub fn bordered<'a, M: 'static>(p: &Palette, content: Element<'a, M>) -> Element<'a, M> {
+    plain_box(p, content, p.bg, p.border, 3.0, [3, 3, 3, 3])
+}
+
+/// Rounded dark bezel with an accent glow line.
+pub fn bezel<'a, M: 'static>(p: &Palette, content: Element<'a, M>) -> Element<'a, M> {
+    let inner = plain_box(p, content, Color::BLACK, p.mute, 8.0, [2, 2, 2, 2]);
+    let shell = Color {
+        a: 0.9,
+        ..Color::BLACK
+    };
+    plain_box(
+        p,
+        inner,
+        shell,
+        p.accent.scale_alpha(0.35),
+        14.0,
+        [12, 12, 12, 12],
+    )
+}
+
+/// Off-white instant print with the alt text as a handwritten caption.
+pub fn print<'a, M: 'static>(
+    p: &Palette,
+    content: Element<'a, M>,
+    caption: String,
+) -> Element<'a, M> {
+    let paper = hex(0xe9e6da);
+    let ink = hex(0x3a3630);
+    let col = widget::column::with_capacity(2)
+        .push(content)
+        .push(
+            widget::container(
+                widget::text(caption)
+                    .font(TITLE_FONT)
+                    .size(20)
+                    .class(theme::Text::Color(ink)),
+            )
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+            .padding([6, 0, 2, 0]),
+        )
+        .spacing(4);
+    plain_box(p, col.into(), paper, hex(0xd6d2c4), 2.0, [10, 10, 14, 10])
+}
+
+/// Film strip: sprocket holes above and below, frame number in the corner.
+pub fn film<'a, M: 'static>(p: &Palette, content: Element<'a, M>, number: usize) -> Element<'a, M> {
+    let strip = hex(0x0b0f0c);
+    let holes = || {
+        let mut row = widget::row::with_capacity(12).spacing(9);
+        for _ in 0..12 {
+            row = row.push(
+                widget::container(widget::Space::new().width(9).height(7)).class(
+                    theme::Container::custom(|_| widget::container::Style {
+                        background: Some(Background::Color(hex(0x1f1f22))),
+                        border: Border {
+                            radius: 2.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                ),
+            );
+        }
+        widget::container(row)
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+            .padding([3, 0])
+    };
+    let label = widget::container(
+        widget::text(format!("▶ {number:02}A"))
+            .font(TITLE_FONT)
+            .size(15)
+            .class(theme::Text::Color(p.accent)),
+    )
+    .width(Length::Fill)
+    .align_x(Alignment::End)
+    .padding([0, 4]);
+    let col = widget::column::with_capacity(4)
+        .push(holes())
+        .push(widget::container(content).padding([0, 10]))
+        .push(label)
+        .push(holes())
+        .spacing(2);
+    plain_box(p, col.into(), strip, p.border, 2.0, [2, 0, 2, 0])
+}
+
+/// ASCII rendering in the accent colour.
+pub fn ascii_card<'a, M: 'static>(p: &Palette, text: String) -> Element<'a, M> {
+    let txt = widget::text(text)
+        .font(mono())
+        .size(6)
+        .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.05))
+        .class(theme::Text::Color(p.accent));
+    plain_box(
+        p,
+        widget::container(txt).into(),
+        p.bg,
+        p.border,
+        3.0,
+        [6, 6, 6, 6],
+    )
+}
+
 /// The floating dock tray at the bottom.
 pub fn dock_class(p: &Palette) -> theme::Container<'static> {
     let panel = p.panel;

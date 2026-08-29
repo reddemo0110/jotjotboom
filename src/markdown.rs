@@ -217,7 +217,13 @@ fn scan_inline(line: &str, start: usize, base: Option<Kind>, spans: &mut Vec<Spa
                 i += run.max(1);
             }
             b'!' if bytes.get(i + 1) == Some(&b'[') => {
-                if let Some(end) = link_end(line, i + 1) {
+                if let Some(mut end) = link_end(line, i + 1) {
+                    // Trailing `{frame=… size=…}` attributes belong to the image.
+                    if bytes.get(end) == Some(&b'{')
+                        && let Some(close) = line[end..].find('}')
+                    {
+                        end = end + close + 1;
+                    }
                     push(spans, &mut gap_start, i, end, Kind::LinkUrl);
                     i = end;
                     continue;
@@ -484,6 +490,14 @@ mod tests {
                 ("s", Kind::Strike),
                 ("~~", Kind::Marker),
             ]
+        );
+    }
+
+    #[test]
+    fn image_lines_ghost_their_attributes() {
+        assert_eq!(
+            kinds("![alt](assets/a.png){frame=tint size=l} after"),
+            vec![("![alt](assets/a.png){frame=tint size=l}", Kind::LinkUrl)]
         );
     }
 

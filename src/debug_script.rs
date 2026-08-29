@@ -33,6 +33,14 @@ pub enum Step {
     Themes,
     /// Toggle editor-only layout.
     Solo,
+    /// Import an image file into the note.
+    Image(String),
+    /// Cycle the frame style of the n-th image reference.
+    CycleFrame(usize),
+    /// Cycle the size of the n-th image reference.
+    CycleSize(usize),
+    /// Set image placement: rail, top, bottom.
+    Placement(String),
     /// Switch theme by key.
     Theme(String),
     /// Pause for the given milliseconds (lets autosave run).
@@ -65,6 +73,10 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "dock" => Step::Dock,
                 "themes" => Step::Themes,
                 "solo" => Step::Solo,
+                "image" => Step::Image(unescape(arg)),
+                "cycleframe" => Step::CycleFrame(arg.trim().parse().ok()?),
+                "cyclesize" => Step::CycleSize(arg.trim().parse().ok()?),
+                "placement" => Step::Placement(arg.trim().to_owned()),
                 "theme" => Step::Theme(arg.trim().to_owned()),
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
                 "exit" => Step::Exit,

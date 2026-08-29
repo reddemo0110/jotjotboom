@@ -135,3 +135,25 @@ separated from its foreground.
 - Icon lookup only searches the Cosmic/Pop themes (Adwaita-only names such
   as `view-pin-symbolic` silently render nothing) — use `pin-symbolic`,
   `sidebar-places-symbolic`, `view-list-symbolic`.
+
+## 2026-08-29 — Images
+User picked *all* frame styles from the canvas, so every one is a per-image
+option; placement is a setting with all three feasible layouts.
+- **Format**: whole-line `![alt](assets/x.png){frame=tint size=m}`; the
+  braces are Pandoc-style attributes, ignored by other markdown tools.
+  Default frame/size are omitted so a plain `![alt](path)` stays plain.
+- **Assets** live in `<notes dir>/assets/`, copied on import with readable
+  unique names (`my-photo.png`, `my-photo-2.png`). Import via drag-and-drop
+  onto the window or the `⧉` dock button (portal file picker). Clipboard
+  paste is not wired yet (`images::import_bytes` is ready for it).
+- **Treatments** (`images.rs`): tint (luma → bg…accent ramp), dither
+  (Floyd–Steinberg to bg/mute/dim/fg), pixel (nearest to ~96px and back),
+  bezel (every 3rd row darkened + vignette, in a rounded shell), ASCII
+  (72 cols, accent text), print (off-white card + VT323 caption), film
+  (sprocket rows + frame number), box (btop frame + size badge). Images are
+  downscaled to ≤720px, processed on a blocking thread, cached by
+  path|mtime|style|theme; theme-dependent styles re-render on theme change.
+- **Placement**: View → Images: right rail (default) / top strip / bottom
+  strip, persisted; a note can override with `images: top` in frontmatter.
+  Sizes S/M/L per image. Each card has chips: cycle frame, cycle size, open
+  in the system viewer. Inline flow waits for the custom editor.

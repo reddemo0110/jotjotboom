@@ -76,3 +76,12 @@ theme-picker-hint = Eight retro palettes and one that follows your desktop. Clic
 show-nav = Views and tags
 show-list = Notes list
 editor-only = Editor only
+
+# Images
+images-rail = Images: right rail
+images-top = Images: top strip
+images-bottom = Images: bottom strip
+dock-image = Add image
+pick-image = Add an image to this note
+image-files = Images
+open-image = open

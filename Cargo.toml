@@ -26,7 +26,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Debug-only self-screenshot (JJB_SCREENSHOT=path) for headless visual checks.
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
 
 # Secrets live in the system keyring from day one (sync tokens later).
 secret-service = { version = "5", features = ["rt-tokio-crypto-rust"] }

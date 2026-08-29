@@ -3,6 +3,7 @@
 use crate::config::Config;
 use crate::debug_script::{self, Step};
 use crate::fl;
+use crate::images::{self, FrameStyle, ImageRef, Processed};
 use crate::markdown;
 use crate::note::{Note, NoteSummary};
 use crate::retro::{self, Palette};
@@ -12,11 +13,12 @@ use cosmic::Application as _;
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::keyboard::{self, key::Physical};
-use cosmic::iced::{Alignment, Event, Length, Subscription, event};
+use cosmic::iced::{Alignment, Event, Length, Subscription, event, window};
 use cosmic::prelude::*;
 use cosmic::widget::menu::action::MenuAction as _;
 use cosmic::widget::{self, about::About, icon, menu, nav_bar, text_editor};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -39,6 +41,9 @@ pub struct AppModel {
     show_markers: bool,
     show_nav: bool,
     show_list: bool,
+    placement: Placement,
+    /// Processed images keyed by path|mtime|style|theme.
+    image_cache: HashMap<String, ImageState>,
 
     store: Option<Store>,
     store_error: Option<String>,
@@ -79,6 +84,14 @@ pub enum Message {
     ToggleNav,
     ToggleList,
     ToggleSolo,
+    SetPlacement(Placement),
+    ImagesDropped(Vec<PathBuf>),
+    PickImage,
+    ImagePicked(Option<PathBuf>),
+    ImageLoaded(String, Result<Processed, String>),
+    CycleFrame(usize),
+    CycleSize(usize),
+    OpenImage(String),
     FontLoaded,
 
     Editor(text_editor::Action),
@@ -167,6 +180,7 @@ impl cosmic::Application for AppModel {
         let theme = retro::Theme::from_key(&config.theme);
         let show_markers = config.show_markers;
         let (show_nav, show_list) = (!config.hide_nav, !config.hide_list);
+        let placement = Placement::from_key(&config.image_placement);
         let mut app = AppModel {
             core,
             context_page: ContextPage::default(),
@@ -178,6 +192,8 @@ impl cosmic::Application for AppModel {
             show_markers,
             show_nav,
             show_list,
+            placement,
+            image_cache: HashMap::new(),
             store,
             store_error,
             view: View::All,
@@ -230,6 +246,25 @@ impl cosmic::Application for AppModel {
                 MenuAction::ToggleList,
             ),
             menu::Item::Button(fl!("editor-only"), None, MenuAction::Solo),
+            menu::Item::Divider,
+            menu::Item::CheckBox(
+                fl!("images-rail"),
+                None,
+                self.placement == Placement::Rail,
+                MenuAction::Placement(Placement::Rail),
+            ),
+            menu::Item::CheckBox(
+                fl!("images-top"),
+                None,
+                self.placement == Placement::Top,
+                MenuAction::Placement(Placement::Top),
+            ),
+            menu::Item::CheckBox(
+                fl!("images-bottom"),
+                None,
+                self.placement == Placement::Bottom,
+                MenuAction::Placement(Placement::Bottom),
+            ),
             menu::Item::Divider,
             menu::Item::Button(fl!("theme-colours"), None, MenuAction::Themes),
             menu::Item::CheckBox(
@@ -428,6 +463,9 @@ impl cosmic::Application for AppModel {
                     physical_key,
                     ..
                 }) => Some(Message::Key(modifiers, key, physical_key)),
+                Event::Window(window::Event::FileDropped(paths)) => {
+                    Some(Message::ImagesDropped(paths))
+                }
                 _ => None,
             }),
         ];
@@ -458,7 +496,113 @@ impl cosmic::Application for AppModel {
     }
 
     fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
+        let task = self.update_inner(message);
+        let loads = self.image_loads();
+        if loads.is_empty() {
+            task
+        } else {
+            Task::batch(std::iter::once(task).chain(loads))
+        }
+    }
+
+    fn on_escape(&mut self) -> Task<cosmic::Action<Self::Message>> {
+        if self.dock_open {
+            self.dock_open = false;
+        } else if self.core.window.show_context {
+            self.core.window.show_context = false;
+        } else if !self.query.is_empty() {
+            self.query.clear();
+            self.refresh_list();
+        }
+        Task::none()
+    }
+
+    fn on_app_exit(&mut self) -> Option<Self::Message> {
+        self.close_current();
+        None
+    }
+}
+
+impl AppModel {
+    fn update_inner(&mut self, message: Message) -> Task<cosmic::Action<Message>> {
         match message {
+            Message::SetPlacement(placement) => {
+                self.placement = placement;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self
+                        .config
+                        .set_image_placement(handler, placement.key().to_owned())
+                {
+                    tracing::warn!(%why, "could not persist image placement");
+                }
+            }
+
+            Message::ImagesDropped(paths) => {
+                let mut task = Task::none();
+                for path in paths.into_iter().filter(|p| images::is_image_file(p)) {
+                    task = self.import_image(&path);
+                }
+                return task;
+            }
+
+            Message::PickImage => {
+                if self.current.as_ref().is_none_or(|n| n.trashed) {
+                    return Task::none();
+                }
+                let label = fl!("image-files");
+                let mut filter = cosmic::dialog::file_chooser::FileFilter::new(&label);
+                for glob in ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.bmp"] {
+                    filter = filter.glob(glob);
+                }
+                let dialog = cosmic::dialog::file_chooser::open::Dialog::new()
+                    .title(fl!("pick-image"))
+                    .filter(filter);
+                return Task::perform(
+                    async move {
+                        match dialog.open_file().await {
+                            Ok(response) => response.url().to_file_path().ok(),
+                            Err(err) => {
+                                tracing::warn!(%err, "image picker");
+                                None
+                            }
+                        }
+                    },
+                    |path| cosmic::Action::App(Message::ImagePicked(path)),
+                );
+            }
+
+            Message::ImagePicked(Some(path)) => return self.import_image(&path),
+            Message::ImagePicked(None) => {}
+
+            Message::ImageLoaded(key, result) => {
+                let state = match result {
+                    Ok(Processed::Pixels {
+                        width,
+                        height,
+                        rgba,
+                    }) => ImageState::Ready(
+                        widget::image::Handle::from_rgba(width, height, rgba),
+                        width,
+                        height,
+                    ),
+                    Ok(Processed::Ascii(text)) => ImageState::Ascii(text),
+                    Err(err) => ImageState::Failed(err),
+                };
+                self.image_cache.insert(key, state);
+            }
+
+            Message::CycleFrame(index) => self.edit_image_ref(index, |r| r.frame = r.frame.next()),
+            Message::CycleSize(index) => self.edit_image_ref(index, |r| r.size = r.size.next()),
+
+            Message::OpenImage(rel) => {
+                if let Some(store) = &self.store {
+                    let path = images::resolve(store.notes_dir(), &rel);
+                    if let Err(err) = open::that_detached(&path) {
+                        tracing::warn!(%err, "opening image");
+                    }
+                }
+            }
+
             Message::FontLoaded => {}
 
             Message::SetTheme(theme) => {
@@ -756,25 +900,6 @@ impl cosmic::Application for AppModel {
         Task::none()
     }
 
-    fn on_escape(&mut self) -> Task<cosmic::Action<Self::Message>> {
-        if self.dock_open {
-            self.dock_open = false;
-        } else if self.core.window.show_context {
-            self.core.window.show_context = false;
-        } else if !self.query.is_empty() {
-            self.query.clear();
-            self.refresh_list();
-        }
-        Task::none()
-    }
-
-    fn on_app_exit(&mut self) -> Option<Self::Message> {
-        self.close_current();
-        None
-    }
-}
-
-impl AppModel {
     fn palette(&self) -> Palette {
         self.theme.palette(self.core.system_theme())
     }
@@ -949,8 +1074,43 @@ impl AppModel {
             editor = editor.on_action(Message::Editor);
         }
 
+        let refs = images::parse_refs(&self.editor.text());
+        let placement = self.note_placement(note);
+        let text_area: Element<'a, Message> = if refs.is_empty() {
+            editor.into()
+        } else {
+            match placement {
+                Placement::Rail => widget::row::with_capacity(2)
+                    .push(editor)
+                    .push(
+                        widget::container(widget::scrollable(self.image_stack(p, &refs, 232.0)))
+                            .width(Length::Fixed(240.0))
+                            .height(Length::Fill)
+                            .padding([4, 0, 0, 4]),
+                    )
+                    .spacing(8)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into(),
+                Placement::Top => widget::column::with_capacity(2)
+                    .push(self.image_strip(p, &refs))
+                    .push(editor)
+                    .spacing(8)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into(),
+                Placement::Bottom => widget::column::with_capacity(2)
+                    .push(editor)
+                    .push(self.image_strip(p, &refs))
+                    .spacing(8)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into(),
+            }
+        };
+
         let mut column = widget::column::with_capacity(3)
-            .push(editor)
+            .push(text_area)
             .spacing(8)
             .width(Length::Fill)
             .height(Length::Fill);
@@ -1026,6 +1186,15 @@ impl AppModel {
                 .class(retro::row_class(p, self.dock_open))
                 .on_press(Message::ToggleDock),
             retro::dim(p, fl!("dock-plus")),
+            widget::tooltip::Position::Top,
+        ));
+
+        row = row.push(widget::tooltip(
+            widget::button::custom(retro::accent(p, "⧉").size(15))
+                .padding([2, 7])
+                .class(retro::row_class(p, false))
+                .on_press_maybe(editable.then_some(Message::PickImage)),
+            retro::dim(p, fl!("dock-image")),
             widget::tooltip::Position::Top,
         ));
 
@@ -1184,6 +1353,242 @@ impl AppModel {
         }
         self.dirty = true;
         self.last_edit = Instant::now();
+    }
+
+    // ----- images -----
+
+    /// Per-note `images:` frontmatter overrides the global placement.
+    fn note_placement(&self, note: &Note) -> Placement {
+        note.extra_frontmatter
+            .iter()
+            .find_map(|l| l.strip_prefix("images:").map(str::trim))
+            .and_then(Placement::from_key_opt)
+            .unwrap_or(self.placement)
+    }
+
+    fn image_key(&self, r: &ImageRef) -> Option<(String, PathBuf)> {
+        let store = self.store.as_ref()?;
+        let path = images::resolve(store.notes_dir(), &r.path);
+        let mtime = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos());
+        let theme = if r.frame.themed() {
+            self.theme.key()
+        } else {
+            ""
+        };
+        Some((
+            format!("{}|{mtime}|{}|{theme}", path.display(), r.frame.key()),
+            path,
+        ))
+    }
+
+    /// Spawn loads for every referenced image not yet in the cache.
+    fn image_loads(&mut self) -> Vec<Task<cosmic::Action<Message>>> {
+        let Some(note) = &self.current else {
+            return Vec::new();
+        };
+        if note.trashed {
+            return Vec::new();
+        }
+        let palette = self.palette();
+        let refs = images::parse_refs(&self.editor.text());
+        let mut tasks = Vec::new();
+        for r in refs {
+            let Some((key, path)) = self.image_key(&r) else {
+                continue;
+            };
+            if self.image_cache.contains_key(&key) {
+                continue;
+            }
+            self.image_cache.insert(key.clone(), ImageState::Loading);
+            let style = r.frame;
+            tasks.push(Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        images::load_and_process(&path, style, palette)
+                    })
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r.map_err(|e| format!("{e:#}")))
+                },
+                move |result| cosmic::Action::App(Message::ImageLoaded(key.clone(), result)),
+            ));
+        }
+        tasks
+    }
+
+    /// Copy a file into assets/ and add its line to the note at the cursor.
+    fn import_image(&mut self, path: &std::path::Path) -> Task<cosmic::Action<Message>> {
+        if self.current.as_ref().is_none_or(|n| n.trashed) {
+            return Task::none();
+        }
+        let Some(store) = &self.store else {
+            return Task::none();
+        };
+        let rel = match images::import_asset(store.notes_dir(), path) {
+            Ok(rel) => rel,
+            Err(err) => {
+                tracing::error!(%err, "importing image");
+                return Task::none();
+            }
+        };
+        let alt = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image")
+            .to_owned();
+        let line = ImageRef {
+            line: 0,
+            alt,
+            path: rel,
+            frame: FrameStyle::default(),
+            size: images::Size::default(),
+        }
+        .to_markdown();
+        use text_editor::{Action, Edit, Motion};
+        let cursor = self.editor.cursor();
+        let current_line_empty = self
+            .editor
+            .line(cursor.position.line)
+            .is_none_or(|l| l.text.trim().is_empty());
+        self.editor.perform(Action::Move(Motion::End));
+        if !current_line_empty {
+            self.editor.perform(Action::Edit(Edit::Enter));
+        }
+        for c in line.chars() {
+            self.editor.perform(Action::Edit(Edit::Insert(c)));
+        }
+        self.editor.perform(Action::Edit(Edit::Enter));
+        self.dirty = true;
+        self.last_edit = Instant::now();
+        widget::text_input::focus(self.editor_id.clone())
+    }
+
+    /// Rewrite the n-th image line after mutating its reference.
+    fn edit_image_ref(&mut self, index: usize, f: impl FnOnce(&mut ImageRef)) {
+        let body = self.editor.text();
+        let refs = images::parse_refs(&body);
+        let Some(mut r) = refs.get(index).cloned() else {
+            return;
+        };
+        f(&mut r);
+        let new_body = images::replace_line(&body, r.line, &r.to_markdown());
+        let cursor = self.editor.cursor();
+        self.editor = text_editor::Content::with_text(&new_body);
+        self.editor.move_to(cursor);
+        self.dirty = true;
+        self.last_edit = Instant::now();
+    }
+
+    fn image_stack<'a>(
+        &'a self,
+        p: &Palette,
+        refs: &[ImageRef],
+        width: f32,
+    ) -> Element<'a, Message> {
+        let mut col = widget::column::with_capacity(refs.len())
+            .spacing(14)
+            .width(Length::Fixed(width));
+        for (i, r) in refs.iter().enumerate() {
+            let w = match r.size {
+                images::Size::S => width * 0.55,
+                images::Size::M => width * 0.8,
+                images::Size::L => width,
+            };
+            col = col.push(self.image_card(p, r, i, w));
+        }
+        col.into()
+    }
+
+    fn image_strip<'a>(&'a self, p: &Palette, refs: &[ImageRef]) -> Element<'a, Message> {
+        let mut row = widget::row::with_capacity(refs.len())
+            .spacing(14)
+            .align_y(Alignment::Start);
+        for (i, r) in refs.iter().enumerate() {
+            let w = match r.size {
+                images::Size::S => 130.0,
+                images::Size::M => 210.0,
+                images::Size::L => 320.0,
+            };
+            row = row.push(self.image_card(p, r, i, w));
+        }
+        widget::container(widget::scrollable(row).direction(
+            cosmic::iced::widget::scrollable::Direction::Horizontal(
+                cosmic::iced::widget::scrollable::Scrollbar::default(),
+            ),
+        ))
+        .padding([6, 4])
+        .width(Length::Fill)
+        .into()
+    }
+
+    /// One image with its frame treatment and the chips to change it.
+    fn image_card<'a>(
+        &'a self,
+        p: &Palette,
+        r: &ImageRef,
+        index: usize,
+        width: f32,
+    ) -> Element<'a, Message> {
+        let state = self
+            .image_key(r)
+            .and_then(|(k, _)| self.image_cache.get(&k));
+        let pic: Element<'a, Message> = match state {
+            Some(ImageState::Ready(handle, w, h)) => {
+                let (w, h) = (*w, *h);
+                let img = widget::image(handle.clone())
+                    .width(Length::Fill)
+                    .content_fit(cosmic::iced::ContentFit::Contain);
+                match r.frame {
+                    FrameStyle::Box => {
+                        retro::frame(p, r.file_name().to_owned(), Some(format!("{w}×{h}")), img)
+                    }
+                    FrameStyle::Tint | FrameStyle::Dither | FrameStyle::Pixel => {
+                        retro::bordered(p, img.into())
+                    }
+                    FrameStyle::Bezel => retro::bezel(p, img.into()),
+                    FrameStyle::Print => retro::print(p, img.into(), r.alt.clone()),
+                    FrameStyle::Film => retro::film(p, img.into(), index + 1),
+                    FrameStyle::Ascii => retro::bordered(p, img.into()),
+                }
+            }
+            Some(ImageState::Ascii(text)) => retro::ascii_card(p, text.clone()),
+            Some(ImageState::Failed(err)) => widget::container(retro::dim(p, format!("⚠ {err}")))
+                .padding(8)
+                .width(Length::Fill)
+                .into(),
+            Some(ImageState::Loading) | None => widget::container(retro::dim(p, "…"))
+                .padding(8)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+                .into(),
+        };
+
+        let chip = |label: String, msg: Message| {
+            widget::button::custom(retro::dim(p, label).size(11))
+                .padding([1, 5])
+                .class(retro::row_class(p, false))
+                .on_press(msg)
+        };
+        let chips = widget::row::with_capacity(4)
+            .push(chip(
+                format!("{} ▸", r.frame.label()),
+                Message::CycleFrame(index),
+            ))
+            .push(chip(r.size.label().to_owned(), Message::CycleSize(index)))
+            .push(chip(fl!("open-image"), Message::OpenImage(r.path.clone())))
+            .spacing(2)
+            .align_y(Alignment::Center);
+
+        widget::column::with_capacity(2)
+            .push(pic)
+            .push(chips)
+            .spacing(3)
+            .width(Length::Fixed(width))
+            .into()
     }
 
     fn persist_layout(&mut self) {
@@ -1346,6 +1751,10 @@ impl AppModel {
             Step::Dock => self.update(Message::ToggleDock),
             Step::Themes => self.update(Message::ToggleContextPage(ContextPage::Themes)),
             Step::Solo => self.update(Message::ToggleSolo),
+            Step::Image(path) => self.update(Message::ImagesDropped(vec![PathBuf::from(path)])),
+            Step::CycleFrame(i) => self.update(Message::CycleFrame(i)),
+            Step::CycleSize(i) => self.update(Message::CycleSize(i)),
+            Step::Placement(key) => self.update(Message::SetPlacement(Placement::from_key(&key))),
             Step::Theme(key) => self.update(Message::SetTheme(retro::Theme::from_key(&key))),
             Step::Trash => self.update(Message::TrashCurrent),
             Step::Wait(_) => Task::none(),
@@ -1503,6 +1912,45 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     binds
 }
 
+/// Where images sit relative to the text.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum Placement {
+    #[default]
+    Rail,
+    Top,
+    Bottom,
+}
+
+impl Placement {
+    pub fn key(self) -> &'static str {
+        match self {
+            Placement::Rail => "rail",
+            Placement::Top => "top",
+            Placement::Bottom => "bottom",
+        }
+    }
+    pub fn from_key_opt(key: &str) -> Option<Placement> {
+        match key {
+            "rail" => Some(Placement::Rail),
+            "top" => Some(Placement::Top),
+            "bottom" => Some(Placement::Bottom),
+            _ => None,
+        }
+    }
+    pub fn from_key(key: &str) -> Placement {
+        Placement::from_key_opt(key).unwrap_or_default()
+    }
+}
+
+/// A processed image ready for display (or on its way).
+#[derive(Debug, Clone)]
+pub enum ImageState {
+    Loading,
+    Ready(widget::image::Handle, u32, u32),
+    Ascii(String),
+    Failed(String),
+}
+
 /// Markdown formatting actions offered by the dock.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Format {
@@ -1596,6 +2044,7 @@ pub enum MenuAction {
     ToggleNav,
     ToggleList,
     Solo,
+    Placement(Placement),
 }
 
 impl menu::action::MenuAction for MenuAction {
@@ -1612,6 +2061,7 @@ impl menu::action::MenuAction for MenuAction {
             MenuAction::ToggleNav => Message::ToggleNav,
             MenuAction::ToggleList => Message::ToggleList,
             MenuAction::Solo => Message::ToggleSolo,
+            MenuAction::Placement(p) => Message::SetPlacement(*p),
         }
     }
 }

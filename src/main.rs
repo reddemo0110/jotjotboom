@@ -4,6 +4,7 @@ mod app;
 mod config;
 mod debug_script;
 mod i18n;
+mod images;
 mod markdown;
 mod note;
 mod retro;
