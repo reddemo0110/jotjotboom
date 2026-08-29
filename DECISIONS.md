@@ -250,3 +250,14 @@ Copy of Big Fish in Little China with the tangerine accent muted
   seconds. If a save fails the badge becomes "✗ not saved — last saved
   hh:mm" (tooltip has the error) and the edit stays pending with a retry
   every ~5 s until a save succeeds.
+
+## 2026-08-29 — App icon and per-user install
+- Icon: 128px SVG, no text (icon renderers can't be trusted to have our
+  fonts): phosphor-green terminal frame with a two-dot "jot jot" title notch,
+  three text lines, a block cursor, and an 8-point burst breaking out of the
+  frame for "boom". Reads at 48px.
+- `just install-user` installs without sudo into `~/.local` (binary,
+  desktop entry with an absolute `Exec` because `~/.local/bin` is not on this
+  machine's PATH, icon under hicolor/scalable/apps, metainfo) and refreshes
+  the desktop/icon caches. The template's `install` recipe had the icon
+  destination pointing at the directory, not the file — fixed.

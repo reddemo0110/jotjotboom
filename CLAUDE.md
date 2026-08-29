@@ -11,6 +11,8 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
 - `cargo build` / `cargo run` — debug build, launches on the current Wayland session
 - `cargo test` — unit tests (note format, SQLite/FTS5 index, store round-trips)
 - `just run` — release build + run; `just check` — clippy pedantic
+- `just install-user` — release build + per-user install (~/.local: binary,
+  launcher entry with absolute Exec, icon, metainfo); `just uninstall-user`
 - `RUST_LOG=jotjotboom=debug cargo run` for tracing output
 - Visual check without a human: `tools/xshot.py out.png [--keys ctrl+n --type 'text']`
   runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (steps:

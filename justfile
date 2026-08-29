@@ -23,7 +23,7 @@ appdata-dst := base-dir / 'share' / 'appdata' / appdata
 bin-dst := base-dir / 'bin' / name
 desktop-dst := base-dir / 'share' / 'applications' / desktop
 icons-dst := base-dir / 'share' / 'icons' / 'hicolor'
-icon-svg-dst := icons-dst / 'scalable' / 'apps'
+icon-svg-dst := icons-dst / 'scalable' / 'apps' / icon-svg
 
 # Default recipe which runs `just build-release`
 default: build-release
@@ -70,6 +70,24 @@ install:
 # Uninstalls installed files
 uninstall:
     rm {{bin-dst}} {{desktop-dst}} {{icon-svg-dst}}
+
+# Per-user install (no sudo): ~/.local/bin, launcher entry, icon.
+# The desktop entry gets an absolute Exec so it works even if ~/.local/bin
+# is not on PATH.
+user-base := env('HOME') / '.local'
+install-user: build-release
+    install -Dm0755 {{ cargo-target-dir / 'release' / name }} {{ user-base / 'bin' / name }}
+    install -Dm0644 {{ 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'icon.svg' }} {{ user-base / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / icon-svg }}
+    install -Dm0644 {{ 'target' / 'xdgen' / 'app.metainfo.xml' }} {{ user-base / 'share' / 'metainfo' / appdata }}
+    sed 's|^Exec=.*|Exec={{ user-base / 'bin' / name }} %F|' {{ 'target' / 'xdgen' / 'app.desktop' }} > {{ user-base / 'share' / 'applications' / desktop }}
+    -update-desktop-database {{ user-base / 'share' / 'applications' }}
+    -gtk-update-icon-cache -q -t -f {{ user-base / 'share' / 'icons' / 'hicolor' }}
+    @echo "Installed. Find JotJotBoom in the app library; right-click it in the dock to pin."
+
+# Removes the per-user install
+uninstall-user:
+    rm -f {{ user-base / 'bin' / name }} {{ user-base / 'share' / 'applications' / desktop }} {{ user-base / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / icon-svg }} {{ user-base / 'share' / 'metainfo' / appdata }}
+    -update-desktop-database {{ user-base / 'share' / 'applications' }}
 
 # Vendor dependencies locally
 vendor:
