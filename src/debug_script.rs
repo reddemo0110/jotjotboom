@@ -31,6 +31,8 @@ pub enum Step {
     Dock,
     /// Open the theme picker drawer.
     Themes,
+    /// Toggle editor-only layout.
+    Solo,
     /// Switch theme by key.
     Theme(String),
     /// Pause for the given milliseconds (lets autosave run).
@@ -62,6 +64,7 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "selectall" => Step::SelectAll,
                 "dock" => Step::Dock,
                 "themes" => Step::Themes,
+                "solo" => Step::Solo,
                 "theme" => Step::Theme(arg.trim().to_owned()),
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
                 "exit" => Step::Exit,

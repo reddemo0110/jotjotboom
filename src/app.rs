@@ -25,7 +25,7 @@ const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps
 /// How long after the last keystroke we write the note to disk.
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(600);
 const NAV_WIDTH: f32 = 230.0;
-const NOTE_LIST_WIDTH: f32 = 340.0;
+const NOTE_LIST_WIDTH: f32 = 320.0;
 const GAP: u16 = 14;
 
 pub struct AppModel {
@@ -37,6 +37,8 @@ pub struct AppModel {
     config_handler: Option<cosmic_config::Config>,
     theme: retro::Theme,
     show_markers: bool,
+    show_nav: bool,
+    show_list: bool,
 
     store: Option<Store>,
     store_error: Option<String>,
@@ -74,6 +76,9 @@ pub enum Message {
     Key(keyboard::Modifiers, keyboard::Key, Physical),
     SetTheme(retro::Theme),
     ToggleMarkers,
+    ToggleNav,
+    ToggleList,
+    ToggleSolo,
     FontLoaded,
 
     Editor(text_editor::Action),
@@ -161,6 +166,7 @@ impl cosmic::Application for AppModel {
 
         let theme = retro::Theme::from_key(&config.theme);
         let show_markers = config.show_markers;
+        let (show_nav, show_list) = (!config.hide_nav, !config.hide_list);
         let mut app = AppModel {
             core,
             context_page: ContextPage::default(),
@@ -170,6 +176,8 @@ impl cosmic::Application for AppModel {
             config_handler,
             theme,
             show_markers,
+            show_nav,
+            show_list,
             store,
             store_error,
             view: View::All,
@@ -214,6 +222,15 @@ impl cosmic::Application for AppModel {
 
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
         let view_items = vec![
+            menu::Item::CheckBox(fl!("show-nav"), None, self.show_nav, MenuAction::ToggleNav),
+            menu::Item::CheckBox(
+                fl!("show-list"),
+                None,
+                self.show_list,
+                MenuAction::ToggleList,
+            ),
+            menu::Item::Button(fl!("editor-only"), None, MenuAction::Solo),
+            menu::Item::Divider,
             menu::Item::Button(fl!("theme-colours"), None, MenuAction::Themes),
             menu::Item::CheckBox(
                 fl!("show-markers"),
@@ -243,7 +260,31 @@ impl cosmic::Application for AppModel {
             ),
         ]);
 
-        vec![menu_bar.into()]
+        let toggle = |icon_name: &'static str, label: String, on: bool, msg: Message| {
+            widget::tooltip(
+                widget::button::icon(icon::from_name(icon_name))
+                    .selected(on)
+                    .on_press(msg),
+                widget::text::body(label),
+                widget::tooltip::Position::Bottom,
+            )
+            .into()
+        };
+        vec![
+            menu_bar.into(),
+            toggle(
+                "sidebar-places-symbolic",
+                fl!("show-nav"),
+                self.show_nav,
+                Message::ToggleNav,
+            ),
+            toggle(
+                "view-list-symbolic",
+                fl!("show-list"),
+                self.show_list,
+                Message::ToggleList,
+            ),
+        ]
     }
 
     fn header_end(&self) -> Vec<Element<'_, Self::Message>> {
@@ -268,11 +309,7 @@ impl cosmic::Application for AppModel {
                 } else {
                     fl!("pin-note")
                 };
-                items.push(header_button(
-                    "view-pin-symbolic",
-                    pin_label,
-                    Message::TogglePin,
-                ));
+                items.push(header_button("pin-symbolic", pin_label, Message::TogglePin));
                 items.push(header_button(
                     "user-trash-symbolic",
                     fl!("trash-note"),
@@ -360,26 +397,23 @@ impl cosmic::Application for AppModel {
             );
         }
 
-        let panes = widget::row::with_capacity(3)
-            .push(nav)
-            .push(list)
-            .push(editor_col)
+        let mut panes = widget::row::with_capacity(3)
             .spacing(GAP)
             .width(Length::Fill)
             .height(Length::Fill);
+        if self.show_nav {
+            panes = panes.push(nav);
+        }
+        if self.show_list {
+            panes = panes.push(list);
+        }
+        panes = panes.push(editor_col);
 
-        widget::container(
-            widget::column::with_capacity(2)
-                .push(panes)
-                .push(self.dock(&p))
-                .spacing(GAP)
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .padding([GAP + 4, GAP, GAP, GAP])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        widget::container(panes)
+            .padding([GAP + 4, GAP, GAP, GAP])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
@@ -433,6 +467,26 @@ impl cosmic::Application for AppModel {
                     && let Err(why) = self.config.set_theme(handler, theme.key().to_owned())
                 {
                     tracing::warn!(%why, "could not persist theme");
+                }
+            }
+
+            Message::ToggleNav => {
+                self.show_nav = !self.show_nav;
+                self.persist_layout();
+            }
+
+            Message::ToggleList => {
+                self.show_list = !self.show_list;
+                self.persist_layout();
+            }
+
+            Message::ToggleSolo => {
+                let solo = !self.show_nav && !self.show_list;
+                self.show_nav = solo;
+                self.show_list = solo;
+                self.persist_layout();
+                if !solo {
+                    return widget::text_input::focus(self.editor_id.clone());
                 }
             }
 
@@ -687,6 +741,8 @@ impl cosmic::Application for AppModel {
                 // A changed notes_dir takes effect on next launch; everything else is live.
                 self.theme = retro::Theme::from_key(&config.theme);
                 self.show_markers = config.show_markers;
+                self.show_nav = !config.hide_nav;
+                self.show_list = !config.hide_list;
                 self.config = config;
             }
 
@@ -865,7 +921,13 @@ impl AppModel {
                 .height(Length::Fill)
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center);
-            return retro::frame(p, fl!("app-title").to_lowercase(), None, hint);
+            let content = widget::column::with_capacity(2)
+                .push(hint)
+                .push(self.dock(p))
+                .spacing(8)
+                .width(Length::Fill)
+                .height(Length::Fill);
+            return retro::frame(p, fl!("app-title").to_lowercase(), None, content);
         };
 
         let settings = markdown::Settings {
@@ -887,14 +949,16 @@ impl AppModel {
             editor = editor.on_action(Message::Editor);
         }
 
-        let mut column = widget::column::with_capacity(2)
+        let mut column = widget::column::with_capacity(3)
             .push(editor)
+            .spacing(8)
             .width(Length::Fill)
             .height(Length::Fill);
         if note.trashed {
             column =
                 column.push(widget::container(retro::dim(p, fl!("trash-hint"))).padding([6, 10]));
         }
+        column = column.push(self.dock(p));
 
         let badge = if self.dirty {
             fl!("badge-editing")
@@ -931,17 +995,22 @@ impl AppModel {
         )
     }
 
-    /// The bottom dock: format actions for the open note, and `+`.
+    /// The dock: format actions for the open note, `+`, and the theme
+    /// picker, as a centred pill at the foot of the editor. The `+` section
+    /// opens as a second pill underneath so the main row never overflows.
     fn dock<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
         let editable = self.current.as_ref().is_some_and(|n| !n.trashed);
+        let divider = || {
+            widget::container(retro::dim(p, "│").class(cosmic::theme::Text::Color(p.mute)))
+                .padding([0, 1])
+        };
         let mut row = widget::row::with_capacity(16)
-            .spacing(2)
+            .spacing(1)
             .align_y(Alignment::Center);
 
         for format in Format::ALL {
-            let label = retro::text(p, format.glyph()).size(14);
-            let button = widget::button::custom(label)
-                .padding([4, 9])
+            let button = widget::button::custom(retro::text(p, format.glyph()).size(14))
+                .padding([3, 7])
                 .class(retro::row_class(p, false))
                 .on_press_maybe(editable.then_some(Message::Format(format)));
             row = row.push(widget::tooltip(
@@ -951,26 +1020,47 @@ impl AppModel {
             ));
         }
 
-        row = row.push(
-            widget::container(retro::dim(p, "│").class(cosmic::theme::Text::Color(p.mute)))
-                .padding([0, 4]),
-        );
-
-        let plus = widget::button::custom(retro::accent(p, "+").size(16))
-            .padding([2, 9])
-            .class(retro::row_class(p, self.dock_open))
-            .on_press(Message::ToggleDock);
-        row = row.push(widget::tooltip(
-            plus,
+        row = row.push(divider()).push(widget::tooltip(
+            widget::button::custom(retro::accent(p, "+").size(16))
+                .padding([1, 7])
+                .class(retro::row_class(p, self.dock_open))
+                .on_press(Message::ToggleDock),
             retro::dim(p, fl!("dock-plus")),
             widget::tooltip::Position::Top,
         ));
 
+        row = row.push(divider()).push(widget::tooltip(
+            widget::button::custom(retro::accent2(p, "◐").size(15))
+                .padding([2, 7])
+                .class(retro::row_class(
+                    p,
+                    self.core.window.show_context && self.context_page == ContextPage::Themes,
+                ))
+                .on_press(Message::ToggleContextPage(ContextPage::Themes)),
+            retro::dim(p, fl!("theme-colours")),
+            widget::tooltip::Position::Top,
+        ));
+
+        let pill = |content: Element<'a, Message>| {
+            widget::container(
+                widget::container(content)
+                    .padding([3, 6])
+                    .class(retro::dock_class(p)),
+            )
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+        };
+
+        let mut dock = widget::column::with_capacity(2)
+            .push(pill(row.into()))
+            .spacing(6)
+            .width(Length::Fill);
+
         if self.dock_open {
-            row = row
+            let create = widget::row::with_capacity(3)
                 .push(
                     widget::button::custom(retro::text(p, fl!("dock-new-note")))
-                        .padding([4, 9])
+                        .padding([3, 8])
                         .class(retro::row_class(p, false))
                         .on_press(Message::NewNote),
                 )
@@ -980,7 +1070,7 @@ impl AppModel {
                         .font(retro::mono())
                         .size(13)
                         .padding([3, 8])
-                        .width(Length::Fixed(180.0))
+                        .width(Length::Fixed(170.0))
                         .leading_icon(
                             widget::container(retro::accent2(p, "#"))
                                 .padding([0, 0, 0, 8])
@@ -992,39 +1082,18 @@ impl AppModel {
                 )
                 .push(
                     widget::button::custom(retro::text(p, fl!("dock-new-folder")))
-                        .padding([4, 9])
+                        .padding([3, 8])
                         .class(retro::row_class(p, false))
                         .on_press_maybe(
                             (!self.new_folder.trim().is_empty()).then_some(Message::CreateFolder),
                         ),
-                );
+                )
+                .spacing(4)
+                .align_y(Alignment::Center);
+            dock = dock.push(pill(create.into()));
         }
 
-        row = row
-            .push(
-                widget::container(retro::dim(p, "│").class(cosmic::theme::Text::Color(p.mute)))
-                    .padding([0, 4]),
-            )
-            .push(widget::tooltip(
-                widget::button::custom(retro::accent2(p, "◐").size(15))
-                    .padding([3, 9])
-                    .class(retro::row_class(
-                        p,
-                        self.core.window.show_context && self.context_page == ContextPage::Themes,
-                    ))
-                    .on_press(Message::ToggleContextPage(ContextPage::Themes)),
-                retro::dim(p, fl!("theme-colours")),
-                widget::tooltip::Position::Top,
-            ));
-
-        widget::container(
-            widget::container(row)
-                .padding([4, 8])
-                .class(retro::dock_class(p)),
-        )
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .into()
+        dock.into()
     }
 
     /// The theme picker shown in the context drawer.
@@ -1115,6 +1184,17 @@ impl AppModel {
         }
         self.dirty = true;
         self.last_edit = Instant::now();
+    }
+
+    fn persist_layout(&mut self) {
+        if let Some(handler) = &self.config_handler {
+            if let Err(why) = self.config.set_hide_nav(handler, !self.show_nav) {
+                tracing::warn!(%why, "could not persist nav visibility");
+            }
+            if let Err(why) = self.config.set_hide_list(handler, !self.show_list) {
+                tracing::warn!(%why, "could not persist list visibility");
+            }
+        }
     }
 
     // ----- state -----
@@ -1265,6 +1345,7 @@ impl AppModel {
             Step::SelectAll => self.update(Message::Editor(text_editor::Action::SelectAll)),
             Step::Dock => self.update(Message::ToggleDock),
             Step::Themes => self.update(Message::ToggleContextPage(ContextPage::Themes)),
+            Step::Solo => self.update(Message::ToggleSolo),
             Step::Theme(key) => self.update(Message::SetTheme(retro::Theme::from_key(&key))),
             Step::Trash => self.update(Message::TrashCurrent),
             Step::Wait(_) => Task::none(),
@@ -1398,6 +1479,27 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
         },
         MenuAction::TrashNote,
     );
+    binds.insert(
+        menu::KeyBind {
+            modifiers: vec![Modifier::Ctrl],
+            key: keyboard::Key::Character("1".into()),
+        },
+        MenuAction::ToggleNav,
+    );
+    binds.insert(
+        menu::KeyBind {
+            modifiers: vec![Modifier::Ctrl],
+            key: keyboard::Key::Character("2".into()),
+        },
+        MenuAction::ToggleList,
+    );
+    binds.insert(
+        menu::KeyBind {
+            modifiers: vec![Modifier::Ctrl],
+            key: keyboard::Key::Character("0".into()),
+        },
+        MenuAction::Solo,
+    );
     binds
 }
 
@@ -1491,6 +1593,9 @@ pub enum MenuAction {
     FocusSearch,
     Themes,
     ToggleMarkers,
+    ToggleNav,
+    ToggleList,
+    Solo,
 }
 
 impl menu::action::MenuAction for MenuAction {
@@ -1504,6 +1609,9 @@ impl menu::action::MenuAction for MenuAction {
             MenuAction::FocusSearch => Message::FocusSearch,
             MenuAction::Themes => Message::ToggleContextPage(ContextPage::Themes),
             MenuAction::ToggleMarkers => Message::ToggleMarkers,
+            MenuAction::ToggleNav => Message::ToggleNav,
+            MenuAction::ToggleList => Message::ToggleList,
+            MenuAction::Solo => Message::ToggleSolo,
         }
     }
 }

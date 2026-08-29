@@ -14,6 +14,10 @@ pub struct Config {
     pub theme: String,
     /// Paint markdown syntax markers visibly (dim) instead of ghosted.
     pub show_markers: bool,
+    /// Collapse the views/tags column. (Inverted so the default is shown.)
+    pub hide_nav: bool,
+    /// Collapse the notes list.
+    pub hide_list: bool,
 }
 
 impl Config {

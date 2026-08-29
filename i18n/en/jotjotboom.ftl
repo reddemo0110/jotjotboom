@@ -71,3 +71,8 @@ theme-picker-hint = Eight retro palettes and one that follows your desktop. Clic
 theme-colours = Theme colours
 show-markers = Show markdown syntax
 theme-picker-hint = Eight retro palettes and one that follows your desktop. Click to apply.
+
+# Layout
+show-nav = Views and tags
+show-list = Notes list
+editor-only = Editor only

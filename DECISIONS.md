@@ -122,3 +122,16 @@ Keys in config are unchanged (`phosphor`, `amber`, …); only labels/blurbs
 moved. Contrast pass at the same time: `dim` lifted on phosphor, amber,
 WordPerfect, plasma and C64 (previews/timestamps were ~3:1), Game Boy accent
 separated from its foreground.
+
+## 2026-08-29 — Collapsible panes, dock inside the editor
+- Views/tags column and notes list each toggle (header buttons, View menu,
+  Ctrl+1 / Ctrl+2); Ctrl+0 / View → Editor only collapses both or brings
+  both back. Persisted (`hide_nav`, `hide_list`, inverted so the default
+  is shown).
+- The dock moved into the editor frame as a centred pill at its foot; the
+  `+` section opens as a second pill underneath so the main row never
+  overflows. Notes list narrowed 340 → 320 so the dock fits at the 1024px
+  minimum-ish width.
+- Icon lookup only searches the Cosmic/Pop themes (Adwaita-only names such
+  as `view-pin-symbolic` silently render nothing) — use `pin-symbolic`,
+  `sidebar-places-symbolic`, `view-list-symbolic`.
