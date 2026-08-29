@@ -447,8 +447,24 @@ pub enum Processed {
     Ascii(String),
 }
 
+/// Columns used for ASCII at a given display width (px), and the glyph size
+/// that makes those columns fill it (monospace advance ≈ 0.6em).
+pub fn ascii_layout(width: Option<u32>) -> (u32, f32) {
+    // Card padding + border eat ~16px; monospace advance is ~0.62em.
+    let w = (width.unwrap_or(720) as f32 - 16.0).max(80.0);
+    let cols = (w / 7.2).clamp(48.0, 140.0).round() as u32;
+    let size = (w / (cols as f32 * 0.62)).clamp(5.0, 14.0);
+    (cols, size)
+}
+
 /// Load, downscale for display, and apply the frame's pixel treatment.
-pub fn load_and_process(path: &Path, style: FrameStyle, palette: Palette) -> Result<Processed> {
+/// `ascii_cols` only matters for [`FrameStyle::Ascii`].
+pub fn load_and_process(
+    path: &Path,
+    style: FrameStyle,
+    palette: Palette,
+    ascii_cols: u32,
+) -> Result<Processed> {
     let img = image::open(path).with_context(|| format!("opening {}", path.display()))?;
     let (w, h) = (img.width(), img.height());
     let scale = (DISPLAY_MAX as f32 / w.max(h) as f32).min(1.0);
@@ -462,16 +478,16 @@ pub fn load_and_process(path: &Path, style: FrameStyle, palette: Palette) -> Res
         img
     };
     let rgba = img.to_rgba8();
-    Ok(process(rgba, style, &palette))
+    Ok(process(rgba, style, &palette, ascii_cols))
 }
 
-pub fn process(rgba: RgbaImage, style: FrameStyle, p: &Palette) -> Processed {
+pub fn process(rgba: RgbaImage, style: FrameStyle, p: &Palette, ascii_cols: u32) -> Processed {
     let out = match style {
         FrameStyle::Tint => tint(&rgba, p),
         FrameStyle::Dither => dither(&rgba, p),
         FrameStyle::Pixel => pixelate(&rgba),
         FrameStyle::Bezel => scanlines(rgba),
-        FrameStyle::Ascii => return Processed::Ascii(ascii(&rgba)),
+        FrameStyle::Ascii => return Processed::Ascii(ascii(&rgba, ascii_cols)),
         FrameStyle::Box | FrameStyle::Print | FrameStyle::Film => rgba,
     };
     Processed::Pixels {
@@ -578,10 +594,10 @@ fn scanlines(mut img: RgbaImage) -> RgbaImage {
     img
 }
 
-/// Characters for luminance, ~72 columns, 2:1 cell aspect.
-fn ascii(src: &RgbaImage) -> String {
+/// Characters for luminance at `cols` columns, 2:1 cell aspect.
+fn ascii(src: &RgbaImage, cols: u32) -> String {
     const RAMP: &[u8] = b" .:-=+*#%@";
-    let cols = 72u32.min(src.width().max(1));
+    let cols = cols.clamp(16, 200).min(src.width().max(1));
     let rows =
         ((src.height() as f32 / src.width().max(1) as f32) * cols as f32 * 0.5).max(1.0) as u32;
     let small = image::imageops::resize(src, cols, rows, image::imageops::FilterType::Triangle);
@@ -656,7 +672,7 @@ mod tests {
             Rgba([(x * 6) as u8, (y * 8) as u8, 128, 255])
         });
         for style in FrameStyle::ALL {
-            match process(img.clone(), style, &p) {
+            match process(img.clone(), style, &p, 72) {
                 Processed::Pixels {
                     width,
                     height,

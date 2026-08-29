@@ -644,10 +644,10 @@ pub fn film<'a, M: 'static>(p: &Palette, content: Element<'a, M>, number: usize)
 }
 
 /// ASCII rendering in the accent colour.
-pub fn ascii_card<'a, M: 'static>(p: &Palette, text: String) -> Element<'a, M> {
+pub fn ascii_card<'a, M: 'static>(p: &Palette, text: String, size: f32) -> Element<'a, M> {
     let txt = widget::text(text)
         .font(mono())
-        .size(6)
+        .size(size)
         .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.05))
         .class(theme::Text::Color(p.accent));
     plain_box(

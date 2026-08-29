@@ -45,6 +45,8 @@ pub enum Step {
     ImgWidth(usize, u32),
     /// Open the ⋯ menu of the n-th image.
     ImgMenu(usize),
+    /// Set the caption of the n-th image: `imgcaption:n:text`.
+    ImgCaption(usize, String),
     /// Switch theme by key.
     Theme(String),
     /// Pause for the given milliseconds (lets autosave run).
@@ -92,6 +94,10 @@ pub fn parse(script: &str) -> Vec<Step> {
                     Step::ImgWidth(n.parse().ok()?, w.parse().ok()?)
                 }
                 "imgmenu" => Step::ImgMenu(arg.trim().parse().ok()?),
+                "imgcaption" => {
+                    let (n, text) = arg.split_once(':')?;
+                    Step::ImgCaption(n.trim().parse().ok()?, unescape(text))
+                }
                 "theme" => Step::Theme(arg.trim().to_owned()),
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
                 "exit" => Step::Exit,

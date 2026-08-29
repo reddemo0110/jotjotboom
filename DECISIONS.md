@@ -194,3 +194,11 @@ in the text, resizable, with a click-for-options menu.
   real interaction (click/drag/edit/move/select) may claim block focus.
 - Gotcha: `retro::frame` was height Fill; inside a shrink row that collapses
   to nothing → `frame_sized(.., Length::Shrink, title_size)` for cards.
+
+## 2026-08-29 — Image style feedback
+- ASCII now follows the width like every other style: columns are derived
+  from the display width (`ascii_layout`), glyph size fills it, and the
+  render is cached per column count so resizing re-renders.
+- The ⋯ menu has a **caption / title** field. It edits the image's alt text
+  (`![caption](…)`), which is what the instant print prints and what the box
+  frame shows as its title — one name, stored in plain markdown.

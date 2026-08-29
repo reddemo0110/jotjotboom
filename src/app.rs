@@ -109,6 +109,7 @@ pub enum Message {
     SetFrame(usize, FrameStyle),
     SetAlign(usize, Align),
     SetWidth(usize, Option<u32>),
+    SetCaption(usize, String),
     RemoveImage(usize),
     ResizeStart(usize),
     MouseMoved(Point),
@@ -625,6 +626,11 @@ impl AppModel {
             Message::SetWidth(block, width) => {
                 self.image_menu = None;
                 self.edit_ref(block, |r| r.width = width);
+            }
+
+            Message::SetCaption(block, caption) => {
+                let caption = caption.replace(['[', ']', '\n'], "");
+                self.edit_ref(block, |r| r.alt = caption);
             }
 
             Message::RemoveImage(block) => {
@@ -1649,8 +1655,17 @@ impl AppModel {
         } else {
             ""
         };
+        let cols = if r.frame == FrameStyle::Ascii {
+            images::ascii_layout(r.width).0
+        } else {
+            0
+        };
         Some((
-            format!("{}|{mtime}|{}|{theme}", path.display(), r.frame.key()),
+            format!(
+                "{}|{mtime}|{}|{theme}|{cols}",
+                path.display(),
+                r.frame.key()
+            ),
             path,
         ))
     }
@@ -1680,10 +1695,11 @@ impl AppModel {
             }
             self.image_cache.insert(key.clone(), ImageState::Loading);
             let style = r.frame;
+            let cols = images::ascii_layout(r.width).0;
             tasks.push(Task::perform(
                 async move {
                     tokio::task::spawn_blocking(move || {
-                        images::load_and_process(&path, style, palette)
+                        images::load_and_process(&path, style, palette, cols)
                     })
                     .await
                     .map_err(|e| e.to_string())
@@ -1739,7 +1755,12 @@ impl AppModel {
     }
 
     /// One inline image: frame treatment, ⋯ menu, drag grip, and the popup menu.
-    fn image_card<'a>(&'a self, p: &Palette, r: &ImageRef, block: usize) -> Element<'a, Message> {
+    fn image_card<'a>(
+        &'a self,
+        p: &Palette,
+        r: &'a ImageRef,
+        block: usize,
+    ) -> Element<'a, Message> {
         let state = self
             .image_key(r)
             .and_then(|(k, _)| self.image_cache.get(&k));
@@ -1752,7 +1773,11 @@ impl AppModel {
                 match r.frame {
                     FrameStyle::Box => retro::frame_sized(
                         p,
-                        r.file_name().to_owned(),
+                        if r.alt.trim().is_empty() {
+                            r.file_name().to_owned()
+                        } else {
+                            r.alt.clone()
+                        },
                         Some(format!("{w}×{h}")),
                         img,
                         Length::Shrink,
@@ -1767,7 +1792,14 @@ impl AppModel {
                     FrameStyle::Film => retro::film(p, img.into(), self.image_number(block)),
                 }
             }
-            Some(ImageState::Ascii(text)) => retro::ascii_card(p, text.clone()),
+            Some(ImageState::Ascii(text)) => {
+                let live = self
+                    .live_width
+                    .filter(|(b, _)| *b == block)
+                    .map(|(_, w)| w)
+                    .or(r.width);
+                retro::ascii_card(p, text.clone(), images::ascii_layout(live).1)
+            }
             Some(ImageState::Failed(err)) => widget::container(retro::dim(p, format!("⚠ {err}")))
                 .padding(8)
                 .width(Length::Fill)
@@ -1843,7 +1875,7 @@ impl AppModel {
     fn image_menu_view<'a>(
         &'a self,
         p: &Palette,
-        r: &ImageRef,
+        r: &'a ImageRef,
         block: usize,
     ) -> Element<'a, Message> {
         let item = |label: String, selected: bool, msg: Message| {
@@ -1858,9 +1890,22 @@ impl AppModel {
             .class(retro::row_class(p, selected))
             .on_press(msg)
         };
-        let mut col = widget::column::with_capacity(20)
+        let mut col = widget::column::with_capacity(22)
             .spacing(1)
             .width(Length::Fixed(220.0));
+        col = col.push(widget::container(retro::dim(p, fl!("menu-caption"))).padding([2, 8]));
+        col = col.push(
+            widget::container(
+                widget::text_input(fl!("caption-placeholder"), &r.alt)
+                    .font(retro::mono())
+                    .size(13)
+                    .padding([3, 8])
+                    .style(retro::search_class(p))
+                    .on_input(move |t| Message::SetCaption(block, t))
+                    .on_submit(|_| Message::ImageMenu(None)),
+            )
+            .padding([0, 6, 4, 6]),
+        );
         col = col.push(widget::container(retro::dim(p, fl!("menu-frame"))).padding([2, 8]));
         for style in FrameStyle::ALL {
             col = col.push(item(
@@ -2095,6 +2140,10 @@ impl AppModel {
             },
             Step::ImgWidth(n, w) => match self.nth_image_block(n) {
                 Some(b) => self.update(Message::SetWidth(b, (w > 0).then_some(w))),
+                None => Task::none(),
+            },
+            Step::ImgCaption(n, text) => match self.nth_image_block(n) {
+                Some(b) => self.update(Message::SetCaption(b, text)),
                 None => Task::none(),
             },
             Step::ImgMenu(n) => match self.nth_image_block(n) {
