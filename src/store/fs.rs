@@ -25,7 +25,8 @@ pub struct DiskEntry {
 
 impl NotesDir {
     pub fn open(root: PathBuf) -> Result<Self> {
-        fs::create_dir_all(&root).with_context(|| format!("creating notes dir {}", root.display()))?;
+        fs::create_dir_all(&root)
+            .with_context(|| format!("creating notes dir {}", root.display()))?;
         fs::create_dir_all(root.join(TRASH_DIR)).context("creating trash dir")?;
         Ok(Self { root })
     }
@@ -54,11 +55,22 @@ impl NotesDir {
                 if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
                     continue;
                 }
-                if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.')) {
+                if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with('.'))
+                {
                     continue;
                 }
-                let modified = entry.metadata()?.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                out.push(DiskEntry { path, trashed, modified });
+                let modified = entry
+                    .metadata()?
+                    .modified()
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                out.push(DiskEntry {
+                    path,
+                    trashed,
+                    modified,
+                });
             }
         }
         Ok(out)
@@ -77,7 +89,8 @@ impl NotesDir {
             path.file_name().and_then(|n| n.to_str()).unwrap_or("note")
         ));
         {
-            let mut f = fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+            let mut f =
+                fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
             f.write_all(text.as_bytes())?;
             f.sync_all()?;
         }
@@ -106,7 +119,8 @@ impl NotesDir {
         if from == to {
             return Ok(());
         }
-        fs::rename(from, to).with_context(|| format!("moving {} -> {}", from.display(), to.display()))
+        fs::rename(from, to)
+            .with_context(|| format!("moving {} -> {}", from.display(), to.display()))
     }
 
     pub fn remove(&self, path: &Path) -> Result<()> {

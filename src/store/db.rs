@@ -73,7 +73,11 @@ impl Db {
         }
         if version != 0 {
             // The index is derived data: on any schema change, rebuild from scratch.
-            tracing::info!(from = version, to = SCHEMA_VERSION, "index schema changed; rebuilding");
+            tracing::info!(
+                from = version,
+                to = SCHEMA_VERSION,
+                "index schema changed; rebuilding"
+            );
             self.conn.execute_batch(
                 "DROP TABLE IF EXISTS notes_fts;
                  DROP TABLE IF EXISTS links;
@@ -127,13 +131,16 @@ impl Db {
                 synced      INTEGER NOT NULL DEFAULT 0
             );",
         )?;
-        self.conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        self.conn
+            .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
 
     /// path -> what we indexed, for diffing against a disk scan.
     pub fn indexed_files(&self) -> Result<HashMap<PathBuf, IndexedFile>> {
-        let mut stmt = self.conn.prepare("SELECT path, id, hash, modified FROM notes")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path, id, hash, modified FROM notes")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 PathBuf::from(r.get::<_, String>(0)?),
@@ -148,7 +155,15 @@ impl Db {
     }
 
     /// Insert or replace everything we index about a note.
-    pub fn upsert(&mut self, note: &Note, preview: &str, hash: &str, tags: &[String], links: &[String], body: &str) -> Result<()> {
+    pub fn upsert(
+        &mut self,
+        note: &Note,
+        preview: &str,
+        hash: &str,
+        tags: &[String],
+        links: &[String],
+        body: &str,
+    ) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute(
             "INSERT INTO notes (id, path, title, preview, created, modified, pinned, trashed, hash, revision)
@@ -171,7 +186,10 @@ impl Db {
         )?;
         tx.execute("DELETE FROM note_tags WHERE note_id = ?1", params![note.id])?;
         for tag in tags {
-            tx.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", params![tag])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO tags (name) VALUES (?1)",
+                params![tag],
+            )?;
             tx.execute(
                 "INSERT OR IGNORE INTO note_tags (note_id, tag_id) SELECT ?1, id FROM tags WHERE name = ?2",
                 params![note.id, tag],
@@ -179,14 +197,20 @@ impl Db {
         }
         tx.execute("DELETE FROM links WHERE from_id = ?1", params![note.id])?;
         for link in links {
-            tx.execute("INSERT OR IGNORE INTO links (from_id, to_title) VALUES (?1, ?2)", params![note.id, link])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO links (from_id, to_title) VALUES (?1, ?2)",
+                params![note.id, link],
+            )?;
         }
         tx.execute("DELETE FROM notes_fts WHERE id = ?1", params![note.id])?;
         tx.execute(
             "INSERT INTO notes_fts (id, title, body) VALUES (?1, ?2, ?3)",
             params![note.id, note.title, body],
         )?;
-        tx.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM note_tags)", [])?;
+        tx.execute(
+            "DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM note_tags)",
+            [],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -195,16 +219,32 @@ impl Db {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
         tx.execute("DELETE FROM notes_fts WHERE id = ?1", params![id])?;
-        tx.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM note_tags)", [])?;
+        tx.execute(
+            "DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM note_tags)",
+            [],
+        )?;
         tx.commit()?;
         Ok(())
     }
 
     /// Record a local save in the oplog and bump the note's revision.
-    pub fn append_oplog(&mut self, id: &str, modified: DateTime<Utc>, device_id: &str, hash: &str) -> Result<i64> {
+    pub fn append_oplog(
+        &mut self,
+        id: &str,
+        modified: DateTime<Utc>,
+        device_id: &str,
+        hash: &str,
+    ) -> Result<i64> {
         let tx = self.conn.transaction()?;
-        tx.execute("UPDATE notes SET revision = revision + 1 WHERE id = ?1", params![id])?;
-        let revision: i64 = tx.query_row("SELECT revision FROM notes WHERE id = ?1", params![id], |r| r.get(0))?;
+        tx.execute(
+            "UPDATE notes SET revision = revision + 1 WHERE id = ?1",
+            params![id],
+        )?;
+        let revision: i64 = tx.query_row(
+            "SELECT revision FROM notes WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
         tx.execute(
             "INSERT INTO oplog (note_id, revision, modified_at, device_id, hash) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![id, revision, fmt_ts(modified), device_id, hash],
@@ -226,8 +266,14 @@ impl Db {
 
     pub fn list(&self, view: &View) -> Result<Vec<NoteSummary>> {
         let (sql, tag): (&str, Option<&str>) = match view {
-            View::All => ("SELECT id, title, preview, modified, pinned, trashed FROM notes WHERE trashed = 0 ORDER BY pinned DESC, modified DESC, rowid DESC", None),
-            View::Trash => ("SELECT id, title, preview, modified, pinned, trashed FROM notes WHERE trashed = 1 ORDER BY modified DESC, rowid DESC", None),
+            View::All => (
+                "SELECT id, title, preview, modified, pinned, trashed FROM notes WHERE trashed = 0 ORDER BY pinned DESC, modified DESC, rowid DESC",
+                None,
+            ),
+            View::Trash => (
+                "SELECT id, title, preview, modified, pinned, trashed FROM notes WHERE trashed = 1 ORDER BY modified DESC, rowid DESC",
+                None,
+            ),
             View::Untagged => (
                 "SELECT id, title, preview, modified, pinned, trashed FROM notes
                  WHERE trashed = 0 AND id NOT IN (SELECT note_id FROM note_tags)
@@ -281,7 +327,9 @@ impl Db {
     }
 
     fn tagged_ids(&self) -> Result<std::collections::HashSet<String>> {
-        let mut stmt = self.conn.prepare("SELECT DISTINCT note_id FROM note_tags")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT note_id FROM note_tags")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
@@ -302,7 +350,9 @@ impl Db {
              JOIN note_tags nt ON nt.tag_id = t.id JOIN notes n ON n.id = nt.note_id
              WHERE n.trashed = 0 GROUP BY t.name ORDER BY t.name",
         )?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
+        })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
@@ -329,7 +379,10 @@ impl Db {
     }
 
     pub fn count(&self) -> Result<usize> {
-        Ok(self.conn.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get::<_, i64>(0))? as usize)
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get::<_, i64>(0))?
+            as usize)
     }
 }
 
@@ -413,8 +466,24 @@ mod tests {
         let mut db = Db::open(Path::new(":memory:")).unwrap();
         let a = note("a", "Alpha note");
         let b = note("b", "Beta");
-        db.upsert(&a, "", "h1", &["work".into()], &[], "# Alpha note\nhello world #work").unwrap();
-        db.upsert(&b, "", "h2", &[], &["Alpha note".into()], "# Beta\nsee [[Alpha note]] wörld").unwrap();
+        db.upsert(
+            &a,
+            "",
+            "h1",
+            &["work".into()],
+            &[],
+            "# Alpha note\nhello world #work",
+        )
+        .unwrap();
+        db.upsert(
+            &b,
+            "",
+            "h2",
+            &[],
+            &["Alpha note".into()],
+            "# Beta\nsee [[Alpha note]] wörld",
+        )
+        .unwrap();
         assert_eq!(db.count().unwrap(), 2);
         let hits = db.search("hel", &View::All).unwrap();
         assert_eq!(hits.len(), 1);

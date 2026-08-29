@@ -60,7 +60,10 @@ pub fn parse_document(text: &str) -> (Frontmatter, &str) {
         return (fm, text);
     };
     // The opening fence must be alone on its line.
-    let rest = match rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n')) {
+    let rest = match rest
+        .strip_prefix("\r\n")
+        .or_else(|| rest.strip_prefix('\n'))
+    {
         Some(r) => r,
         None => return (fm, text),
     };
@@ -180,18 +183,28 @@ fn strip_block_markup(line: &str) -> String {
         let before = s;
         s = s.trim_start_matches('#').trim_start();
         s = s.trim_start_matches('>').trim_start();
-        if let Some(r) = s.strip_prefix("- ").or_else(|| s.strip_prefix("* ")).or_else(|| s.strip_prefix("+ ")) {
+        if let Some(r) = s
+            .strip_prefix("- ")
+            .or_else(|| s.strip_prefix("* "))
+            .or_else(|| s.strip_prefix("+ "))
+        {
             s = r.trim_start();
         }
-        if let Some(r) = s.strip_prefix("[ ] ").or_else(|| s.strip_prefix("[x] ")).or_else(|| s.strip_prefix("[X] ")) {
+        if let Some(r) = s
+            .strip_prefix("[ ] ")
+            .or_else(|| s.strip_prefix("[x] "))
+            .or_else(|| s.strip_prefix("[X] "))
+        {
             s = r;
         }
         // Ordered list "12. "
         let digits = s.chars().take_while(char::is_ascii_digit).count();
-        if digits > 0 {
-            if let Some(r) = s[digits..].strip_prefix(". ").or_else(|| s[digits..].strip_prefix(") ")) {
-                s = r;
-            }
+        if digits > 0
+            && let Some(r) = s[digits..]
+                .strip_prefix(". ")
+                .or_else(|| s[digits..].strip_prefix(") "))
+        {
+            s = r;
         }
         if s == before {
             break;
@@ -229,15 +242,20 @@ fn strip_inline_markup(line: &str) -> String {
             }
             '[' => {
                 // Markdown link: keep the label.
-                if let Some(close) = chars[i + 1..].iter().position(|&x| x == ']').map(|p| p + i + 1) {
-                    if chars.get(close + 1) == Some(&'(') {
-                        if let Some(end) = chars[close + 2..].iter().position(|&x| x == ')').map(|p| p + close + 2) {
-                            let label: String = chars[i + 1..close].iter().collect();
-                            out.push_str(&label);
-                            i = end + 1;
-                            continue;
-                        }
-                    }
+                if let Some(close) = chars[i + 1..]
+                    .iter()
+                    .position(|&x| x == ']')
+                    .map(|p| p + i + 1)
+                    && chars.get(close + 1) == Some(&'(')
+                    && let Some(end) = chars[close + 2..]
+                        .iter()
+                        .position(|&x| x == ')')
+                        .map(|p| p + close + 2)
+                {
+                    let label: String = chars[i + 1..close].iter().collect();
+                    out.push_str(&label);
+                    i = end + 1;
+                    continue;
                 }
                 out.push(c);
             }
@@ -259,7 +277,10 @@ fn find_link_end(chars: &[char], start: usize) -> Option<usize> {
     if chars.get(close + 1) != Some(&'(') {
         return None;
     }
-    chars[close + 2..].iter().position(|&x| x == ')').map(|p| p + close + 2)
+    chars[close + 2..]
+        .iter()
+        .position(|&x| x == ')')
+        .map(|p| p + close + 2)
 }
 
 /// Extract `#tag` and `#nested/tag` tags from the body.
@@ -295,7 +316,9 @@ pub fn extract_tags(body: &str) -> Vec<String> {
                 i += 1;
                 continue;
             }
-            let boundary_ok = i == 0 || chars[i - 1].is_whitespace() || matches!(chars[i - 1], '(' | '[' | '{' | ',' | ';');
+            let boundary_ok = i == 0
+                || chars[i - 1].is_whitespace()
+                || matches!(chars[i - 1], '(' | '[' | '{' | ',' | ';');
             if !boundary_ok {
                 i += 1;
                 continue;
@@ -305,11 +328,15 @@ pub fn extract_tags(body: &str) -> Vec<String> {
                 j += 1;
             }
             let raw: String = chars[i + 1..j].iter().collect();
-            let tag = raw.trim_matches(|c| matches!(c, '/' | '-' | '_')).to_lowercase();
-            if !tag.is_empty() && tag.chars().any(char::is_alphabetic) && !tag.contains("//") {
-                if !tags.contains(&tag) {
-                    tags.push(tag);
-                }
+            let tag = raw
+                .trim_matches(|c| matches!(c, '/' | '-' | '_'))
+                .to_lowercase();
+            if !tag.is_empty()
+                && tag.chars().any(char::is_alphabetic)
+                && !tag.contains("//")
+                && !tags.contains(&tag)
+            {
+                tags.push(tag);
             }
             i = j.max(i + 1);
         }
@@ -331,7 +358,11 @@ pub fn extract_links(body: &str) -> Vec<String> {
         let inner = &after[..end];
         if !inner.contains('\n') {
             let target = inner.split('|').next().unwrap_or("").trim();
-            if !target.is_empty() && !links.iter().any(|l: &String| l.eq_ignore_ascii_case(target)) {
+            if !target.is_empty()
+                && !links
+                    .iter()
+                    .any(|l: &String| l.eq_ignore_ascii_case(target))
+            {
                 links.push(target.to_owned());
             }
         }
@@ -344,7 +375,13 @@ pub fn extract_links(body: &str) -> Vec<String> {
 pub fn slug_filename(title: &str) -> String {
     let cleaned: String = title
         .chars()
-        .map(|c| if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '-' } else { c })
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '-'
+            } else {
+                c
+            }
+        })
         .collect();
     let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = collapsed.trim_matches(|c: char| c == '.' || c == ' ' || c == '-');
@@ -376,7 +413,9 @@ mod tests {
             id: "abc".into(),
             title: "Hello".into(),
             body: "# Hello\n\nWorld".into(),
-            created: DateTime::parse_from_rfc3339("2026-08-29T01:02:03Z").unwrap().into(),
+            created: DateTime::parse_from_rfc3339("2026-08-29T01:02:03Z")
+                .unwrap()
+                .into(),
             modified: Utc::now(),
             pinned: true,
             trashed: false,
@@ -423,12 +462,18 @@ mod tests {
     #[test]
     fn tags() {
         let body = "# Heading not a tag\nhello #work/incab and #Work, (#Idea) #123 `#code` #trailing/\n```\n#fenced\n```\nemail#nottag";
-        assert_eq!(extract_tags(body), vec!["work/incab", "work", "idea", "trailing"]);
+        assert_eq!(
+            extract_tags(body),
+            vec!["work/incab", "work", "idea", "trailing"]
+        );
     }
 
     #[test]
     fn links() {
-        assert_eq!(extract_links("see [[Alpha]] and [[beta|B]] and [[alpha]] [[]]"), vec!["Alpha", "beta"]);
+        assert_eq!(
+            extract_links("see [[Alpha]] and [[beta|B]] and [[alpha]] [[]]"),
+            vec!["Alpha", "beta"]
+        );
     }
 
     #[test]

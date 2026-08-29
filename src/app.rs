@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::config::Config;
+use crate::debug_script::{self, Step};
 use crate::fl;
 use crate::note::{Note, NoteSummary};
 use crate::store::{Store, View};
 use chrono::{DateTime, Datelike, Local, Utc};
+use cosmic::Application as _;
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::keyboard::{self, key::Physical};
+use cosmic::iced::widget::scrollable::{Direction, Scrollbar};
 use cosmic::iced::{Alignment, Event, Length, Subscription, event};
 use cosmic::prelude::*;
-use cosmic::iced::widget::scrollable::{Direction, Scrollbar};
 use cosmic::widget::menu::action::MenuAction as _;
 use cosmic::widget::{self, about::About, icon, menu, nav_bar, text_editor};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
@@ -44,6 +47,12 @@ pub struct AppModel {
     dirty: bool,
     last_edit: Instant,
     backlinks: Vec<NoteSummary>,
+    /// Debug hook: `JJB_SCREENSHOT=/path.png` saves a frame ~2.5s after launch, then exits.
+    /// Note: iced's screenshot path drops text-editor contents and menu labels; for a
+    /// faithful capture use `tools/xshot.py` (see CLAUDE.md).
+    screenshot_pending: bool,
+    /// Debug hook: `JJB_SCRIPT=...` drives the app; see `debug_script.rs`.
+    script: Option<debug_script::Runner>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +74,9 @@ pub enum Message {
     Search(String),
     ClearSearch,
     FocusSearch,
+    TakeScreenshot,
+    ScriptTick,
+    ScreenshotTaken(Arc<cosmic::iced::window::Screenshot>),
 }
 
 impl cosmic::Application for AppModel {
@@ -82,7 +94,10 @@ impl cosmic::Application for AppModel {
         &mut self.core
     }
 
-    fn init(core: cosmic::Core, _flags: Self::Flags) -> (Self, Task<cosmic::Action<Self::Message>>) {
+    fn init(
+        core: cosmic::Core,
+        _flags: Self::Flags,
+    ) -> (Self, Task<cosmic::Action<Self::Message>>) {
         let config_handler = cosmic_config::Config::new(Self::APP_ID, Config::VERSION).ok();
         let mut config = config_handler
             .as_ref()
@@ -99,22 +114,25 @@ impl cosmic::Application for AppModel {
 
         if config.device_id.is_empty() {
             let id = crate::note::new_id();
-            if let Some(handler) = &config_handler {
-                if let Err(why) = config.set_device_id(handler, id.clone()) {
-                    tracing::warn!(%why, "could not persist device id");
-                }
+            if let Some(handler) = &config_handler
+                && let Err(why) = config.set_device_id(handler, id.clone())
+            {
+                tracing::warn!(%why, "could not persist device id");
             }
             config.device_id = id;
         }
 
-        let (store, store_error) =
-            match Store::open(config.notes_dir(), &Config::index_path(Self::APP_ID), config.device_id.clone()) {
-                Ok(store) => (Some(store), None),
-                Err(err) => {
-                    tracing::error!(%err, "opening store");
-                    (None, Some(format!("{err:#}")))
-                }
-            };
+        let (store, store_error) = match Store::open(
+            config.notes_dir(),
+            &Config::index_path(Self::APP_ID),
+            config.device_id.clone(),
+        ) {
+            Ok(store) => (Some(store), None),
+            Err(err) => {
+                tracing::error!(%err, "opening store");
+                (None, Some(format!("{err:#}")))
+            }
+        };
 
         let about = About::default()
             .name(fl!("app-title"))
@@ -142,6 +160,8 @@ impl cosmic::Application for AppModel {
             dirty: false,
             last_edit: Instant::now(),
             backlinks: Vec::new(),
+            screenshot_pending: std::env::var_os("JJB_SCREENSHOT").is_some(),
+            script: debug_script::Runner::from_env(),
         };
 
         app.rebuild_nav();
@@ -186,19 +206,47 @@ impl cosmic::Application for AppModel {
 
         if let Some(note) = &self.current {
             if in_trash {
-                items.push(header_button("edit-undo-symbolic", fl!("restore-note"), Message::RestoreCurrent));
-                items.push(header_button("edit-delete-symbolic", fl!("delete-forever"), Message::DeleteCurrentForever));
+                items.push(header_button(
+                    "edit-undo-symbolic",
+                    fl!("restore-note"),
+                    Message::RestoreCurrent,
+                ));
+                items.push(header_button(
+                    "edit-delete-symbolic",
+                    fl!("delete-forever"),
+                    Message::DeleteCurrentForever,
+                ));
             } else {
-                let pin_label = if note.pinned { fl!("unpin-note") } else { fl!("pin-note") };
-                items.push(header_button("view-pin-symbolic", pin_label, Message::TogglePin));
-                items.push(header_button("user-trash-symbolic", fl!("trash-note"), Message::TrashCurrent));
+                let pin_label = if note.pinned {
+                    fl!("unpin-note")
+                } else {
+                    fl!("pin-note")
+                };
+                items.push(header_button(
+                    "view-pin-symbolic",
+                    pin_label,
+                    Message::TogglePin,
+                ));
+                items.push(header_button(
+                    "user-trash-symbolic",
+                    fl!("trash-note"),
+                    Message::TrashCurrent,
+                ));
             }
         }
         if in_trash && !self.notes.is_empty() {
-            items.push(header_button("edit-clear-all-symbolic", fl!("empty-trash"), Message::EmptyTrash));
+            items.push(header_button(
+                "edit-clear-all-symbolic",
+                fl!("empty-trash"),
+                Message::EmptyTrash,
+            ));
         }
         if !in_trash {
-            items.push(header_button("list-add-symbolic", fl!("new-note"), Message::NewNote));
+            items.push(header_button(
+                "list-add-symbolic",
+                fl!("new-note"),
+                Message::NewNote,
+            ));
         }
         items
     }
@@ -247,15 +295,36 @@ impl cosmic::Application for AppModel {
                 .watch_config::<Config>(Self::APP_ID)
                 .map(|update| Message::UpdateConfig(update.config)),
             event::listen_with(|event, _status, _window| match event {
-                Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, physical_key, .. }) => {
-                    Some(Message::Key(modifiers, key, physical_key))
-                }
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key,
+                    modifiers,
+                    physical_key,
+                    ..
+                }) => Some(Message::Key(modifiers, key, physical_key)),
                 _ => None,
             }),
         ];
 
         if self.dirty {
-            subscriptions.push(cosmic::iced::time::every(Duration::from_millis(200)).map(|_| Message::AutosaveTick));
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(200))
+                    .map(|_| Message::AutosaveTick),
+            );
+        }
+        if self.screenshot_pending {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(2500))
+                    .map(|_| Message::TakeScreenshot),
+            );
+        }
+        if self
+            .script
+            .as_ref()
+            .is_some_and(debug_script::Runner::is_active)
+        {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(100)).map(|_| Message::ScriptTick),
+            );
         }
 
         Subscription::batch(subscriptions)
@@ -310,30 +379,30 @@ impl cosmic::Application for AppModel {
 
             Message::TrashCurrent => {
                 self.flush();
-                if let (Some(store), Some(note)) = (self.store.as_mut(), self.current.take()) {
-                    if let Err(err) = store.trash(&note.id) {
-                        tracing::error!(%err, "trashing note");
-                    }
+                if let (Some(store), Some(note)) = (self.store.as_mut(), self.current.take())
+                    && let Err(err) = store.trash(&note.id)
+                {
+                    tracing::error!(%err, "trashing note");
                 }
                 self.after_store_change();
                 return self.update_title();
             }
 
             Message::RestoreCurrent => {
-                if let (Some(store), Some(note)) = (self.store.as_mut(), self.current.take()) {
-                    if let Err(err) = store.restore(&note.id) {
-                        tracing::error!(%err, "restoring note");
-                    }
+                if let (Some(store), Some(note)) = (self.store.as_mut(), self.current.take())
+                    && let Err(err) = store.restore(&note.id)
+                {
+                    tracing::error!(%err, "restoring note");
                 }
                 self.after_store_change();
                 return self.update_title();
             }
 
             Message::DeleteCurrentForever => {
-                if let (Some(store), Some(note)) = (self.store.as_mut(), self.current.take()) {
-                    if let Err(err) = store.delete_forever(&note.id) {
-                        tracing::error!(%err, "deleting note");
-                    }
+                if let (Some(store), Some(note)) = (self.store.as_mut(), self.current.take())
+                    && let Err(err) = store.delete_forever(&note.id)
+                {
+                    tracing::error!(%err, "deleting note");
                 }
                 self.after_store_change();
                 return self.update_title();
@@ -341,10 +410,10 @@ impl cosmic::Application for AppModel {
 
             Message::EmptyTrash => {
                 self.current = None;
-                if let Some(store) = self.store.as_mut() {
-                    if let Err(err) = store.empty_trash() {
-                        tracing::error!(%err, "emptying trash");
-                    }
+                if let Some(store) = self.store.as_mut()
+                    && let Err(err) = store.empty_trash()
+                {
+                    tracing::error!(%err, "emptying trash");
                 }
                 self.after_store_change();
                 return self.update_title();
@@ -380,6 +449,44 @@ impl cosmic::Application for AppModel {
 
             Message::FocusSearch => {
                 return widget::text_input::focus(self.search_id.clone());
+            }
+
+            Message::ScriptTick => {
+                let step = self.script.as_mut().and_then(debug_script::Runner::next);
+                if let Some(step) = step {
+                    tracing::debug!(?step, "JJB_SCRIPT step");
+                    return self.run_step(step);
+                }
+            }
+
+            Message::TakeScreenshot => {
+                if self.screenshot_pending {
+                    self.screenshot_pending = false;
+                    if let Some(id) = self.core.main_window_id() {
+                        return cosmic::iced::window::screenshot(id).map(|shot| {
+                            cosmic::Action::App(Message::ScreenshotTaken(Arc::new(shot)))
+                        });
+                    }
+                }
+            }
+
+            Message::ScreenshotTaken(shot) => {
+                if let Some(path) = std::env::var_os("JJB_SCREENSHOT") {
+                    match image::save_buffer(
+                        &path,
+                        &shot.rgba,
+                        shot.size.width,
+                        shot.size.height,
+                        image::ColorType::Rgba8,
+                    ) {
+                        Ok(()) => {
+                            tracing::info!(path = %path.to_string_lossy(), "screenshot saved")
+                        }
+                        Err(err) => tracing::error!(%err, "saving screenshot"),
+                    }
+                }
+                self.close_current();
+                std::process::exit(0);
             }
 
             Message::Key(modifiers, key, physical) => {
@@ -465,7 +572,8 @@ impl AppModel {
                 .align_x(Alignment::Center)
                 .into()
         } else {
-            let mut list = widget::list_column().list_item_padding([spacing.space_xs, spacing.space_s]);
+            let mut list =
+                widget::list_column().list_item_padding([spacing.space_xs, spacing.space_s]);
             for note in &self.notes {
                 let selected = self.current.as_ref().is_some_and(|c| c.id == note.id);
                 list = list.add(
@@ -480,7 +588,12 @@ impl AppModel {
         let count = widget::text::caption(fl!("notes-count", count = self.notes.len()));
 
         widget::column::with_capacity(3)
-            .push(widget::container(search).padding([spacing.space_xs, spacing.space_xs, 0, spacing.space_xs]))
+            .push(widget::container(search).padding([
+                spacing.space_xs,
+                spacing.space_xs,
+                0,
+                spacing.space_xs,
+            ]))
             .push(body)
             .push(widget::container(count).padding([spacing.space_xxs, spacing.space_s]))
             .spacing(spacing.space_xs)
@@ -511,7 +624,10 @@ impl AppModel {
             editor = editor.on_action(Message::Editor);
         }
 
-        let mut column = widget::column::with_capacity(3).push(editor).width(Length::Fill).height(Length::Fill);
+        let mut column = widget::column::with_capacity(3)
+            .push(editor)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         if note.trashed {
             column = column.push(
@@ -526,10 +642,15 @@ impl AppModel {
                 .align_y(Alignment::Center)
                 .push(widget::text::caption_heading(fl!("linked-from")));
             for link in &self.backlinks {
-                row = row.push(widget::button::link(link.title.clone()).on_press(Message::Select(link.id.clone())));
+                row = row.push(
+                    widget::button::link(link.title.clone())
+                        .on_press(Message::Select(link.id.clone())),
+                );
             }
             column = column.push(
-                widget::container(widget::scrollable(row).direction(Direction::Horizontal(Scrollbar::default())))
+                widget::container(
+                    widget::scrollable(row).direction(Direction::Horizontal(Scrollbar::default())),
+                )
                 .padding([spacing.space_xs, spacing.space_m]),
             );
         }
@@ -556,13 +677,26 @@ impl AppModel {
             .icon(icon::from_name("user-trash-symbolic"))
             .data(View::Trash);
 
-        let tags = self.store.as_ref().and_then(|s| s.tags().ok()).unwrap_or_default();
+        let tags = self
+            .store
+            .as_ref()
+            .and_then(|s| s.tags().ok())
+            .unwrap_or_default();
         let mut first_tag = true;
         for (name, count) in tag_tree(&tags) {
             let depth = name.matches('/').count() as u16;
             let leaf = name.rsplit('/').next().unwrap_or(&name).to_owned();
-            let label = if count > 0 { format!("{leaf}  {count}") } else { leaf };
-            let mut entry = self.nav.insert().text(label).indent(depth).data(View::Tag(name));
+            let label = if count > 0 {
+                format!("{leaf}  {count}")
+            } else {
+                leaf
+            };
+            let mut entry = self
+                .nav
+                .insert()
+                .text(label)
+                .indent(depth)
+                .data(View::Tag(name));
             if first_tag {
                 entry = entry.divider_above(true);
                 first_tag = false;
@@ -586,7 +720,10 @@ impl AppModel {
 
     fn set_view(&mut self, view: View) {
         self.view = view;
-        let found = self.nav.iter().find(|id| self.nav.data::<View>(*id) == Some(&self.view));
+        let found = self
+            .nav
+            .iter()
+            .find(|id| self.nav.data::<View>(*id) == Some(&self.view));
         if let Some(id) = found {
             self.nav.activate(id);
         }
@@ -607,15 +744,17 @@ impl AppModel {
     fn after_store_change(&mut self) {
         self.rebuild_nav();
         self.refresh_list();
-        if self.current.is_none() {
-            if let Some(first) = self.notes.first().map(|n| n.id.clone()) {
-                self.open_note(&first);
-            }
+        if self.current.is_none()
+            && let Some(first) = self.notes.first().map(|n| n.id.clone())
+        {
+            self.open_note(&first);
         }
     }
 
     fn open_note(&mut self, id: &str) {
-        let Some(store) = self.store.as_mut() else { return };
+        let Some(store) = self.store.as_mut() else {
+            return;
+        };
         match store.load(id) {
             Ok(Some(note)) => {
                 self.editor = text_editor::Content::with_text(&note.body);
@@ -634,7 +773,9 @@ impl AppModel {
     /// Write pending edits and let go of the current note.
     fn close_current(&mut self) {
         self.flush();
-        let Some(note) = self.current.take() else { return };
+        let Some(note) = self.current.take() else {
+            return;
+        };
         self.backlinks.clear();
         if let Some(store) = self.store.as_mut() {
             match store.delete_if_empty(&note.id) {
@@ -656,7 +797,9 @@ impl AppModel {
             return;
         }
         self.dirty = false;
-        let (Some(store), Some(note)) = (self.store.as_mut(), self.current.as_mut()) else { return };
+        let (Some(store), Some(note)) = (self.store.as_mut(), self.current.as_mut()) else {
+            return;
+        };
         let old_title = note.title.clone();
         note.body = self.editor.text();
         if let Err(err) = store.save(note) {
@@ -669,6 +812,37 @@ impl AppModel {
         // Tags may have changed; keep nav + list in step.
         self.rebuild_nav();
         self.refresh_list();
+    }
+
+    /// Apply one `JJB_SCRIPT` step by routing it through the normal messages.
+    fn run_step(&mut self, step: Step) -> Task<cosmic::Action<Message>> {
+        match step {
+            Step::New => self.update(Message::NewNote),
+            Step::Type(text) => {
+                let mut task = Task::none();
+                for c in text.chars() {
+                    let edit = if c == '\n' {
+                        text_editor::Edit::Enter
+                    } else {
+                        text_editor::Edit::Insert(c)
+                    };
+                    task = self.update(Message::Editor(text_editor::Action::Edit(edit)));
+                }
+                task
+            }
+            Step::Search(text) => self.update(Message::Search(text)),
+            Step::Select(n) => match self.notes.get(n).map(|s| s.id.clone()) {
+                Some(id) => self.update(Message::Select(id)),
+                None => Task::none(),
+            },
+            Step::Pin => self.update(Message::TogglePin),
+            Step::Trash => self.update(Message::TrashCurrent),
+            Step::Wait(_) => Task::none(),
+            Step::Exit => {
+                self.close_current();
+                std::process::exit(0);
+            }
+        }
     }
 
     fn update_title(&mut self) -> Task<cosmic::Action<Message>> {
@@ -685,7 +859,11 @@ impl AppModel {
     }
 }
 
-fn header_button<'a>(icon_name: &'static str, label: String, on_press: Message) -> Element<'a, Message> {
+fn header_button<'a>(
+    icon_name: &'static str,
+    label: String,
+    on_press: Message,
+) -> Element<'a, Message> {
     widget::tooltip(
         widget::button::icon(icon::from_name(icon_name)).on_press(on_press),
         widget::text::body(label),
@@ -696,7 +874,11 @@ fn header_button<'a>(icon_name: &'static str, label: String, on_press: Message) 
 
 fn note_row(note: &NoteSummary) -> Element<'_, Message> {
     let spacing = cosmic::theme::spacing();
-    let title = if note.pinned { format!("📌 {}", note.title) } else { note.title.clone() };
+    let title = if note.pinned {
+        format!("📌 {}", note.title)
+    } else {
+        note.title.clone()
+    };
     let mut column = widget::column::with_capacity(3)
         .push(widget::text::heading(title))
         .spacing(spacing.space_xxxs);
@@ -748,15 +930,24 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     use menu::key_bind::Modifier;
     let mut binds = HashMap::new();
     binds.insert(
-        menu::KeyBind { modifiers: vec![Modifier::Ctrl], key: keyboard::Key::Character("n".into()) },
+        menu::KeyBind {
+            modifiers: vec![Modifier::Ctrl],
+            key: keyboard::Key::Character("n".into()),
+        },
         MenuAction::NewNote,
     );
     binds.insert(
-        menu::KeyBind { modifiers: vec![Modifier::Ctrl], key: keyboard::Key::Character("f".into()) },
+        menu::KeyBind {
+            modifiers: vec![Modifier::Ctrl],
+            key: keyboard::Key::Character("f".into()),
+        },
         MenuAction::FocusSearch,
     );
     binds.insert(
-        menu::KeyBind { modifiers: vec![Modifier::Ctrl, Modifier::Shift], key: keyboard::Key::Character("d".into()) },
+        menu::KeyBind {
+            modifiers: vec![Modifier::Ctrl, Modifier::Shift],
+            key: keyboard::Key::Character("d".into()),
+        },
         MenuAction::TrashNote,
     );
     binds
@@ -795,7 +986,11 @@ mod tests {
 
     #[test]
     fn tag_tree_inserts_parents() {
-        let tags = vec![("work/incab".to_string(), 2), ("work".to_string(), 1), ("zed/a/b".to_string(), 1)];
+        let tags = vec![
+            ("work/incab".to_string(), 2),
+            ("work".to_string(), 1),
+            ("zed/a/b".to_string(), 1),
+        ];
         let tree = tag_tree(&tags);
         assert_eq!(
             tree,

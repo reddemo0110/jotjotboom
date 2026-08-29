@@ -2827,6 +2827,7 @@ dependencies = [
  "dirs",
  "i18n-embed",
  "i18n-embed-fl",
+ "image",
  "libcosmic",
  "open",
  "rusqlite",

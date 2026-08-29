@@ -2,6 +2,7 @@
 
 mod app;
 mod config;
+mod debug_script;
 mod i18n;
 mod note;
 mod secrets;

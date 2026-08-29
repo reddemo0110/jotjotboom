@@ -47,3 +47,16 @@ arrive later.
   `~/.cargo`; `just` and `cargo-generate` via `cargo install`. `cmake` is
   not installed system-wide — if a crate demands it, drop a Kitware release
   tarball into `~/.local` or `sudo pacman -S cmake`.
+
+## 2026-08-29 — Verification tooling (after step 1 landed)
+- Unattended UI checks: `tools/xshot.py out.png --script '...'` runs the app
+  on Xwayland, drives it via the `JJB_SCRIPT` env hook (`src/debug_script.rs`),
+  and grabs the window with XGetImage. Chosen because every other route failed
+  without a human: portal screenshots hang waiting for approval, XTEST under
+  Xwayland blocks on the libei portal, and iced's own `window::screenshot`
+  (the `JJB_SCREENSHOT` hook) silently drops text-editor contents and menu
+  labels — it looked like two rendering bugs that didn't exist.
+- Both hooks are env-gated and cost nothing when unset; they stay in the
+  binary for now so the CRT/editor work can be checked the same way.
+- Steps 1 and 2 of the build order are done together: FTS5 search, tag
+  parsing and the nested tag tree fell out of the storage design cheaply.

@@ -62,7 +62,9 @@ impl Store {
             }
             match self.index_file(&entry.path, entry.trashed, entry.modified) {
                 Ok(_) => changed += 1,
-                Err(err) => tracing::warn!(path = %entry.path.display(), %err, "skipping unreadable note"),
+                Err(err) => {
+                    tracing::warn!(path = %entry.path.display(), %err, "skipping unreadable note")
+                }
             }
         }
         for (path, known) in &indexed {
@@ -133,7 +135,9 @@ impl Store {
 
     /// Load a note from disk (re-indexing if the file changed underneath us).
     pub fn load(&mut self, id: &str) -> Result<Option<Note>> {
-        let Some(row) = self.db.get(id)? else { return Ok(None) };
+        let Some(row) = self.db.get(id)? else {
+            return Ok(None);
+        };
         let text = match self.dir.read(&row.path) {
             Ok(t) => t,
             Err(err) => {
@@ -185,7 +189,11 @@ impl Store {
     /// Persist the note's current body. Renames the file when the title changed.
     pub fn save(&mut self, n: &mut Note) -> Result<()> {
         n.title = note::derive_title(&n.body);
-        let dir = if n.trashed { self.dir.trash_dir() } else { self.dir.root().to_owned() };
+        let dir = if n.trashed {
+            self.dir.trash_dir()
+        } else {
+            self.dir.root().to_owned()
+        };
         let current_stem = n.path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         let wanted_stem = note::slug_filename(&n.title);
         // Keep "Title (2).md" stable while the title is unchanged.
@@ -215,12 +223,15 @@ impl Store {
         }
         let hash = note::content_hash(&text);
         self.index(n, &hash)?;
-        self.db.append_oplog(&n.id, n.modified, &self.device_id, &hash)?;
+        self.db
+            .append_oplog(&n.id, n.modified, &self.device_id, &hash)?;
         Ok(())
     }
 
     pub fn set_pinned(&mut self, id: &str, pinned: bool) -> Result<Option<Note>> {
-        let Some(mut n) = self.load(id)? else { return Ok(None) };
+        let Some(mut n) = self.load(id)? else {
+            return Ok(None);
+        };
         n.pinned = pinned;
         self.write(&mut n)?;
         Ok(Some(n))
@@ -235,15 +246,26 @@ impl Store {
     }
 
     fn move_between(&mut self, id: &str, trashed: bool) -> Result<()> {
-        let Some(mut n) = self.load(id)? else { return Ok(()) };
+        let Some(mut n) = self.load(id)? else {
+            return Ok(());
+        };
         n.trashed = trashed;
-        let dir = if trashed { self.dir.trash_dir() } else { self.dir.root().to_owned() };
+        let dir = if trashed {
+            self.dir.trash_dir()
+        } else {
+            self.dir.root().to_owned()
+        };
         let new_path = self.dir.unique_path(&dir, &n.title, None);
         self.dir.rename(&n.path, &new_path)?;
         n.path = new_path;
         let text = self.dir.read(&n.path)?;
         self.index(&n, &note::content_hash(&text))?;
-        self.db.append_oplog(&n.id, Utc::now(), &self.device_id, &note::content_hash(&text))?;
+        self.db.append_oplog(
+            &n.id,
+            Utc::now(),
+            &self.device_id,
+            &note::content_hash(&text),
+        )?;
         Ok(())
     }
 
@@ -257,7 +279,9 @@ impl Store {
     /// Notes created and never typed into are dropped rather than left as
     /// `Untitled.md` litter. Returns true if it was deleted.
     pub fn delete_if_empty(&mut self, id: &str) -> Result<bool> {
-        let Some(n) = self.load(id)? else { return Ok(false) };
+        let Some(n) = self.load(id)? else {
+            return Ok(false);
+        };
         if n.body.trim().is_empty() && !n.trashed {
             self.delete_forever(id)?;
             return Ok(true);
@@ -297,7 +321,12 @@ mod tests {
 
     fn temp_store() -> (Store, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
-        let store = Store::open(tmp.path().join("notes"), &tmp.path().join("index.db"), "test-device".into()).unwrap();
+        let store = Store::open(
+            tmp.path().join("notes"),
+            &tmp.path().join("index.db"),
+            "test-device".into(),
+        )
+        .unwrap();
         (store, tmp)
     }
 
@@ -322,7 +351,11 @@ mod tests {
         let mut m = store.create().unwrap();
         m.body = "Shopping list".into();
         store.save(&mut m).unwrap();
-        assert!(m.path.ends_with("Shopping list (2).md"), "{}", m.path.display());
+        assert!(
+            m.path.ends_with("Shopping list (2).md"),
+            "{}",
+            m.path.display()
+        );
         // Saving again with same title keeps the suffixed name.
         m.body = "Shopping list\nmore".into();
         store.save(&mut m).unwrap();
@@ -330,7 +363,15 @@ mod tests {
 
         store.trash(&n.id).unwrap();
         assert_eq!(store.list(&View::Trash).unwrap().len(), 1);
-        assert!(store.load(&n.id).unwrap().unwrap().path.to_string_lossy().contains(".trash"));
+        assert!(
+            store
+                .load(&n.id)
+                .unwrap()
+                .unwrap()
+                .path
+                .to_string_lossy()
+                .contains(".trash")
+        );
         store.restore(&n.id).unwrap();
         assert!(store.list(&View::Trash).unwrap().is_empty());
 

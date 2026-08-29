@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Debug-only driver: `JJB_SCRIPT="new;type:Hello #tag;wait:1500;exit"` feeds
+//! the app the same messages real input would, so end-to-end behaviour can be
+//! exercised (and captured with `tools/xshot.py`) without a human at the
+//! keyboard. Steps are separated by `;`; `\n` and `\;` are unescaped in text.
+
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// Create a new note (Ctrl+N).
+    New,
+    /// Insert text into the editor at the cursor.
+    Type(String),
+    /// Type into the search box.
+    Search(String),
+    /// Select the n-th note in the current list (0-based).
+    Select(usize),
+    /// Toggle pin on the current note.
+    Pin,
+    /// Move the current note to the trash.
+    Trash,
+    /// Pause for the given milliseconds (lets autosave run).
+    Wait(u64),
+    /// Flush and quit.
+    Exit,
+}
+
+pub fn parse(script: &str) -> Vec<Step> {
+    split_steps(script)
+        .into_iter()
+        .filter_map(|raw| {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                return None;
+            }
+            let (cmd, arg) = raw
+                .split_once(':')
+                .map_or((raw, ""), |(c, a)| (c.trim(), a));
+            let step = match cmd {
+                "new" => Step::New,
+                "type" => Step::Type(unescape(arg)),
+                "search" => Step::Search(unescape(arg)),
+                "select" => Step::Select(arg.trim().parse().ok()?),
+                "pin" => Step::Pin,
+                "trash" => Step::Trash,
+                "wait" => Step::Wait(arg.trim().parse().ok()?),
+                "exit" => Step::Exit,
+                other => {
+                    tracing::warn!(step = other, "unknown JJB_SCRIPT step");
+                    return None;
+                }
+            };
+            Some(step)
+        })
+        .collect()
+}
+
+/// Split on `;` but keep `\;` intact.
+fn split_steps(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&';') {
+            cur.push_str("\\;");
+            chars.next();
+        } else if c == ';' {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+    }
+    out.push(cur);
+    out
+}
+
+fn unescape(s: &str) -> String {
+    s.replace("\\n", "\n").replace("\\;", ";")
+}
+
+/// Runner state kept in the app model.
+#[derive(Debug)]
+pub struct Runner {
+    steps: std::collections::VecDeque<Step>,
+    resume_at: Instant,
+}
+
+impl Runner {
+    pub fn from_env() -> Option<Self> {
+        let script = std::env::var("JJB_SCRIPT").ok()?;
+        let steps = parse(&script);
+        tracing::info!(count = steps.len(), "JJB_SCRIPT loaded");
+        Some(Self {
+            steps: steps.into(),
+            // Give the window a moment to appear before driving it.
+            resume_at: Instant::now() + Duration::from_millis(1200),
+        })
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.steps.is_empty()
+    }
+
+    /// The next step, if its time has come.
+    pub fn next(&mut self) -> Option<Step> {
+        if Instant::now() < self.resume_at {
+            return None;
+        }
+        let step = self.steps.pop_front()?;
+        if let Step::Wait(ms) = step {
+            self.resume_at = Instant::now() + Duration::from_millis(ms);
+        }
+        Some(step)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_steps() {
+        let steps = parse(
+            "new; type:Hello\\nworld\\; ok ;wait:500;select:2;search:milk;pin;trash;bogus;exit",
+        );
+        assert_eq!(
+            steps,
+            vec![
+                Step::New,
+                Step::Type("Hello\nworld; ok".into()),
+                Step::Wait(500),
+                Step::Select(2),
+                Step::Search("milk".into()),
+                Step::Pin,
+                Step::Trash,
+                Step::Exit,
+            ]
+        );
+    }
+}

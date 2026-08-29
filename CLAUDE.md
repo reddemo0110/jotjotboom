@@ -12,6 +12,10 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
 - `cargo test` — unit tests (note format, SQLite/FTS5 index, store round-trips)
 - `just run` — release build + run; `just check` — clippy pedantic
 - `RUST_LOG=jotjotboom=debug cargo run` for tracing output
+- Visual check without a human: `tools/xshot.py out.png [--keys ctrl+n --type 'text']`
+  runs the app on Xwayland, drives it with XTEST keystrokes, captures the
+  window. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
+  hook (iced `window::screenshot`) silently drops editor text and menu labels.
 
 libcosmic is pulled from git; its API moves. When in doubt, read the checkout
 under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
