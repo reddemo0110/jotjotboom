@@ -116,3 +116,9 @@ window controls stay native COSMIC, the content area does not.
 - Gotcha recorded: `JJB_SCRIPT` splits on `;` — escape as `\;` in note
   text or the tail of the step is silently dropped. Multi-line `type:` now
   types one line per tick so the highlighter sees keystroke-like edits.
+
+## 2026-08-29 — Theme names are 80s action-movie puns (user request)
+Keys in config are unchanged (`phosphor`, `amber`, …); only labels/blurbs
+moved. Contrast pass at the same time: `dim` lifted on phosphor, amber,
+WordPerfect, plasma and C64 (previews/timestamps were ~3:1), Game Boy accent
+separated from its foreground.
