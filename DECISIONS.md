@@ -213,3 +213,15 @@ in the text, resizable, with a click-for-options menu.
   Backspace-over-image each start a new step (caption typing groups).
 - Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y and an Edit menu. The stock text editor has
   no undo of its own, so this is the only undo.
+
+## 2026-08-29 — Theme pass 2 (user feedback)
+- Muted the loud backgrounds: Handhelder is now real-DMG olive
+  (#a9b58a) instead of emulator lime; Little Blue's #0000aa softened to
+  #1c2874 with gentler yellow/cyan; Escape from C64 desaturated slightly.
+- New **Ghostwriters**: plain white (#ffffff / #fbfbfb panels) with
+  #0c0c0c ink — never pure black — and a muted steel blue for tags/links.
+- Five COLOURlovers-derived themes (hex values from the palettes, dark
+  grounds derived from their deepest colour): Big Fish in Little China
+  (Giant Goldfish), Blade Thinker (Thought Provoking), Cheer Up, Karate Kid
+  (Cheer Up Emo Kid), The Abyss Five (Ocean Five), Adrift in Dreamscape
+  (Adrift in Dreams). Blurbs credit the source palette.

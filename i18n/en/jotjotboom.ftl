@@ -65,7 +65,7 @@ folder-name-placeholder = folder name
 # Themes
 theme-colours = Theme colours
 show-markers = Show markdown syntax
-theme-picker-hint = Eight retro palettes and one that follows your desktop. Click to apply.
+theme-picker-hint = Retro palettes, a plain white, five from COLOURlovers, and one that follows your desktop. Click to apply.
 
 # Layout
 show-nav = Views and tags
