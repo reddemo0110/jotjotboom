@@ -2,62 +2,76 @@
 
 use crate::config::Config;
 use crate::fl;
+use crate::note::{Note, NoteSummary};
+use crate::store::{Store, View};
+use chrono::{DateTime, Datelike, Local, Utc};
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
-use cosmic::iced::alignment::{Horizontal, Vertical};
-use cosmic::iced::{Alignment, Length, Subscription, futures};
+use cosmic::iced::keyboard::{self, key::Physical};
+use cosmic::iced::{Alignment, Event, Length, Subscription, event};
 use cosmic::prelude::*;
-use cosmic::widget::{self, about::About, icon, menu, nav_bar};
-use futures::SinkExt;
+use cosmic::iced::widget::scrollable::{Direction, Scrollbar};
+use cosmic::widget::menu::action::MenuAction as _;
+use cosmic::widget::{self, about::About, icon, menu, nav_bar, text_editor};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
+/// How long after the last keystroke we write the note to disk.
+const AUTOSAVE_DELAY: Duration = Duration::from_millis(600);
+const NOTE_LIST_WIDTH: f32 = 300.0;
 
-/// The application model stores app-specific state used to describe its interface and
-/// drive its logic.
 pub struct AppModel {
-    /// Application state which is managed by the COSMIC runtime.
     core: cosmic::Core,
-    /// Display a context drawer with the designated page if defined.
     context_page: ContextPage,
-    /// The about page for this app.
     about: About,
-    /// Contains items assigned to the nav bar panel.
     nav: nav_bar::Model,
-    /// Key bindings for the application's menu bar.
     key_binds: HashMap<menu::KeyBind, MenuAction>,
-    /// Configuration data that persists between application runs.
     config: Config,
-    /// Time active
-    time: u32,
-    /// Toggle the watch subscription
-    watch_is_active: bool,
+    /// Kept for the settings page (notes dir picker) that lands in the polish phase.
+    #[allow(dead_code)]
+    config_handler: Option<cosmic_config::Config>,
+
+    store: Option<Store>,
+    store_error: Option<String>,
+    view: View,
+    query: String,
+    search_id: widget::Id,
+    notes: Vec<NoteSummary>,
+    current: Option<Note>,
+    editor: text_editor::Content,
+    dirty: bool,
+    last_edit: Instant,
+    backlinks: Vec<NoteSummary>,
 }
 
-/// Messages emitted by the application and its widgets.
 #[derive(Debug, Clone)]
 pub enum Message {
     LaunchUrl(String),
     ToggleContextPage(ContextPage),
-    ToggleWatch,
     UpdateConfig(Config),
-    WatchTick(u32),
+    Key(keyboard::Modifiers, keyboard::Key, Physical),
+
+    Editor(text_editor::Action),
+    AutosaveTick,
+    Select(String),
+    NewNote,
+    TrashCurrent,
+    RestoreCurrent,
+    DeleteCurrentForever,
+    EmptyTrash,
+    TogglePin,
+    Search(String),
+    ClearSearch,
+    FocusSearch,
 }
 
-/// Create a COSMIC application from the app model
 impl cosmic::Application for AppModel {
-    /// The async executor that will be used to run your application's commands.
     type Executor = cosmic::executor::Default;
-
-    /// Data that your application receives to its init method.
     type Flags = ();
-
-    /// Messages which the application and its widgets will emit.
     type Message = Message;
 
-    /// Unique identifier in RDNN (reverse domain name notation) format.
     const APP_ID: &'static str = "io.github.jotjotboom.JotJotBoom";
 
     fn core(&self) -> &cosmic::Core {
@@ -68,31 +82,40 @@ impl cosmic::Application for AppModel {
         &mut self.core
     }
 
-    /// Initializes the application with any given flags and startup commands.
-    fn init(
-        core: cosmic::Core,
-        _flags: Self::Flags,
-    ) -> (Self, Task<cosmic::Action<Self::Message>>) {
-        // Create a nav bar with three page items.
-        let mut nav = nav_bar::Model::default();
+    fn init(core: cosmic::Core, _flags: Self::Flags) -> (Self, Task<cosmic::Action<Self::Message>>) {
+        let config_handler = cosmic_config::Config::new(Self::APP_ID, Config::VERSION).ok();
+        let mut config = config_handler
+            .as_ref()
+            .map(|ctx| match Config::get_entry(ctx) {
+                Ok(config) => config,
+                Err((errors, config)) => {
+                    for why in errors {
+                        tracing::warn!(%why, "error loading app config");
+                    }
+                    config
+                }
+            })
+            .unwrap_or_default();
 
-        nav.insert()
-            .text(fl!("page-id", num = 1))
-            .data::<Page>(Page::Page1)
-            .icon(icon::from_name("applications-science-symbolic"))
-            .activate();
+        if config.device_id.is_empty() {
+            let id = crate::note::new_id();
+            if let Some(handler) = &config_handler {
+                if let Err(why) = config.set_device_id(handler, id.clone()) {
+                    tracing::warn!(%why, "could not persist device id");
+                }
+            }
+            config.device_id = id;
+        }
 
-        nav.insert()
-            .text(fl!("page-id", num = 2))
-            .data::<Page>(Page::Page2)
-            .icon(icon::from_name("applications-system-symbolic"));
+        let (store, store_error) =
+            match Store::open(config.notes_dir(), &Config::index_path(Self::APP_ID), config.device_id.clone()) {
+                Ok(store) => (Some(store), None),
+                Err(err) => {
+                    tracing::error!(%err, "opening store");
+                    (None, Some(format!("{err:#}")))
+                }
+            };
 
-        nav.insert()
-            .text(fl!("page-id", num = 3))
-            .data::<Page>(Page::Page3)
-            .icon(icon::from_name("applications-games-symbolic"));
-
-        // Create the about widget
         let about = About::default()
             .name(fl!("app-title"))
             .icon(widget::icon::from_svg_bytes(APP_ICON))
@@ -100,55 +123,90 @@ impl cosmic::Application for AppModel {
             .links([(fl!("repository"), REPOSITORY)])
             .license(env!("CARGO_PKG_LICENSE"));
 
-        // Construct the app model with the runtime's core.
         let mut app = AppModel {
             core,
             context_page: ContextPage::default(),
             about,
-            nav,
-            key_binds: HashMap::new(),
-            // Optional configuration file for an application.
-            config: cosmic_config::Config::new(Self::APP_ID, Config::VERSION)
-                .map(|context| match Config::get_entry(&context) {
-                    Ok(config) => config,
-                    Err((_errors, config)) => {
-                        // for why in errors {
-                        //     tracing::error!(%why, "error loading app config");
-                        // }
-
-                        config
-                    }
-                })
-                .unwrap_or_default(),
-            time: 0,
-            watch_is_active: false,
+            nav: nav_bar::Model::default(),
+            key_binds: key_binds(),
+            config,
+            config_handler,
+            store,
+            store_error,
+            view: View::All,
+            query: String::new(),
+            search_id: widget::Id::unique(),
+            notes: Vec::new(),
+            current: None,
+            editor: text_editor::Content::new(),
+            dirty: false,
+            last_edit: Instant::now(),
+            backlinks: Vec::new(),
         };
 
-        // Create a startup command that sets the window title.
-        let command = app.update_title();
+        app.rebuild_nav();
+        app.refresh_list();
+        // Open the most recent note so the window isn't empty on launch.
+        if let Some(first) = app.notes.first().map(|n| n.id.clone()) {
+            app.open_note(&first);
+        }
 
+        let command = app.update_title();
         (app, command)
     }
 
-    /// Elements to pack at the start of the header bar.
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
-        let menu_bar = menu::bar(vec![menu::Tree::with_children(
-            menu::root(fl!("view")).apply(Element::from),
-            menu::items(
-                &self.key_binds,
-                vec![menu::Item::Button(fl!("about"), None, MenuAction::About)],
+        let menu_bar = menu::bar(vec![
+            menu::Tree::with_children(
+                menu::root(fl!("file")).apply(Element::from),
+                menu::items(
+                    &self.key_binds,
+                    vec![
+                        menu::Item::Button(fl!("new-note"), None, MenuAction::NewNote),
+                        menu::Item::Divider,
+                        menu::Item::Button(fl!("trash-note"), None, MenuAction::TrashNote),
+                    ],
+                ),
             ),
-        )]);
+            menu::Tree::with_children(
+                menu::root(fl!("view")).apply(Element::from),
+                menu::items(
+                    &self.key_binds,
+                    vec![menu::Item::Button(fl!("about"), None, MenuAction::About)],
+                ),
+            ),
+        ]);
 
         vec![menu_bar.into()]
     }
 
-    /// Enables the COSMIC application to create a nav bar with this model.
+    fn header_end(&self) -> Vec<Element<'_, Self::Message>> {
+        let mut items: Vec<Element<'_, Message>> = Vec::new();
+        let in_trash = matches!(self.view, View::Trash);
+
+        if let Some(note) = &self.current {
+            if in_trash {
+                items.push(header_button("edit-undo-symbolic", fl!("restore-note"), Message::RestoreCurrent));
+                items.push(header_button("edit-delete-symbolic", fl!("delete-forever"), Message::DeleteCurrentForever));
+            } else {
+                let pin_label = if note.pinned { fl!("unpin-note") } else { fl!("pin-note") };
+                items.push(header_button("view-pin-symbolic", pin_label, Message::TogglePin));
+                items.push(header_button("user-trash-symbolic", fl!("trash-note"), Message::TrashCurrent));
+            }
+        }
+        if in_trash && !self.notes.is_empty() {
+            items.push(header_button("edit-clear-all-symbolic", fl!("empty-trash"), Message::EmptyTrash));
+        }
+        if !in_trash {
+            items.push(header_button("list-add-symbolic", fl!("new-note"), Message::NewNote));
+        }
+        items
+    }
+
     fn nav_model(&self) -> Option<&nav_bar::Model> {
         Some(&self.nav)
     }
 
-    /// Display a context drawer if the context page is requested.
     fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<'_, Self::Message>> {
         if !self.core.window.show_context {
             return None;
@@ -163,177 +221,462 @@ impl cosmic::Application for AppModel {
         })
     }
 
-    /// Describes the interface based on the current state of the application model.
-    ///
-    /// Application events will be processed through the view. Any messages emitted by
-    /// events received by widgets will be passed to the update method.
     fn view(&self) -> Element<'_, Self::Message> {
-        let space_s = cosmic::theme::spacing().space_s;
-        let content: Element<_> = match self.nav.active_data::<Page>().unwrap() {
-            Page::Page1 => {
-                let header = widget::row::with_capacity(2)
-                    .push(widget::text::title1(fl!("welcome")))
-                    .push(widget::text::title3(fl!("page-id", num = 1)))
-                    .align_y(Alignment::End)
-                    .spacing(space_s);
+        if let Some(err) = &self.store_error {
+            return widget::container(widget::text::body(fl!("store-error", error = err.as_str())))
+                .padding(24)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .into();
+        }
 
-                let counter_label = ["Watch: ", self.time.to_string().as_str()].concat();
-                let section = cosmic::widget::settings::section().add(
-                    cosmic::widget::settings::item::builder(counter_label).control(
-                        widget::button::text(if self.watch_is_active {
-                            "Stop"
-                        } else {
-                            "Start"
-                        })
-                        .on_press(Message::ToggleWatch),
-                    ),
-                );
-
-                widget::column::with_capacity(2)
-                    .push(header)
-                    .push(section)
-                    .spacing(space_s)
-                    .height(Length::Fill)
-                    .into()
-            }
-
-            Page::Page2 => {
-                let header = widget::row::with_capacity(2)
-                    .push(widget::text::title1(fl!("welcome")))
-                    .push(widget::text::title3(fl!("page-id", num = 2)))
-                    .align_y(Alignment::End)
-                    .spacing(space_s);
-
-                widget::column::with_capacity(1)
-                    .push(header)
-                    .spacing(space_s)
-                    .height(Length::Fill)
-                    .into()
-            }
-
-            Page::Page3 => {
-                let header = widget::row::with_capacity(2)
-                    .push(widget::text::title1(fl!("welcome")))
-                    .push(widget::text::title3(fl!("page-id", num = 3)))
-                    .align_y(Alignment::End)
-                    .spacing(space_s);
-
-                widget::column::with_capacity(1)
-                    .push(header)
-                    .spacing(space_s)
-                    .height(Length::Fill)
-                    .into()
-            }
-        };
-
-        widget::container(content)
-            .width(600)
-            .height(Length::Fill)
-            .apply(widget::container)
+        widget::row::with_capacity(3)
+            .push(self.note_list())
+            .push(widget::divider::vertical::default())
+            .push(self.editor_pane())
             .width(Length::Fill)
-            .align_x(Horizontal::Center)
-            .align_y(Vertical::Center)
+            .height(Length::Fill)
             .into()
     }
 
-    /// Register subscriptions for this application.
-    ///
-    /// Subscriptions are long-running async tasks running in the background which
-    /// emit messages to the application through a channel. They can be dynamically
-    /// stopped and started conditionally based on application state, or persist
-    /// indefinitely.
     fn subscription(&self) -> Subscription<Self::Message> {
-        // Add subscriptions which are always active.
         let mut subscriptions = vec![
-            // Watch for application configuration changes.
             self.core()
                 .watch_config::<Config>(Self::APP_ID)
-                .map(|update| {
-                    // for why in update.errors {
-                    //     tracing::error!(?why, "app config error");
-                    // }
-
-                    Message::UpdateConfig(update.config)
-                }),
+                .map(|update| Message::UpdateConfig(update.config)),
+            event::listen_with(|event, _status, _window| match event {
+                Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, physical_key, .. }) => {
+                    Some(Message::Key(modifiers, key, physical_key))
+                }
+                _ => None,
+            }),
         ];
 
-        // Conditionally enables a timer that emits a message every second.
-        if self.watch_is_active {
-            subscriptions.push(Subscription::run(|| {
-                cosmic::iced::stream::channel(1, |mut emitter: futures::channel::mpsc::Sender<_>| async move {
-                    let mut time = 1;
-                    let mut interval = tokio::time::interval(Duration::from_secs(1));
-
-                    loop {
-                        interval.tick().await;
-                        _ = emitter.send(Message::WatchTick(time)).await;
-                        time += 1;
-                    }
-                })
-            }));
+        if self.dirty {
+            subscriptions.push(cosmic::iced::time::every(Duration::from_millis(200)).map(|_| Message::AutosaveTick));
         }
 
         Subscription::batch(subscriptions)
     }
 
-    /// Handles messages emitted by the application and its widgets.
-    ///
-    /// Tasks may be returned for asynchronous execution of code in the background
-    /// on the application's async runtime.
     fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
         match message {
-            Message::WatchTick(time) => {
-                self.time = time;
+            Message::Editor(action) => {
+                let is_edit = action.is_edit();
+                self.editor.perform(action);
+                if is_edit && self.current.as_ref().is_some_and(|n| !n.trashed) {
+                    self.dirty = true;
+                    self.last_edit = Instant::now();
+                }
             }
 
-            Message::ToggleWatch => {
-                self.watch_is_active = !self.watch_is_active;
+            Message::AutosaveTick => {
+                if self.dirty && self.last_edit.elapsed() >= AUTOSAVE_DELAY {
+                    self.flush();
+                    return self.update_title();
+                }
+            }
+
+            Message::Select(id) => {
+                if self.current.as_ref().is_some_and(|n| n.id == id) {
+                    return Task::none();
+                }
+                self.close_current();
+                self.open_note(&id);
+                return self.update_title();
+            }
+
+            Message::NewNote => {
+                if matches!(self.view, View::Trash) {
+                    self.set_view(View::All);
+                }
+                self.close_current();
+                self.query.clear();
+                let created = self.store.as_mut().and_then(|s| match s.create() {
+                    Ok(note) => Some(note),
+                    Err(err) => {
+                        tracing::error!(%err, "creating note");
+                        None
+                    }
+                });
+                if let Some(note) = created {
+                    self.refresh_list();
+                    self.open_note(&note.id);
+                }
+                return self.update_title();
+            }
+
+            Message::TrashCurrent => {
+                self.flush();
+                if let (Some(store), Some(note)) = (self.store.as_mut(), self.current.take()) {
+                    if let Err(err) = store.trash(&note.id) {
+                        tracing::error!(%err, "trashing note");
+                    }
+                }
+                self.after_store_change();
+                return self.update_title();
+            }
+
+            Message::RestoreCurrent => {
+                if let (Some(store), Some(note)) = (self.store.as_mut(), self.current.take()) {
+                    if let Err(err) = store.restore(&note.id) {
+                        tracing::error!(%err, "restoring note");
+                    }
+                }
+                self.after_store_change();
+                return self.update_title();
+            }
+
+            Message::DeleteCurrentForever => {
+                if let (Some(store), Some(note)) = (self.store.as_mut(), self.current.take()) {
+                    if let Err(err) = store.delete_forever(&note.id) {
+                        tracing::error!(%err, "deleting note");
+                    }
+                }
+                self.after_store_change();
+                return self.update_title();
+            }
+
+            Message::EmptyTrash => {
+                self.current = None;
+                if let Some(store) = self.store.as_mut() {
+                    if let Err(err) = store.empty_trash() {
+                        tracing::error!(%err, "emptying trash");
+                    }
+                }
+                self.after_store_change();
+                return self.update_title();
+            }
+
+            Message::TogglePin => {
+                self.flush();
+                let target = self.current.as_ref().map(|n| (n.id.clone(), !n.pinned));
+                if let (Some(store), Some((id, pinned))) = (self.store.as_mut(), target) {
+                    match store.set_pinned(&id, pinned) {
+                        Ok(Some(note)) => {
+                            if let Some(current) = self.current.as_mut() {
+                                current.pinned = note.pinned;
+                                current.modified = note.modified;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(err) => tracing::error!(%err, "pinning note"),
+                    }
+                }
+                self.refresh_list();
+            }
+
+            Message::Search(query) => {
+                self.query = query;
+                self.refresh_list();
+            }
+
+            Message::ClearSearch => {
+                self.query.clear();
+                self.refresh_list();
+            }
+
+            Message::FocusSearch => {
+                return widget::text_input::focus(self.search_id.clone());
+            }
+
+            Message::Key(modifiers, key, physical) => {
+                let action = self
+                    .key_binds
+                    .iter()
+                    .find(|(bind, _)| bind.matches(modifiers, &key, Some(&physical)))
+                    .map(|(_, action)| action.message());
+                if let Some(message) = action {
+                    return self.update(message);
+                }
             }
 
             Message::ToggleContextPage(context_page) => {
                 if self.context_page == context_page {
-                    // Close the context drawer if the toggled context page is the same.
                     self.core.window.show_context = !self.core.window.show_context;
                 } else {
-                    // Open the context drawer to display the requested context page.
                     self.context_page = context_page;
                     self.core.window.show_context = true;
                 }
             }
 
             Message::UpdateConfig(config) => {
+                // A changed notes_dir takes effect on next launch; everything else is live.
                 self.config = config;
             }
 
             Message::LaunchUrl(url) => match open::that_detached(&url) {
                 Ok(()) => {}
                 Err(err) => {
-                    eprintln!("failed to open {url:?}: {err}");
+                    tracing::warn!(%err, url, "failed to open url");
                 }
             },
         }
         Task::none()
     }
 
-    /// Called when a nav item is selected.
     fn on_nav_select(&mut self, id: nav_bar::Id) -> Task<cosmic::Action<Self::Message>> {
-        // Activate the page in the model.
         self.nav.activate(id);
-
+        let view = self.nav.data::<View>(id).cloned().unwrap_or(View::All);
+        self.close_current();
+        self.view = view;
+        self.refresh_list();
+        if let Some(first) = self.notes.first().map(|n| n.id.clone()) {
+            self.open_note(&first);
+        }
         self.update_title()
+    }
+
+    fn on_escape(&mut self) -> Task<cosmic::Action<Self::Message>> {
+        if self.core.window.show_context {
+            self.core.window.show_context = false;
+        } else if !self.query.is_empty() {
+            self.query.clear();
+            self.refresh_list();
+        }
+        Task::none()
+    }
+
+    fn on_app_exit(&mut self) -> Option<Self::Message> {
+        self.close_current();
+        None
     }
 }
 
 impl AppModel {
-    /// Updates the header and window titles.
-    pub fn update_title(&mut self) -> Task<cosmic::Action<Message>> {
-        let mut window_title = fl!("app-title");
+    fn note_list(&self) -> Element<'_, Message> {
+        let spacing = cosmic::theme::spacing();
+        let search = widget::search_input(fl!("search-placeholder"), &self.query)
+            .id(self.search_id.clone())
+            .on_input(Message::Search)
+            .on_clear(Message::ClearSearch);
 
-        if let Some(page) = self.nav.text(self.nav.active()) {
-            window_title.push_str(" — ");
-            window_title.push_str(page);
+        let body: Element<'_, Message> = if self.notes.is_empty() {
+            let text = if self.query.is_empty() {
+                fl!("no-notes-here")
+            } else {
+                fl!("no-results", query = self.query.as_str())
+            };
+            widget::container(widget::text::caption(text))
+                .padding(spacing.space_m)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+                .into()
+        } else {
+            let mut list = widget::list_column().list_item_padding([spacing.space_xs, spacing.space_s]);
+            for note in &self.notes {
+                let selected = self.current.as_ref().is_some_and(|c| c.id == note.id);
+                list = list.add(
+                    widget::list::button(note_row(note))
+                        .on_press(Message::Select(note.id.clone()))
+                        .selected(selected),
+                );
+            }
+            widget::scrollable(list).height(Length::Fill).into()
+        };
+
+        let count = widget::text::caption(fl!("notes-count", count = self.notes.len()));
+
+        widget::column::with_capacity(3)
+            .push(widget::container(search).padding([spacing.space_xs, spacing.space_xs, 0, spacing.space_xs]))
+            .push(body)
+            .push(widget::container(count).padding([spacing.space_xxs, spacing.space_s]))
+            .spacing(spacing.space_xs)
+            .width(Length::Fixed(NOTE_LIST_WIDTH))
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn editor_pane(&self) -> Element<'_, Message> {
+        let spacing = cosmic::theme::spacing();
+        let Some(note) = &self.current else {
+            return widget::container(widget::text::body(fl!("no-note-selected")))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .into();
+        };
+
+        let mut editor = text_editor::text_editor(&self.editor)
+            .placeholder(fl!("untitled"))
+            .font(cosmic::font::mono())
+            .size(15)
+            .line_height(1.5)
+            .padding(spacing.space_m)
+            .height(Length::Fill);
+        if !note.trashed {
+            editor = editor.on_action(Message::Editor);
         }
 
+        let mut column = widget::column::with_capacity(3).push(editor).width(Length::Fill).height(Length::Fill);
+
+        if note.trashed {
+            column = column.push(
+                widget::container(widget::text::caption(fl!("trash-hint")))
+                    .padding([spacing.space_xs, spacing.space_m]),
+            );
+        }
+
+        if !self.backlinks.is_empty() {
+            let mut row = widget::row::with_capacity(self.backlinks.len() + 1)
+                .spacing(spacing.space_xs)
+                .align_y(Alignment::Center)
+                .push(widget::text::caption_heading(fl!("linked-from")));
+            for link in &self.backlinks {
+                row = row.push(widget::button::link(link.title.clone()).on_press(Message::Select(link.id.clone())));
+            }
+            column = column.push(
+                widget::container(widget::scrollable(row).direction(Direction::Horizontal(Scrollbar::default())))
+                .padding([spacing.space_xs, spacing.space_m]),
+            );
+        }
+
+        column.into()
+    }
+
+    /// Rebuild the nav bar: fixed views, then the tag tree.
+    fn rebuild_nav(&mut self) {
+        self.nav.clear();
+        self.nav
+            .insert()
+            .text(fl!("nav-all-notes"))
+            .icon(icon::from_name("view-list-symbolic"))
+            .data(View::All);
+        self.nav
+            .insert()
+            .text(fl!("nav-untagged"))
+            .icon(icon::from_name("folder-symbolic"))
+            .data(View::Untagged);
+        self.nav
+            .insert()
+            .text(fl!("nav-trash"))
+            .icon(icon::from_name("user-trash-symbolic"))
+            .data(View::Trash);
+
+        let tags = self.store.as_ref().and_then(|s| s.tags().ok()).unwrap_or_default();
+        let mut first_tag = true;
+        for (name, count) in tag_tree(&tags) {
+            let depth = name.matches('/').count() as u16;
+            let leaf = name.rsplit('/').next().unwrap_or(&name).to_owned();
+            let label = if count > 0 { format!("{leaf}  {count}") } else { leaf };
+            let mut entry = self.nav.insert().text(label).indent(depth).data(View::Tag(name));
+            if first_tag {
+                entry = entry.divider_above(true);
+                first_tag = false;
+            }
+            if depth == 0 {
+                entry.icon(icon::from_name("folder-symbolic"));
+            }
+        }
+
+        // Re-activate the entry matching the current view (a tag may have vanished).
+        let active = self
+            .nav
+            .iter()
+            .find(|id| self.nav.data::<View>(*id) == Some(&self.view))
+            .or_else(|| self.nav.iter().next());
+        if let Some(id) = active {
+            self.nav.activate(id);
+            self.view = self.nav.data::<View>(id).cloned().unwrap_or(View::All);
+        }
+    }
+
+    fn set_view(&mut self, view: View) {
+        self.view = view;
+        let found = self.nav.iter().find(|id| self.nav.data::<View>(*id) == Some(&self.view));
+        if let Some(id) = found {
+            self.nav.activate(id);
+        }
+    }
+
+    fn refresh_list(&mut self) {
+        let Some(store) = &self.store else { return };
+        self.notes = match store.search(&self.query, &self.view) {
+            Ok(notes) => notes,
+            Err(err) => {
+                tracing::error!(%err, "listing notes");
+                Vec::new()
+            }
+        };
+    }
+
+    /// Tags or trash membership may have changed: rebuild nav + list.
+    fn after_store_change(&mut self) {
+        self.rebuild_nav();
+        self.refresh_list();
+        if self.current.is_none() {
+            if let Some(first) = self.notes.first().map(|n| n.id.clone()) {
+                self.open_note(&first);
+            }
+        }
+    }
+
+    fn open_note(&mut self, id: &str) {
+        let Some(store) = self.store.as_mut() else { return };
+        match store.load(id) {
+            Ok(Some(note)) => {
+                self.editor = text_editor::Content::with_text(&note.body);
+                self.backlinks = store.backlinks(&note.title).unwrap_or_default();
+                self.current = Some(note);
+                self.dirty = false;
+            }
+            Ok(None) => {
+                self.current = None;
+                self.refresh_list();
+            }
+            Err(err) => tracing::error!(%err, id, "loading note"),
+        }
+    }
+
+    /// Write pending edits and let go of the current note.
+    fn close_current(&mut self) {
+        self.flush();
+        let Some(note) = self.current.take() else { return };
+        self.backlinks.clear();
+        if let Some(store) = self.store.as_mut() {
+            match store.delete_if_empty(&note.id) {
+                Ok(true) => self.after_store_change_keep_selection(),
+                Ok(false) => {}
+                Err(err) => tracing::error!(%err, "dropping empty note"),
+            }
+        }
+    }
+
+    fn after_store_change_keep_selection(&mut self) {
+        self.rebuild_nav();
+        self.refresh_list();
+    }
+
+    /// Persist the editor buffer if it has unsaved changes.
+    fn flush(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
+        let (Some(store), Some(note)) = (self.store.as_mut(), self.current.as_mut()) else { return };
+        let old_title = note.title.clone();
+        note.body = self.editor.text();
+        if let Err(err) = store.save(note) {
+            tracing::error!(%err, "saving note");
+            return;
+        }
+        if note.title != old_title {
+            self.backlinks = store.backlinks(&note.title).unwrap_or_default();
+        }
+        // Tags may have changed; keep nav + list in step.
+        self.rebuild_nav();
+        self.refresh_list();
+    }
+
+    fn update_title(&mut self) -> Task<cosmic::Action<Message>> {
+        let mut window_title = fl!("app-title");
+        if let Some(note) = &self.current {
+            window_title.push_str(" — ");
+            window_title.push_str(&note.title);
+        }
         if let Some(id) = self.core.main_window_id() {
             self.set_window_title(window_title, id)
         } else {
@@ -342,14 +685,83 @@ impl AppModel {
     }
 }
 
-/// The page to display in the application.
-pub enum Page {
-    Page1,
-    Page2,
-    Page3,
+fn header_button<'a>(icon_name: &'static str, label: String, on_press: Message) -> Element<'a, Message> {
+    widget::tooltip(
+        widget::button::icon(icon::from_name(icon_name)).on_press(on_press),
+        widget::text::body(label),
+        widget::tooltip::Position::Bottom,
+    )
+    .into()
 }
 
-/// The context page to display in the context drawer.
+fn note_row(note: &NoteSummary) -> Element<'_, Message> {
+    let spacing = cosmic::theme::spacing();
+    let title = if note.pinned { format!("📌 {}", note.title) } else { note.title.clone() };
+    let mut column = widget::column::with_capacity(3)
+        .push(widget::text::heading(title))
+        .spacing(spacing.space_xxxs);
+    if !note.preview.is_empty() {
+        column = column.push(widget::text::caption(note.preview.clone()));
+    }
+    column = column.push(widget::text::caption(format_date(note.modified)));
+    column.width(Length::Fill).into()
+}
+
+/// Relative dates: time today, day+month this year, full date otherwise.
+fn format_date(when: DateTime<Utc>) -> String {
+    let local = when.with_timezone(&Local);
+    let now = Local::now();
+    if local.date_naive() == now.date_naive() {
+        local.format("%H:%M").to_string()
+    } else if local.year() == now.year() {
+        local.format("%-d %b").to_string()
+    } else {
+        local.format("%-d %b %Y").to_string()
+    }
+}
+
+/// Expand `a/b/c` tags into a depth-first tree, inserting implicit parents
+/// (`a`, `a/b`) that no note carries directly with a count of 0.
+fn tag_tree(tags: &[(String, usize)]) -> Vec<(String, usize)> {
+    let mut out: Vec<(String, usize)> = Vec::new();
+    for (name, count) in tags {
+        let mut prefix = String::new();
+        let segments: Vec<&str> = name.split('/').collect();
+        for (i, segment) in segments.iter().enumerate() {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(segment);
+            let is_leaf = i + 1 == segments.len();
+            match out.iter_mut().find(|(n, _)| *n == prefix) {
+                Some(existing) if is_leaf => existing.1 = *count,
+                Some(_) => {}
+                None => out.push((prefix.clone(), if is_leaf { *count } else { 0 })),
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
+    use menu::key_bind::Modifier;
+    let mut binds = HashMap::new();
+    binds.insert(
+        menu::KeyBind { modifiers: vec![Modifier::Ctrl], key: keyboard::Key::Character("n".into()) },
+        MenuAction::NewNote,
+    );
+    binds.insert(
+        menu::KeyBind { modifiers: vec![Modifier::Ctrl], key: keyboard::Key::Character("f".into()) },
+        MenuAction::FocusSearch,
+    );
+    binds.insert(
+        menu::KeyBind { modifiers: vec![Modifier::Ctrl, Modifier::Shift], key: keyboard::Key::Character("d".into()) },
+        MenuAction::TrashNote,
+    );
+    binds
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum ContextPage {
     #[default]
@@ -359,6 +771,9 @@ pub enum ContextPage {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MenuAction {
     About,
+    NewNote,
+    TrashNote,
+    FocusSearch,
 }
 
 impl menu::action::MenuAction for MenuAction {
@@ -367,6 +782,30 @@ impl menu::action::MenuAction for MenuAction {
     fn message(&self) -> Self::Message {
         match self {
             MenuAction::About => Message::ToggleContextPage(ContextPage::About),
+            MenuAction::NewNote => Message::NewNote,
+            MenuAction::TrashNote => Message::TrashCurrent,
+            MenuAction::FocusSearch => Message::FocusSearch,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tag_tree_inserts_parents() {
+        let tags = vec![("work/incab".to_string(), 2), ("work".to_string(), 1), ("zed/a/b".to_string(), 1)];
+        let tree = tag_tree(&tags);
+        assert_eq!(
+            tree,
+            vec![
+                ("work".to_string(), 1),
+                ("work/incab".to_string(), 2),
+                ("zed".to_string(), 0),
+                ("zed/a".to_string(), 0),
+                ("zed/a/b".to_string(), 1),
+            ]
+        );
     }
 }
