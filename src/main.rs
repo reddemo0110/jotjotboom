@@ -5,6 +5,7 @@ mod config;
 mod debug_script;
 mod i18n;
 mod note;
+mod retro;
 mod secrets;
 mod store;
 

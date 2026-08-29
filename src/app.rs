@@ -4,13 +4,13 @@ use crate::config::Config;
 use crate::debug_script::{self, Step};
 use crate::fl;
 use crate::note::{Note, NoteSummary};
+use crate::retro::{self, Palette};
 use crate::store::{Store, View};
 use chrono::{DateTime, Datelike, Local, Utc};
 use cosmic::Application as _;
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::keyboard::{self, key::Physical};
-use cosmic::iced::widget::scrollable::{Direction, Scrollbar};
 use cosmic::iced::{Alignment, Event, Length, Subscription, event};
 use cosmic::prelude::*;
 use cosmic::widget::menu::action::MenuAction as _;
@@ -23,22 +23,26 @@ const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
 /// How long after the last keystroke we write the note to disk.
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(600);
-const NOTE_LIST_WIDTH: f32 = 300.0;
+const NAV_WIDTH: f32 = 230.0;
+const NOTE_LIST_WIDTH: f32 = 340.0;
+const GAP: u16 = 14;
 
 pub struct AppModel {
     core: cosmic::Core,
     context_page: ContextPage,
     about: About,
-    nav: nav_bar::Model,
     key_binds: HashMap<menu::KeyBind, MenuAction>,
     config: Config,
-    /// Kept for the settings page (notes dir picker) that lands in the polish phase.
-    #[allow(dead_code)]
     config_handler: Option<cosmic_config::Config>,
+    theme: retro::Theme,
 
     store: Option<Store>,
     store_error: Option<String>,
     view: View,
+    /// Note counts for the fixed views: all, untagged, trash.
+    view_counts: [usize; 3],
+    /// Tag tree (full path, count), depth-first.
+    tags: Vec<(String, usize)>,
     query: String,
     search_id: widget::Id,
     notes: Vec<NoteSummary>,
@@ -61,9 +65,12 @@ pub enum Message {
     ToggleContextPage(ContextPage),
     UpdateConfig(Config),
     Key(keyboard::Modifiers, keyboard::Key, Physical),
+    SetTheme(retro::Theme),
+    FontLoaded,
 
     Editor(text_editor::Action),
     AutosaveTick,
+    SetView(View),
     Select(String),
     NewNote,
     TrashCurrent,
@@ -72,7 +79,6 @@ pub enum Message {
     EmptyTrash,
     TogglePin,
     Search(String),
-    ClearSearch,
     FocusSearch,
     TakeScreenshot,
     ScriptTick,
@@ -141,17 +147,20 @@ impl cosmic::Application for AppModel {
             .links([(fl!("repository"), REPOSITORY)])
             .license(env!("CARGO_PKG_LICENSE"));
 
+        let theme = retro::Theme::from_key(&config.theme);
         let mut app = AppModel {
             core,
             context_page: ContextPage::default(),
             about,
-            nav: nav_bar::Model::default(),
             key_binds: key_binds(),
             config,
             config_handler,
+            theme,
             store,
             store_error,
             view: View::All,
+            view_counts: [0; 3],
+            tags: Vec::new(),
             query: String::new(),
             search_id: widget::Id::unique(),
             notes: Vec::new(),
@@ -164,18 +173,43 @@ impl cosmic::Application for AppModel {
             script: debug_script::Runner::from_env(),
         };
 
-        app.rebuild_nav();
+        app.refresh_tags();
         app.refresh_list();
         // Open the most recent note so the window isn't empty on launch.
         if let Some(first) = app.notes.first().map(|n| n.id.clone()) {
             app.open_note(&first);
         }
 
-        let command = app.update_title();
-        (app, command)
+        let title = app.update_title();
+        let font = cosmic::iced::font::load(retro::TITLE_FONT_BYTES).map(|result| {
+            if let Err(err) = result {
+                tracing::error!(?err, "loading title font");
+            }
+            cosmic::Action::App(Message::FontLoaded)
+        });
+        (app, Task::batch([font, title]))
+    }
+
+    fn style(&self) -> Option<cosmic::iced::theme::Style> {
+        Some(retro::app_style(&self.palette()))
     }
 
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
+        let theme_items: Vec<menu::Item<MenuAction, String>> = retro::Theme::ALL
+            .into_iter()
+            .map(|t| {
+                menu::Item::CheckBox(
+                    t.label().to_owned(),
+                    None,
+                    self.theme == t,
+                    MenuAction::Theme(t),
+                )
+            })
+            .collect();
+        let mut view_items = theme_items;
+        view_items.push(menu::Item::Divider);
+        view_items.push(menu::Item::Button(fl!("about"), None, MenuAction::About));
+
         let menu_bar = menu::bar(vec![
             menu::Tree::with_children(
                 menu::root(fl!("file")).apply(Element::from),
@@ -190,10 +224,7 @@ impl cosmic::Application for AppModel {
             ),
             menu::Tree::with_children(
                 menu::root(fl!("view")).apply(Element::from),
-                menu::items(
-                    &self.key_binds,
-                    vec![menu::Item::Button(fl!("about"), None, MenuAction::About)],
-                ),
+                menu::items(&self.key_binds, view_items),
             ),
         ]);
 
@@ -252,7 +283,7 @@ impl cosmic::Application for AppModel {
     }
 
     fn nav_model(&self) -> Option<&nav_bar::Model> {
-        Some(&self.nav)
+        None
     }
 
     fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<'_, Self::Message>> {
@@ -270,8 +301,9 @@ impl cosmic::Application for AppModel {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
+        let p = self.palette();
         if let Some(err) = &self.store_error {
-            return widget::container(widget::text::body(fl!("store-error", error = err.as_str())))
+            return widget::container(retro::text(&p, fl!("store-error", error = err.as_str())))
                 .padding(24)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -280,13 +312,47 @@ impl cosmic::Application for AppModel {
                 .into();
         }
 
-        widget::row::with_capacity(3)
-            .push(self.note_list())
-            .push(widget::divider::vertical::default())
-            .push(self.editor_pane())
+        let nav = widget::column::with_capacity(2)
+            .push(
+                widget::container(self.views_frame(&p))
+                    .height(Length::Fixed(140.0))
+                    .width(Length::Fill),
+            )
+            .push(self.tags_frame(&p))
+            .spacing(GAP)
+            .width(Length::Fixed(NAV_WIDTH))
+            .height(Length::Fill);
+
+        let list = widget::container(self.notes_frame(&p))
+            .width(Length::Fixed(NOTE_LIST_WIDTH))
+            .height(Length::Fill);
+
+        let mut editor_col = widget::column::with_capacity(2)
+            .push(self.editor_frame(&p))
+            .spacing(GAP)
             .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+        if !self.backlinks.is_empty() {
+            editor_col = editor_col.push(
+                widget::container(self.backlinks_frame(&p))
+                    .height(Length::Fixed(64.0))
+                    .width(Length::Fill),
+            );
+        }
+
+        widget::container(
+            widget::row::with_capacity(3)
+                .push(nav)
+                .push(list)
+                .push(editor_col)
+                .spacing(GAP)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .padding([GAP + 4, GAP, GAP, GAP])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
@@ -332,6 +398,17 @@ impl cosmic::Application for AppModel {
 
     fn update(&mut self, message: Self::Message) -> Task<cosmic::Action<Self::Message>> {
         match message {
+            Message::FontLoaded => {}
+
+            Message::SetTheme(theme) => {
+                self.theme = theme;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_theme(handler, theme.key().to_owned())
+                {
+                    tracing::warn!(%why, "could not persist theme");
+                }
+            }
+
             Message::Editor(action) => {
                 let is_edit = action.is_edit();
                 self.editor.perform(action);
@@ -348,6 +425,19 @@ impl cosmic::Application for AppModel {
                 }
             }
 
+            Message::SetView(view) => {
+                if self.view == view {
+                    return Task::none();
+                }
+                self.close_current();
+                self.view = view;
+                self.refresh_list();
+                if let Some(first) = self.notes.first().map(|n| n.id.clone()) {
+                    self.open_note(&first);
+                }
+                return self.update_title();
+            }
+
             Message::Select(id) => {
                 if self.current.as_ref().is_some_and(|n| n.id == id) {
                     return Task::none();
@@ -359,7 +449,7 @@ impl cosmic::Application for AppModel {
 
             Message::NewNote => {
                 if matches!(self.view, View::Trash) {
-                    self.set_view(View::All);
+                    self.view = View::All;
                 }
                 self.close_current();
                 self.query.clear();
@@ -442,11 +532,6 @@ impl cosmic::Application for AppModel {
                 self.refresh_list();
             }
 
-            Message::ClearSearch => {
-                self.query.clear();
-                self.refresh_list();
-            }
-
             Message::FocusSearch => {
                 return widget::text_input::focus(self.search_id.clone());
             }
@@ -511,6 +596,7 @@ impl cosmic::Application for AppModel {
 
             Message::UpdateConfig(config) => {
                 // A changed notes_dir takes effect on next launch; everything else is live.
+                self.theme = retro::Theme::from_key(&config.theme);
                 self.config = config;
             }
 
@@ -522,18 +608,6 @@ impl cosmic::Application for AppModel {
             },
         }
         Task::none()
-    }
-
-    fn on_nav_select(&mut self, id: nav_bar::Id) -> Task<cosmic::Action<Self::Message>> {
-        self.nav.activate(id);
-        let view = self.nav.data::<View>(id).cloned().unwrap_or(View::All);
-        self.close_current();
-        self.view = view;
-        self.refresh_list();
-        if let Some(first) = self.notes.first().map(|n| n.id.clone()) {
-            self.open_note(&first);
-        }
-        self.update_title()
     }
 
     fn on_escape(&mut self) -> Task<cosmic::Action<Self::Message>> {
@@ -553,12 +627,109 @@ impl cosmic::Application for AppModel {
 }
 
 impl AppModel {
-    fn note_list(&self) -> Element<'_, Message> {
-        let spacing = cosmic::theme::spacing();
-        let search = widget::search_input(fl!("search-placeholder"), &self.query)
+    fn palette(&self) -> Palette {
+        self.theme.palette(self.core.system_theme())
+    }
+
+    // ----- frames -----
+
+    fn views_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
+        let rows = [
+            (View::All, fl!("nav-all-notes"), self.view_counts[0]),
+            (View::Untagged, fl!("nav-untagged"), self.view_counts[1]),
+            (View::Trash, fl!("nav-trash"), self.view_counts[2]),
+        ];
+        let mut col = widget::column::with_capacity(3).spacing(2);
+        for (view, label, count) in rows {
+            let selected = self.view == view;
+            let marker = if selected { "▌" } else { " " };
+            let row = widget::row::with_capacity(3)
+                .push(retro::accent(p, marker))
+                .push(retro::text(p, label).width(Length::Fill))
+                .push(retro::dim(p, count.to_string()))
+                .spacing(8)
+                .align_y(Alignment::Center);
+            col = col.push(
+                widget::button::custom(row)
+                    .padding([4, 8])
+                    .width(Length::Fill)
+                    .class(retro::row_class(p, selected))
+                    .on_press(Message::SetView(view)),
+            );
+        }
+        retro::frame(p, fl!("frame-views"), None, col)
+    }
+
+    fn tags_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
+        let mut col = widget::column::with_capacity(self.tags.len()).spacing(1);
+        for (name, count) in &self.tags {
+            let depth = name.matches('/').count();
+            let leaf = name.rsplit('/').next().unwrap_or(name);
+            let prefix = if depth == 0 {
+                String::new()
+            } else {
+                format!("{}└─ ", "   ".repeat(depth - 1))
+            };
+            let selected = matches!(&self.view, View::Tag(t) if t == name);
+            let count_text = if *count > 0 {
+                count.to_string()
+            } else {
+                String::new()
+            };
+            let row = widget::row::with_capacity(4)
+                .push(retro::dim(p, prefix).class(cosmic::theme::Text::Color(p.mute)))
+                .push(retro::accent2(p, "#"))
+                .push(retro::text(p, leaf.to_owned()).width(Length::Fill))
+                .push(retro::dim(p, count_text))
+                .align_y(Alignment::Center);
+            col = col.push(
+                widget::button::custom(row)
+                    .padding([3, 8])
+                    .width(Length::Fill)
+                    .class(retro::row_class(p, selected))
+                    .on_press(Message::SetView(View::Tag(name.clone()))),
+            );
+        }
+        let body: Element<'_, Message> = if self.tags.is_empty() {
+            widget::container(retro::dim(p, fl!("no-tags-yet")))
+                .padding([8, 8])
+                .into()
+        } else {
+            widget::scrollable(col).height(Length::Fill).into()
+        };
+        retro::frame(p, fl!("frame-tags"), None, body)
+    }
+
+    fn notes_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
+        let total = match &self.view {
+            View::All => self.view_counts[0],
+            View::Untagged => self.view_counts[1],
+            View::Trash => self.view_counts[2],
+            View::Tag(_) if self.query.is_empty() => self.notes.len(),
+            View::Tag(t) => self
+                .store
+                .as_ref()
+                .and_then(|s| s.list(&View::Tag(t.clone())).ok())
+                .map_or(self.notes.len(), |v| v.len()),
+        };
+        let badge = if self.query.is_empty() {
+            fl!("notes-count", count = total)
+        } else {
+            fl!("notes-of", shown = self.notes.len(), total = total)
+        };
+
+        let search = widget::text_input(fl!("search-placeholder"), &self.query)
             .id(self.search_id.clone())
-            .on_input(Message::Search)
-            .on_clear(Message::ClearSearch);
+            .font(retro::mono())
+            .size(13)
+            .padding([5, 8])
+            .leading_icon(
+                widget::container(retro::accent(p, "/"))
+                    .padding([0, 0, 0, 8])
+                    .into(),
+            )
+            .style(retro::search_class(p))
+            .on_input(Message::Search);
 
         let body: Element<'_, Message> = if self.notes.is_empty() {
             let text = if self.query.is_empty() {
@@ -566,166 +737,118 @@ impl AppModel {
             } else {
                 fl!("no-results", query = self.query.as_str())
             };
-            widget::container(widget::text::caption(text))
-                .padding(spacing.space_m)
+            widget::container(retro::dim(p, text))
+                .padding(12)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
                 .into()
         } else {
-            let mut list =
-                widget::list_column().list_item_padding([spacing.space_xs, spacing.space_s]);
+            let mut col = widget::column::with_capacity(self.notes.len()).spacing(4);
             for note in &self.notes {
                 let selected = self.current.as_ref().is_some_and(|c| c.id == note.id);
-                list = list.add(
-                    widget::list::button(note_row(note))
-                        .on_press(Message::Select(note.id.clone()))
-                        .selected(selected),
+                col = col.push(
+                    widget::button::custom(note_row(p, note, selected))
+                        .padding([7, 8])
+                        .width(Length::Fill)
+                        .class(retro::row_class(p, selected))
+                        .on_press(Message::Select(note.id.clone())),
                 );
             }
-            widget::scrollable(list).height(Length::Fill).into()
+            widget::scrollable(col).height(Length::Fill).into()
         };
 
-        let count = widget::text::caption(fl!("notes-count", count = self.notes.len()));
-
-        widget::column::with_capacity(3)
-            .push(widget::container(search).padding([
-                spacing.space_xs,
-                spacing.space_xs,
-                0,
-                spacing.space_xs,
-            ]))
+        let content = widget::column::with_capacity(2)
+            .push(search)
             .push(body)
-            .push(widget::container(count).padding([spacing.space_xxs, spacing.space_s]))
-            .spacing(spacing.space_xs)
-            .width(Length::Fixed(NOTE_LIST_WIDTH))
-            .height(Length::Fill)
-            .into()
+            .spacing(8)
+            .width(Length::Fill)
+            .height(Length::Fill);
+        retro::frame(p, fl!("frame-notes"), Some(badge), content)
     }
 
-    fn editor_pane(&self) -> Element<'_, Message> {
-        let spacing = cosmic::theme::spacing();
+    fn editor_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
         let Some(note) = &self.current else {
-            return widget::container(widget::text::body(fl!("no-note-selected")))
+            let hint = widget::container(retro::dim(p, fl!("no-note-selected")))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
-                .into();
+                .align_y(Alignment::Center);
+            return retro::frame(p, fl!("app-title").to_lowercase(), None, hint);
         };
 
         let mut editor = text_editor::text_editor(&self.editor)
             .placeholder(fl!("untitled"))
-            .font(cosmic::font::mono())
+            .font(retro::mono())
             .size(15)
             .line_height(1.5)
-            .padding(spacing.space_m)
+            .padding([6, 10])
+            .style(retro::editor_style(*p))
             .height(Length::Fill);
         if !note.trashed {
             editor = editor.on_action(Message::Editor);
         }
 
-        let mut column = widget::column::with_capacity(3)
+        let mut column = widget::column::with_capacity(2)
             .push(editor)
             .width(Length::Fill)
             .height(Length::Fill);
-
         if note.trashed {
-            column = column.push(
-                widget::container(widget::text::caption(fl!("trash-hint")))
-                    .padding([spacing.space_xs, spacing.space_m]),
-            );
+            column =
+                column.push(widget::container(retro::dim(p, fl!("trash-hint"))).padding([6, 10]));
         }
 
-        if !self.backlinks.is_empty() {
-            let mut row = widget::row::with_capacity(self.backlinks.len() + 1)
-                .spacing(spacing.space_xs)
-                .align_y(Alignment::Center)
-                .push(widget::text::caption_heading(fl!("linked-from")));
-            for link in &self.backlinks {
-                row = row.push(
-                    widget::button::link(link.title.clone())
-                        .on_press(Message::Select(link.id.clone())),
-                );
-            }
-            column = column.push(
-                widget::container(
-                    widget::scrollable(row).direction(Direction::Horizontal(Scrollbar::default())),
-                )
-                .padding([spacing.space_xs, spacing.space_m]),
-            );
-        }
-
-        column.into()
+        let badge = if self.dirty {
+            fl!("badge-editing")
+        } else if note.trashed {
+            fl!("badge-in-trash")
+        } else {
+            fl!("badge-saved", time = format_time(note.modified))
+        };
+        retro::frame(p, note.title.clone(), Some(badge), column)
     }
 
-    /// Rebuild the nav bar: fixed views, then the tag tree.
-    fn rebuild_nav(&mut self) {
-        self.nav.clear();
-        self.nav
-            .insert()
-            .text(fl!("nav-all-notes"))
-            .icon(icon::from_name("view-list-symbolic"))
-            .data(View::All);
-        self.nav
-            .insert()
-            .text(fl!("nav-untagged"))
-            .icon(icon::from_name("folder-symbolic"))
-            .data(View::Untagged);
-        self.nav
-            .insert()
-            .text(fl!("nav-trash"))
-            .icon(icon::from_name("user-trash-symbolic"))
-            .data(View::Trash);
-
-        let tags = self
-            .store
-            .as_ref()
-            .and_then(|s| s.tags().ok())
-            .unwrap_or_default();
-        let mut first_tag = true;
-        for (name, count) in tag_tree(&tags) {
-            let depth = name.matches('/').count() as u16;
-            let leaf = name.rsplit('/').next().unwrap_or(&name).to_owned();
-            let label = if count > 0 {
-                format!("{leaf}  {count}")
-            } else {
-                leaf
-            };
-            let mut entry = self
-                .nav
-                .insert()
-                .text(label)
-                .indent(depth)
-                .data(View::Tag(name));
-            if first_tag {
-                entry = entry.divider_above(true);
-                first_tag = false;
-            }
-            if depth == 0 {
-                entry.icon(icon::from_name("folder-symbolic"));
-            }
+    fn backlinks_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
+        let mut row = widget::row::with_capacity(self.backlinks.len() + 1)
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(retro::dim(p, "←").class(cosmic::theme::Text::Color(p.mute)));
+        for link in &self.backlinks {
+            row = row.push(
+                widget::button::custom(retro::accent2(p, link.title.clone()))
+                    .padding([2, 6])
+                    .class(retro::row_class(p, false))
+                    .on_press(Message::Select(link.id.clone())),
+            );
         }
-
-        // Re-activate the entry matching the current view (a tag may have vanished).
-        let active = self
-            .nav
-            .iter()
-            .find(|id| self.nav.data::<View>(*id) == Some(&self.view))
-            .or_else(|| self.nav.iter().next());
-        if let Some(id) = active {
-            self.nav.activate(id);
-            self.view = self.nav.data::<View>(id).cloned().unwrap_or(View::All);
-        }
+        retro::frame(
+            p,
+            fl!("linked-from").to_lowercase(),
+            None,
+            widget::scrollable(row).direction(
+                cosmic::iced::widget::scrollable::Direction::Horizontal(
+                    cosmic::iced::widget::scrollable::Scrollbar::default(),
+                ),
+            ),
+        )
     }
 
-    fn set_view(&mut self, view: View) {
-        self.view = view;
-        let found = self
-            .nav
-            .iter()
-            .find(|id| self.nav.data::<View>(*id) == Some(&self.view));
-        if let Some(id) = found {
-            self.nav.activate(id);
+    // ----- state -----
+
+    /// Reload the tag tree and view counts from the store.
+    fn refresh_tags(&mut self) {
+        let Some(store) = &self.store else { return };
+        let tags = store.tags().unwrap_or_default();
+        self.tags = tag_tree(&tags);
+        self.view_counts = [
+            store.list(&View::All).map_or(0, |v| v.len()),
+            store.list(&View::Untagged).map_or(0, |v| v.len()),
+            store.list(&View::Trash).map_or(0, |v| v.len()),
+        ];
+        // The tag we were looking at may be gone.
+        if let View::Tag(t) = &self.view
+            && !self.tags.iter().any(|(n, _)| n == t)
+        {
+            self.view = View::All;
         }
     }
 
@@ -742,7 +865,7 @@ impl AppModel {
 
     /// Tags or trash membership may have changed: rebuild nav + list.
     fn after_store_change(&mut self) {
-        self.rebuild_nav();
+        self.refresh_tags();
         self.refresh_list();
         if self.current.is_none()
             && let Some(first) = self.notes.first().map(|n| n.id.clone())
@@ -779,16 +902,14 @@ impl AppModel {
         self.backlinks.clear();
         if let Some(store) = self.store.as_mut() {
             match store.delete_if_empty(&note.id) {
-                Ok(true) => self.after_store_change_keep_selection(),
+                Ok(true) => {
+                    self.refresh_tags();
+                    self.refresh_list();
+                }
                 Ok(false) => {}
                 Err(err) => tracing::error!(%err, "dropping empty note"),
             }
         }
-    }
-
-    fn after_store_change_keep_selection(&mut self) {
-        self.rebuild_nav();
-        self.refresh_list();
     }
 
     /// Persist the editor buffer if it has unsaved changes.
@@ -810,7 +931,7 @@ impl AppModel {
             self.backlinks = store.backlinks(&note.title).unwrap_or_default();
         }
         // Tags may have changed; keep nav + list in step.
-        self.rebuild_nav();
+        self.refresh_tags();
         self.refresh_list();
     }
 
@@ -872,21 +993,35 @@ fn header_button<'a>(
     .into()
 }
 
-fn note_row(note: &NoteSummary) -> Element<'_, Message> {
-    let spacing = cosmic::theme::spacing();
-    let title = if note.pinned {
-        format!("📌 {}", note.title)
-    } else {
-        note.title.clone()
-    };
-    let mut column = widget::column::with_capacity(3)
-        .push(widget::text::heading(title))
-        .spacing(spacing.space_xxxs);
-    if !note.preview.is_empty() {
-        column = column.push(widget::text::caption(note.preview.clone()));
+fn note_row<'a>(p: &Palette, note: &'a NoteSummary, selected: bool) -> Element<'a, Message> {
+    let fg = if selected { p.selfg } else { p.fg };
+    let mut title_row = widget::row::with_capacity(3)
+        .spacing(8)
+        .align_y(Alignment::Center);
+    if note.pinned {
+        title_row = title_row.push(retro::accent(p, "▲"));
     }
-    column = column.push(widget::text::caption(format_date(note.modified)));
-    column.width(Length::Fill).into()
+    title_row = title_row
+        .push(
+            retro::text(p, note.title.clone())
+                .font(cosmic::font::Font {
+                    weight: cosmic::iced::font::Weight::Bold,
+                    ..retro::mono()
+                })
+                .class(cosmic::theme::Text::Color(fg))
+                .width(Length::Fill),
+        )
+        .push(retro::dim(p, format_date(note.modified)).size(11));
+
+    let mut column = widget::column::with_capacity(2)
+        .push(title_row)
+        .spacing(3)
+        .width(Length::Fill);
+    if !note.preview.is_empty() {
+        let preview: String = note.preview.chars().take(90).collect();
+        column = column.push(retro::dim(p, preview));
+    }
+    column.into()
 }
 
 /// Relative dates: time today, day+month this year, full date otherwise.
@@ -900,6 +1035,10 @@ fn format_date(when: DateTime<Utc>) -> String {
     } else {
         local.format("%-d %b %Y").to_string()
     }
+}
+
+fn format_time(when: DateTime<Utc>) -> String {
+    when.with_timezone(&Local).format("%H:%M").to_string()
 }
 
 /// Expand `a/b/c` tags into a depth-first tree, inserting implicit parents
@@ -965,6 +1104,7 @@ pub enum MenuAction {
     NewNote,
     TrashNote,
     FocusSearch,
+    Theme(retro::Theme),
 }
 
 impl menu::action::MenuAction for MenuAction {
@@ -976,6 +1116,7 @@ impl menu::action::MenuAction for MenuAction {
             MenuAction::NewNote => Message::NewNote,
             MenuAction::TrashNote => Message::TrashCurrent,
             MenuAction::FocusSearch => Message::FocusSearch,
+            MenuAction::Theme(theme) => Message::SetTheme(*theme),
         }
     }
 }

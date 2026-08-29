@@ -60,3 +60,21 @@ arrive later.
   binary for now so the CRT/editor work can be checked the same way.
 - Steps 1 and 2 of the build order are done together: FTS5 search, tag
   parsing and the nested tag tree fell out of the storage design cheaply.
+
+## 2026-08-29 — Retro direction: Option A (full terminal), btop-inspired
+User feedback after seeing step 1: "needs more retro with a hint of btop".
+Two directions were mocked up on a design canvas; the user picked **A**:
+everything below the COSMIC header bar lives in btop-style frames (1px
+rounded border, title cut into the top edge, right-hand badge), monospace
+throughout, tag tree drawn with `└─` connectors. This supersedes the
+handover's "retro confined to the editor surface" rule — the header bar and
+window controls stay native COSMIC, the content area does not.
+- Themes: green phosphor (default), amber, WordPerfect blue, and a
+  "COSMIC" variant that derives its palette from the system theme. Chosen
+  under View, persisted in cosmic-config (`theme`).
+- Title face: VT323 (SIL OFL, bundled in `resources/fonts/`); body stays the
+  system monospace for now — bitmap editor fonts are still a step-5 item.
+- Built-in libcosmic nav bar replaced by our own two frames (`views`, `tags`)
+  so the nav could be styled; `nav_model()` returns None.
+- Still to come from the mockup: CRT scanline/glow overlay (needs a custom
+  shader widget — step 5) and focus mode (needs the hybrid editor — step 3).

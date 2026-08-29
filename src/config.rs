@@ -10,6 +10,8 @@ pub struct Config {
     pub notes_dir: String,
     /// Stable per-installation id, stamped into the oplog for sync. Generated on first run.
     pub device_id: String,
+    /// Retro theme key (see `retro::Theme::key`). Empty = default.
+    pub theme: String,
 }
 
 impl Config {

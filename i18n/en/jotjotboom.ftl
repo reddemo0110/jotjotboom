@@ -35,3 +35,13 @@ notes-count = { $count ->
    *[other] { $count } notes
 }
 store-error = Couldn't open the notes folder: { $error }
+
+# Retro frames
+frame-views = views
+frame-tags = tags
+frame-notes = notes
+no-tags-yet = no tags yet
+notes-of = { $shown } of { $total }
+badge-editing = editing…
+badge-in-trash = in trash
+badge-saved = saved { $time }
