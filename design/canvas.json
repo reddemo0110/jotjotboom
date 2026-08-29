@@ -1,0 +1,32 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "Option A \u2014 full terminal",
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "file": "CosmicChrome.dc.html",
+      "title": "Option B \u2014 COSMIC chrome, terminal panes",
+      "x": 1380,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -330,
+      "w": 620,
+      "text": "Retro + btop direction for JotJotBoom.\n\nBoth boards share the tweaks up top: Theme (phosphor / amber / wordperfect / cosmic), CRT scanlines on/off, Focus mode (dims every paragraph but the one with the cursor).\n\nA: everything but the COSMIC header lives in btop-style frames, tag tree drawn with box-drawing connectors. Most retro; breaks the handover's 'chrome stays native' rule.\nB: nav bar stays stock COSMIC; only the notes list and editor are framed. Reads as a COSMIC app with a terminal inside it."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=VT323&amp;display=swap">
+  
+<style>
+  body { margin: 0; font-family: 'IBM Plex Mono', 'DejaVu Sans Mono', 'Liberation Mono', monospace; -webkit-font-smoothing: antialiased; }
+  a { color: #4dff8f; } a:hover { color: #9ad3ff; }
+  @keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+</style>
+</helmet>
+
+<div style="width: 1280px; height: 800px; background: #1c1c1e; position: relative; overflow: hidden; display: flex; flex-direction: column; font-family: 'IBM Plex Mono', 'DejaVu Sans Mono', 'Liberation Mono', monospace; font-size: 13px">
+  
+<div style="height: 46px; background: #1f1f22; border-bottom: 1px solid #2c2c30; display: flex; align-items: center; padding: 0 12px; gap: 16px; font-family: system-ui, 'Fira Sans', 'Noto Sans', sans-serif; color: #c9c9cc">
+  <div style="display: flex; align-items: center; color: #c9c9cc"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><rect x="2" y="3" width="12" height="10" rx="1.5"></rect><path d="M6 3v10"></path></svg></div>
+  <div style="display: flex; gap: 18px; font-size: 14px; color: #c9c9cc"><span>File</span><span>View</span></div>
+  <div style="flex-grow: 1"></div>
+  <div style="display: flex; align-items: center; gap: 14px; color: #c9c9cc"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M9.5 2.5l4 4-2.5 1 -1.5 4-2.5-2.5L3 13l1.5-4-2.5-2.5 4-1.5z"></path></svg><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M3 4.5h10M6.5 4.5v-1h3v1M4.5 4.5l.7 8h5.6l.7-8"></path></svg><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M8 3v10M3 8h10"></path></svg>
+    <span style="width: 1px; height: 18px; background: #3a3a40"></span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M4 8h8"></path></svg><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><rect x="3.5" y="3.5" width="9" height="9" rx="1"></rect></svg><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M4 4l8 8M12 4l-8 8"></path></svg></div>
+</div>
+  <div style="flex-grow: 1; min-height: 0; padding: 12px; display: flex; gap: 12px">
+    <div style="width: 250px; flex-shrink: 0; background: #262629; border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 2px; font-family: system-ui, 'Fira Sans', 'Noto Sans', sans-serif; font-size: 14px"><div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-left: 0px; border-radius: 8px; background: #3a3a40; color: #e4e4e7"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M3 4.5h1M6 4.5h7M3 8h1M6 8h7M3 11.5h1M6 11.5h7"></path></svg><span style="flex-grow: 1">Notes</span><span style="color: #8a8a92; font-size: 12px"></span></div><div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-left: 0px; border-radius: 8px; background: transparent; color: #e4e4e7"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M2 4.5h4l1.5 1.5H14v7H2z"></path></svg><span style="flex-grow: 1">Untagged</span><span style="color: #8a8a92; font-size: 12px"></span></div><div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-left: 0px; border-radius: 8px; background: transparent; color: #e4e4e7"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M3 4.5h10M6.5 4.5v-1h3v1M4.5 4.5l.7 8h5.6l.7-8"></path></svg><span style="flex-grow: 1">Trash</span><span style="color: #8a8a92; font-size: 12px"></span></div><div style="height: 1px; background: #3a3a40; margin: 8px 12px"></div><div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-left: 0px; border-radius: 8px; background: transparent; color: #e4e4e7"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M2 4.5h4l1.5 1.5H14v7H2z"></path></svg><span style="flex-grow: 1">errand</span><span style="color: #8a8a92; font-size: 12px">1</span></div><div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-left: 0px; border-radius: 8px; background: transparent; color: #e4e4e7"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M2 4.5h4l1.5 1.5H14v7H2z"></path></svg><span style="flex-grow: 1">home</span><span style="color: #8a8a92; font-size: 12px"></span></div><div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-left: 26px; border-radius: 8px; background: transparent; color: #e4e4e7"><span style="flex-grow: 1">kitchen</span><span style="color: #8a8a92; font-size: 12px">2</span></div><div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-left: 0px; border-radius: 8px; background: transparent; color: #e4e4e7"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M2 4.5h4l1.5 1.5H14v7H2z"></path></svg><span style="flex-grow: 1">tips</span><span style="color: #8a8a92; font-size: 12px"></span></div><div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-left: 26px; border-radius: 8px; background: transparent; color: #e4e4e7"><span style="flex-grow: 1">tags</span><span style="color: #8a8a92; font-size: 12px">1</span></div><div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-left: 0px; border-radius: 8px; background: transparent; color: #e4e4e7"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M2 4.5h4l1.5 1.5H14v7H2z"></path></svg><span style="flex-grow: 1">welcome</span><span style="color: #8a8a92; font-size: 12px">1</span></div></div>
+    <div style="flex-grow: 1; min-width: 0; display: flex; gap: 14px; padding: 12px 10px 8px; border-radius: 10px; background: {{t.bg}}; position: relative; overflow: hidden">
+      
+<div style="position: relative; border: 1px solid {{t.border}}; border-radius: 6px; background: {{t.panel}}; padding: 16px 12px 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; width: 330px; flex-shrink: 0;">
+  <div style="position: absolute; top: -10px; left: 12px; padding: 0 6px; background: {{t.panel}}; color: {{t.accent}}; font-family: 'VT323', 'IBM Plex Mono', 'DejaVu Sans Mono', monospace; font-size: 20px; line-height: 18px; letter-spacing: 0.5px; text-shadow: {{t.titleGlow}}">notes</div>
+  <div style="position: absolute; top: -9px; right: 14px; padding: 0 6px; background: {{t.panel}}; color: {{t.dim}}; font-size: 12px; line-height: 16px">2 of 3</div>
+  <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid {{t.mute}}; border-radius: 3px; color: {{t.dim}}"><span style="color: {{t.accent}}">/</span><span style="color: {{t.fg}}">kitchen</span><span style="display: inline-block; width: 8px; height: 15px; background: {{t.cursor}}; animation: blink 1.06s steps(1) infinite"></span><span style="flex-grow: 1"></span><span style="font-size: 11px">2 of 3</span></div><div style="display: flex; flex-direction: column; gap: 4px"><div style="display: flex; flex-direction: column; gap: 3px; padding: 7px 8px; border-radius: 3px; background: {{t.sel}}; color: {{t.selfg}}">
+  <div style="display: flex; gap: 8px; align-items: baseline"><span style="font-weight: 600; flex-grow: 1">Shopping list</span><span style="color: {{t.dim}}; font-size: 11px">13:43</span></div>
+  <div style="color: {{t.dim}}; font-size: 12px; line-height: 16px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical">Things to grab before the weekend — milk, eggs, see Welcome to JotJotBoom</div>
+</div><div style="display: flex; flex-direction: column; gap: 3px; padding: 7px 8px; border-radius: 3px; background: transparent; color: {{t.fg}}">
+  <div style="display: flex; gap: 8px; align-items: baseline"><span style="font-weight: 600; flex-grow: 1"><span style="color: {{t.accent}}; font-size: 11px">▲ </span>Groceries</span><span style="color: {{t.dim}}; font-size: 11px">13:44</span></div>
+  <div style="color: {{t.dim}}; font-size: 12px; line-height: 16px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical">eggs #home/kitchen #errand see Shopping list</div>
+</div></div>
+</div>
+      <div style="display: flex; flex-direction: column; gap: 14px; flex-grow: 1; min-width: 0">
+        
+<div style="position: relative; border: 1px solid {{t.border}}; border-radius: 6px; background: {{t.panel}}; padding: 16px 12px 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; flex-grow: 1; min-height: 0;">
+  <div style="position: absolute; top: -10px; left: 12px; padding: 0 6px; background: {{t.panel}}; color: {{t.accent}}; font-family: 'VT323', 'IBM Plex Mono', 'DejaVu Sans Mono', monospace; font-size: 20px; line-height: 18px; letter-spacing: 0.5px; text-shadow: {{t.titleGlow}}">Shopping list</div>
+  <div style="position: absolute; top: -9px; right: 14px; padding: 0 6px; background: {{t.panel}}; color: {{t.dim}}; font-size: 12px; line-height: 16px">autosaved 13:43</div>
+  <div style="flex-grow: 1; padding: 6px 10px; font-size: 15px; line-height: 24px; color: {{t.fg}}; text-shadow: {{t.glow}}"><div style="opacity: {{t.dimmed}}; transition: opacity 0.2s"><div style="font-family: 'VT323', 'IBM Plex Mono', 'DejaVu Sans Mono', monospace; font-size: 34px; line-height: 36px; color: {{t.accent}}; text-shadow: {{t.titleGlow}}"><span style="color: {{t.mute}}; font-size: 22px; vertical-align: 6px"># </span>Shopping list</div></div><div style="opacity: {{t.dimmed}}; transition: opacity 0.2s"><div style="height: 12px"></div></div><div style="opacity: {{t.dimmed}}; transition: opacity 0.2s"><div>Things to grab before the weekend <span style="color: {{t.accent2}}">#home/kitchen</span></div></div><div style="opacity: {{t.dimmed}}; transition: opacity 0.2s"><div style="height: 12px"></div></div><div style="opacity: {{t.dimmed}}; transition: opacity 0.2s"><div><span style="color: {{t.mute}}">- [ ]</span> milk</div></div><div style="opacity: {{t.dimmed}}; transition: opacity 0.2s"><div><span style="color: {{t.mute}}">- [</span><span style="color: {{t.accent}}">x</span><span style="color: {{t.mute}}">]</span> <span style="text-decoration: line-through; color: {{t.dim}}">eggs</span></div></div><div style="opacity: {{t.dimmed}}; transition: opacity 0.2s"><div><span style="color: {{t.mute}}">-</span> see <span style="color: {{t.mute}}">[[</span><span style="color: {{t.accent2}}; text-decoration: underline; text-underline-offset: 3px">Welcome to JotJotBoom</span><span style="color: {{t.mute}}">]]</span></div></div><div style="opacity: {{t.dimmed}}; transition: opacity 0.2s"><div style="height: 12px"></div></div><div style="opacity: 1; transition: opacity 0.2s"><div><span style="color: {{t.mute}}">**</span><span style="font-weight: 600">Remember</span><span style="color: {{t.mute}}">**</span> the market closes at <span style="color: {{t.mute}}">*</span><span style="font-style: italic">noon</span><span style="color: {{t.mute}}">*</span>.<span style="display: inline-block; width: 9px; height: 19px; vertical-align: -4px; margin-left: 1px; background: {{t.cursor}}; box-shadow: {{t.glow}}; animation: blink 1.06s steps(1) infinite"></span></div></div></div>
+</div>
+        
+<div style="position: relative; border: 1px solid {{t.border}}; border-radius: 6px; background: {{t.panel}}; padding: 16px 12px 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; height: 58px; flex-shrink: 0;">
+  <div style="position: absolute; top: -10px; left: 12px; padding: 0 6px; background: {{t.panel}}; color: {{t.accent}}; font-family: 'VT323', 'IBM Plex Mono', 'DejaVu Sans Mono', monospace; font-size: 20px; line-height: 18px; letter-spacing: 0.5px; text-shadow: {{t.titleGlow}}">linked from</div>
+  
+  <div style="display: flex; gap: 10px; align-items: center; color: {{t.fg}}; padding: 0 8px"><span style="color: {{t.mute}}">←</span><span style="color: {{t.accent2}}; text-decoration: underline; text-underline-offset: 3px">Groceries</span></div>
+</div>
+      </div>
+      
+<sc-if value="{{crt}}" hint-placeholder-val="{{ true }}">
+  <div style="position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(0,0,0,0.22) 0px, rgba(0,0,0,0.22) 1px, transparent 1px, transparent 3px); mix-blend-mode: multiply"></div>
+  <div style="position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.45) 100%)"></div>
+</sc-if>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","default":"phosphor","options":["phosphor","amber","wordperfect","cosmic"],"section":"Look"},"crt":{"editor":"boolean","default":true,"section":"Look"},"focus":{"editor":"boolean","default":false,"section":"Look"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'phosphor';
+    const crt = this.props.crt ?? true;
+    const focus = this.props.focus ?? false;
+    const themes = {
+      phosphor:    { bg:'#050806', panel:'#070b08', fg:'#b9f2bf', dim:'#3f7a4a', mute:'#264a2e', accent:'#4dff8f', accent2:'#9ad3ff', border:'#1f5a2f', sel:'#0f3a1c', selfg:'#d7ffe0', cursor:'#4dff8f' },
+      amber:       { bg:'#0b0704', panel:'#0e0905', fg:'#ffc978', dim:'#8a5a1f', mute:'#4a3010', accent:'#ffb02e', accent2:'#ffe9a8', border:'#5c3c12', sel:'#3a2408', selfg:'#fff1d6', cursor:'#ffb02e' },
+      wordperfect: { bg:'#0000aa', panel:'#0000aa', fg:'#e8e8e8', dim:'#8a8aff', mute:'#4a4aff', accent:'#ffff55', accent2:'#55ffff', border:'#9a9aff', sel:'#0000ff', selfg:'#ffffff', cursor:'#ffffff' },
+      cosmic:      { bg:'#1c1c1e', panel:'#232326', fg:'#e4e4e7', dim:'#8a8a92', mute:'#4a4a52', accent:'#8ab4f8', accent2:'#c4a7ff', border:'#3a3a40', sel:'#2f3a4d', selfg:'#ffffff', cursor:'#8ab4f8' },
+    };
+    const t = { ...themes[theme] };
+    t.glow = crt ? `0 0 6px ${t.accent}66` : 'none';
+    t.titleGlow = crt ? `0 0 10px ${t.accent}99` : 'none';
+    t.dimmed = focus ? 0.32 : 1;
+    return { t, crt, focus };
+  }
+}
+</script>
+</body>
+</html>

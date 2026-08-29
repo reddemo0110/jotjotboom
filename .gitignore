@@ -12,3 +12,6 @@ debian/*
 !debian/install
 !debian/rules
 !debian/source
+# design canvas: seeded page and static previews are generated
+design/*-direction.html
+design/preview_*.html
