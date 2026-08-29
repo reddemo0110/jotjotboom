@@ -202,3 +202,14 @@ in the text, resizable, with a click-for-options menu.
 - The ⋯ menu has a **caption / title** field. It edits the image's alt text
   (`![caption](…)`), which is what the instant print prints and what the box
   frame shows as its title — one name, stored in plain markdown.
+
+## 2026-08-29 — Undo / redo
+- Note-level undo: a step is a snapshot of the whole body + caret (blocks
+  are rebuilt on restore). 200 steps per open note (`UNDO_DEPTH`), stacks
+  reset when switching notes. Redo cleared by any new edit.
+- Grouping: consecutive typing (insert/enter/indent) or consecutive deleting
+  within 700 ms is one step; switching between the two, pausing, pasting,
+  dock format actions, image insert/remove/style/width/caption edits and
+  Backspace-over-image each start a new step (caption typing groups).
+- Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y and an Edit menu. The stock text editor has
+  no undo of its own, so this is the only undo.

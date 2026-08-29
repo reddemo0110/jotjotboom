@@ -29,6 +29,9 @@ pub enum Step {
     SelectAll,
     /// Toggle the dock's `+` section.
     Dock,
+    /// Undo / redo one step.
+    Undo,
+    Redo,
     /// Open the theme picker drawer.
     Themes,
     /// Toggle editor-only layout.
@@ -77,6 +80,8 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "format" => Step::Format(arg.trim().to_owned()),
                 "selectall" => Step::SelectAll,
                 "dock" => Step::Dock,
+                "undo" => Step::Undo,
+                "redo" => Step::Redo,
                 "themes" => Step::Themes,
                 "solo" => Step::Solo,
                 "image" => Step::Image(unescape(arg)),

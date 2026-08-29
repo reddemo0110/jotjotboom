@@ -27,6 +27,10 @@ const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
 /// How long after the last keystroke we write the note to disk.
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(600);
+/// Undo steps kept per open note.
+const UNDO_DEPTH: usize = 200;
+/// Typing separated by less than this is one undo step.
+const UNDO_GROUP_IDLE: Duration = Duration::from_millis(700);
 const NAV_WIDTH: f32 = 230.0;
 const NOTE_LIST_WIDTH: f32 = 320.0;
 const GAP: u16 = 14;
@@ -75,6 +79,10 @@ pub struct AppModel {
     current: Option<Note>,
     /// The open note's body as text/image blocks.
     blocks: Blocks,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    last_undo_kind: EditKind,
+    last_undo_at: Instant,
     dirty: bool,
     last_edit: Instant,
     backlinks: Vec<NoteSummary>,
@@ -118,6 +126,8 @@ pub enum Message {
     FontLoaded,
 
     Editor(usize, text_editor::Action),
+    Undo,
+    Redo,
     AutosaveTick,
     SetView(View),
     Select(String),
@@ -237,6 +247,10 @@ impl cosmic::Application for AppModel {
             notes: Vec::new(),
             current: None,
             blocks: Blocks::default(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            last_undo_kind: EditKind::Other,
+            last_undo_at: Instant::now(),
             dirty: false,
             last_edit: Instant::now(),
             backlinks: Vec::new(),
@@ -296,6 +310,16 @@ impl cosmic::Application for AppModel {
                         menu::Item::Button(fl!("new-note"), None, MenuAction::NewNote),
                         menu::Item::Divider,
                         menu::Item::Button(fl!("trash-note"), None, MenuAction::TrashNote),
+                    ],
+                ),
+            ),
+            menu::Tree::with_children(
+                menu::root(fl!("edit")).apply(Element::from),
+                menu::items(
+                    &self.key_binds,
+                    vec![
+                        menu::Item::Button(fl!("undo"), None, MenuAction::Undo),
+                        menu::Item::Button(fl!("redo"), None, MenuAction::Redo),
                     ],
                 ),
             ),
@@ -630,11 +654,30 @@ impl AppModel {
 
             Message::SetCaption(block, caption) => {
                 let caption = caption.replace(['[', ']', '\n'], "");
-                self.edit_ref(block, |r| r.alt = caption);
+                self.edit_ref_kind(block, EditKind::Typing, |r| r.alt = caption);
+            }
+
+            Message::Undo => {
+                if let Some(snap) = self.undo.pop() {
+                    let now = self.snapshot();
+                    self.redo.push(now);
+                    self.restore(snap);
+                    return self.focus_editor();
+                }
+            }
+
+            Message::Redo => {
+                if let Some(snap) = self.redo.pop() {
+                    let now = self.snapshot();
+                    self.undo.push(now);
+                    self.restore(snap);
+                    return self.focus_editor();
+                }
             }
 
             Message::RemoveImage(block) => {
                 self.image_menu = None;
+                self.record(EditKind::Other);
                 self.blocks.remove_image(block);
                 self.dirty = true;
                 self.last_edit = Instant::now();
@@ -754,6 +797,7 @@ impl AppModel {
                             if let Some(prev) = block.checked_sub(1)
                                 && matches!(self.blocks.items.get(prev), Some(Block::Image(_)))
                             {
+                                self.record(EditKind::Other);
                                 self.blocks.remove_image(prev);
                                 self.dirty = true;
                                 self.last_edit = Instant::now();
@@ -782,6 +826,18 @@ impl AppModel {
                     }
                 }
                 let is_edit = action.is_edit();
+                if is_edit && editable {
+                    let kind = match &action {
+                        Action::Edit(Edit::Insert(_) | Edit::Enter | Edit::Indent) => {
+                            EditKind::Typing
+                        }
+                        Action::Edit(Edit::Backspace | Edit::Delete | Edit::Unindent) => {
+                            EditKind::Deleting
+                        }
+                        _ => EditKind::Other,
+                    };
+                    self.record(kind);
+                }
                 if let Some(content) = self.blocks.text_mut(block) {
                     content.perform(action);
                 }
@@ -1381,6 +1437,10 @@ impl AppModel {
     /// Apply a dock format action to the editor buffer.
     fn apply_format(&mut self, format: Format) {
         use text_editor::{Action, Edit, Motion};
+        if self.blocks.focused_text().is_none() {
+            return;
+        }
+        self.record(EditKind::Other);
         let Some(editor) = self.blocks.focused_text() else {
             return;
         };
@@ -1739,6 +1799,7 @@ impl AppModel {
             align: Align::default(),
             width: None,
         };
+        self.record(EditKind::Other);
         self.blocks.insert_image(r);
         self.dirty = true;
         self.last_edit = Instant::now();
@@ -1747,11 +1808,68 @@ impl AppModel {
 
     /// Change one image's attributes in place.
     fn edit_ref(&mut self, block: usize, f: impl FnOnce(&mut ImageRef)) {
+        self.edit_ref_kind(block, EditKind::Other, f);
+    }
+
+    fn edit_ref_kind(&mut self, block: usize, kind: EditKind, f: impl FnOnce(&mut ImageRef)) {
+        if self.blocks.image_mut(block).is_none() {
+            return;
+        }
+        self.record(kind);
         if let Some(r) = self.blocks.image_mut(block) {
             f(r);
             self.dirty = true;
             self.last_edit = Instant::now();
         }
+    }
+
+    // ----- undo -----
+
+    fn snapshot(&self) -> Snapshot {
+        let cursor = self
+            .blocks
+            .text(self.blocks.focused)
+            .map(|c| c.cursor())
+            .unwrap_or(text_editor::Cursor {
+                position: text_editor::Position { line: 0, column: 0 },
+                selection: None,
+            });
+        Snapshot {
+            body: self.blocks.body(),
+            focused: self.blocks.focused,
+            cursor,
+        }
+    }
+
+    /// Push an undo step before an edit, unless it continues the current
+    /// typing/deleting burst. Any edit invalidates the redo stack.
+    fn record(&mut self, kind: EditKind) {
+        let continues = kind != EditKind::Other
+            && kind == self.last_undo_kind
+            && self.last_undo_at.elapsed() < UNDO_GROUP_IDLE;
+        self.last_undo_at = Instant::now();
+        self.last_undo_kind = kind;
+        self.redo.clear();
+        if continues {
+            return;
+        }
+        let snap = self.snapshot();
+        if self.undo.last().is_some_and(|last| last.body == snap.body) {
+            return;
+        }
+        self.undo.push(snap);
+        if self.undo.len() > UNDO_DEPTH {
+            self.undo.remove(0);
+        }
+    }
+
+    fn restore(&mut self, snap: Snapshot) {
+        self.blocks
+            .rebuild(&snap.body, snap.focused, Some(snap.cursor));
+        self.image_menu = None;
+        self.last_undo_kind = EditKind::Other;
+        self.dirty = true;
+        self.last_edit = Instant::now();
     }
 
     /// One inline image: frame treatment, ⋯ menu, drag grip, and the popup menu.
@@ -2022,6 +2140,9 @@ impl AppModel {
             Ok(Some(note)) => {
                 self.blocks = Blocks::from_body(&note.body);
                 self.image_menu = None;
+                self.undo.clear();
+                self.redo.clear();
+                self.last_undo_kind = EditKind::Other;
                 self.backlinks = store.backlinks(&note.title).unwrap_or_default();
                 self.current = Some(note);
                 self.dirty = false;
@@ -2126,6 +2247,8 @@ impl AppModel {
                 text_editor::Action::SelectAll,
             )),
             Step::Dock => self.update(Message::ToggleDock),
+            Step::Undo => self.update(Message::Undo),
+            Step::Redo => self.update(Message::Redo),
             Step::Themes => self.update(Message::ToggleContextPage(ContextPage::Themes)),
             Step::Solo => self.update(Message::ToggleSolo),
             Step::Image(path) => self.update(Message::ImagesDropped(vec![PathBuf::from(path)])),
@@ -2290,6 +2413,27 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     binds.insert(
         menu::KeyBind {
             modifiers: vec![Modifier::Ctrl],
+            key: keyboard::Key::Character("z".into()),
+        },
+        MenuAction::Undo,
+    );
+    binds.insert(
+        menu::KeyBind {
+            modifiers: vec![Modifier::Ctrl, Modifier::Shift],
+            key: keyboard::Key::Character("z".into()),
+        },
+        MenuAction::Redo,
+    );
+    binds.insert(
+        menu::KeyBind {
+            modifiers: vec![Modifier::Ctrl],
+            key: keyboard::Key::Character("y".into()),
+        },
+        MenuAction::Redo,
+    );
+    binds.insert(
+        menu::KeyBind {
+            modifiers: vec![Modifier::Ctrl],
             key: keyboard::Key::Character("1".into()),
         },
         MenuAction::ToggleNav,
@@ -2309,6 +2453,21 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
         MenuAction::Solo,
     );
     binds
+}
+
+/// One undo step: the whole body plus where the caret was.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    body: String,
+    focused: usize,
+    cursor: text_editor::Cursor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditKind {
+    Typing,
+    Deleting,
+    Other,
 }
 
 /// A drag-resize in progress on an image block.
@@ -2417,6 +2576,8 @@ pub enum MenuAction {
     NewNote,
     TrashNote,
     FocusSearch,
+    Undo,
+    Redo,
     Themes,
     ToggleMarkers,
     ToggleNav,
@@ -2431,6 +2592,8 @@ impl menu::action::MenuAction for MenuAction {
         match self {
             MenuAction::About => Message::ToggleContextPage(ContextPage::About),
             MenuAction::NewNote => Message::NewNote,
+            MenuAction::Undo => Message::Undo,
+            MenuAction::Redo => Message::Redo,
             MenuAction::TrashNote => Message::TrashCurrent,
             MenuAction::FocusSearch => Message::FocusSearch,
             MenuAction::Themes => Message::ToggleContextPage(ContextPage::Themes),

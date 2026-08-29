@@ -97,3 +97,8 @@ menu-resize-hint = drag ◢ on the picture to resize
 menu-remove = remove
 menu-caption = caption / title
 caption-placeholder = name this picture
+
+# Edit menu
+edit = Edit
+undo = Undo
+redo = Redo
