@@ -47,6 +47,8 @@ pub struct RichEditor<'a, Message> {
     palette: Palette,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
     on_link: Option<Box<dyn Fn(Link) -> Message + 'a>>,
+    /// Label on the drop indicator ("picture drops here").
+    drop_label: String,
 }
 
 impl<'a, Message> RichEditor<'a, Message> {
@@ -64,7 +66,13 @@ impl<'a, Message> RichEditor<'a, Message> {
             settings,
             on_action: None,
             on_link: None,
+            drop_label: String::new(),
         }
+    }
+
+    pub fn drop_label(mut self, label: String) -> Self {
+        self.drop_label = label;
+        self
     }
 
     pub fn on_link(mut self, f: impl Fn(Link) -> Message + 'a) -> Self {
@@ -472,6 +480,7 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
     ) {
         let state = tree.state.downcast_ref::<State>();
         let bounds = layout.bounds();
+        self.content.set_bounds(bounds);
         let text_bounds = bounds.shrink(self.padding);
         let origin = text_bounds.position() - Point::ORIGIN;
         let p = &self.palette;
@@ -661,6 +670,51 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                         ..Quad::default()
                     },
                     Background::Color(p.accent2),
+                );
+            }
+        }
+
+        // A file being dragged over the note: the line where it would land.
+        if let Some(line) = self.content.drop_marker() {
+            let y = text_bounds.y + self.content.line_top(line) - 1.0;
+            renderer.fill_quad(
+                Quad {
+                    bounds: Rectangle {
+                        x: text_bounds.x,
+                        y,
+                        width: text_bounds.width,
+                        height: 2.0,
+                    },
+                    border: Border {
+                        radius: 1.0.into(),
+                        ..Default::default()
+                    },
+                    ..Quad::default()
+                },
+                Background::Color(p.accent),
+            );
+            if !self.drop_label.is_empty() {
+                renderer.fill_text(
+                    cosmic::iced::advanced::Text {
+                        content: self.drop_label.clone(),
+                        bounds: Size::new(text_bounds.width, 16.0),
+                        size: 12.0.into(),
+                        line_height: cosmic::iced::widget::text::LineHeight::Absolute(16.0.into()),
+                        font: self.font,
+                        align_x: cosmic::iced::advanced::text::Alignment::Center,
+                        align_y: cosmic::iced::alignment::Vertical::Center,
+                        shaping: cosmic::iced::advanced::text::Shaping::Advanced,
+                        wrapping: cosmic::iced::advanced::text::Wrapping::None,
+                        ellipsize: cosmic::iced::advanced::text::Ellipsize::None,
+                    },
+                    Point::new(text_bounds.center_x(), y + 1.0),
+                    p.accent,
+                    Rectangle {
+                        x: text_bounds.x,
+                        y: y - 8.0,
+                        width: text_bounds.width,
+                        height: 18.0,
+                    },
                 );
             }
         }

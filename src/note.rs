@@ -158,7 +158,7 @@ pub fn is_tag_only_line(line: &str) -> bool {
 pub fn is_blank(body: &str) -> bool {
     body.lines()
         .map(str::trim)
-        .all(|l| l.is_empty() || is_tag_only_line(l))
+        .all(|l| l.trim_start_matches('#').trim().is_empty() || is_tag_only_line(l))
 }
 
 /// Normalise a user-typed folder/tag name into tag form: lowercase, spaces to

@@ -34,6 +34,12 @@ struct Inner {
     /// Set by the app after an automatic rewrite (`[]` → task box, a box
     /// toggle): the widget should render the caret's line, not reveal it.
     render_hint: bool,
+    /// Where the widget was last drawn (window coordinates), so the app can
+    /// map a drag-and-drop pointer position onto a line.
+    bounds: Rectangle,
+    /// A drop indicator to draw before this line (`line_count` = after the
+    /// last line), while a file is being dragged over the note.
+    drop_marker: Option<usize>,
 }
 
 /// A task box to draw: its square, the mark inside, and whether it is done.
@@ -91,6 +97,8 @@ impl RichContent {
             active: None,
             line_keys: Vec::new(),
             render_hint: false,
+            bounds: Rectangle::default(),
+            drop_marker: None,
         }))
     }
 
@@ -141,6 +149,55 @@ impl RichContent {
                         | Kind::TaskDone
                         | Kind::QuoteMarker
                 )
+        })
+    }
+
+    pub fn set_bounds(&self, r: Rectangle) {
+        self.0.borrow_mut().bounds = r;
+    }
+
+    pub fn bounds(&self) -> Rectangle {
+        self.0.borrow().bounds
+    }
+
+    pub fn set_drop_marker(&self, line: Option<usize>) {
+        self.0.borrow_mut().drop_marker = line;
+    }
+
+    pub fn drop_marker(&self) -> Option<usize> {
+        self.0.borrow().drop_marker
+    }
+
+    /// The line under `y` (buffer coordinates) and whether the pointer is
+    /// in its lower half — i.e. whether a drop belongs after it.
+    pub fn line_at_y(&self, y: f32) -> (usize, bool) {
+        self.with_buffer(|b| {
+            let mut last = (0, true);
+            for run in b.layout_runs() {
+                if y < run.line_top {
+                    return (run.line_i, false);
+                }
+                if y < run.line_top + run.line_height {
+                    return (run.line_i, y > run.line_top + run.line_height / 2.0);
+                }
+                last = (run.line_i, true);
+            }
+            last
+        })
+    }
+
+    /// Vertical position (buffer coordinates) of the top of `line`, or the
+    /// bottom of the last line when `line` is past the end.
+    pub fn line_top(&self, line: usize) -> f32 {
+        self.with_buffer(|b| {
+            let mut bottom = 0.0;
+            for run in b.layout_runs() {
+                if run.line_i == line {
+                    return run.line_top;
+                }
+                bottom = run.line_top + run.line_height;
+            }
+            bottom
         })
     }
 

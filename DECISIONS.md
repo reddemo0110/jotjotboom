@@ -483,6 +483,20 @@ Copy of Big Fish in Little China with the tangerine accent muted
   formatted. Fallback if something goes badly wrong: tag
   `v0.1-pre-rich-editor` still builds the old editor.
 
+## 2026-08-30 — Editor header, H1 by default, drop line for new images
+- The editor pane no longer repeats the note title in its header (the
+  first line is the title); the ✓ save badge stays on the header's right.
+- A new note starts as `# ` with the caret after it, so its first line is
+  a heading. A body that is only heading markers counts as blank, so an
+  untouched new note is still deleted on close.
+- Dragging an image in from a file manager shows the same "picture drops
+  here" line as moving one: the DnD destination reports pointer motion in
+  window coordinates; each text widget records its drawn bounds, the app
+  maps y to a line through the widget's own layout (`line_at_y`), and the
+  widget draws the rule at that line. On drop the image is inserted at the
+  caret and then moved to the target line. Images and rules between text
+  blocks get the indicator from the block view, as in drag mode.
+
 ## 2026-08-30 — The icon: dot dot hash, in the theme's colours
 - Rejected the phosphor-frame icon (title notch, three lines, cursor and a
   burst all merge below 32 px). Six minimal directions were sheeted at

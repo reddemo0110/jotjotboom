@@ -82,8 +82,9 @@ pub struct AppModel {
     /// In-app image picker (context drawer).
     picker_dir: PathBuf,
     picker_entries: Vec<PickerEntry>,
-    /// A file drag is hovering the editor.
+    /// A file drag is hovering the editor, and the body line it would land before.
     drop_hover: bool,
+    drop_target: Option<usize>,
 
     store: Option<Store>,
     store_error: Option<String>,
@@ -170,6 +171,8 @@ pub enum Message {
     PickerChoose(PathBuf),
     DragEnter,
     DragLeave,
+    /// A file drag moved over the editor (window coordinates).
+    DragMotion(f32, f32),
     Dropped(Option<UriList>),
     ImageLoaded(String, Result<Processed, String>),
     ImageMenu(Option<usize>),
@@ -333,6 +336,7 @@ impl cosmic::Application for AppModel {
                 .unwrap_or_else(|| PathBuf::from("/")),
             picker_entries: Vec::new(),
             drop_hover: false,
+            drop_target: None,
             store,
             store_error,
             view: View::All,
@@ -757,14 +761,22 @@ impl AppModel {
             }
 
             Message::DragEnter => self.drop_hover = true,
-            Message::DragLeave => self.drop_hover = false,
+            Message::DragLeave => {
+                self.drop_hover = false;
+                self.drop_target = None;
+            }
+            Message::DragMotion(x, y) => {
+                self.drop_hover = true;
+                self.drop_target = Some(self.drop_line_at(x, y));
+            }
 
             Message::Dropped(list) => {
                 self.drop_hover = false;
+                let target = self.drop_target.take();
                 let mut task = Task::none();
                 if let Some(UriList(paths)) = list {
                     for path in paths.into_iter().filter(|p| images::is_image_file(p)) {
-                        task = self.import_image(&path);
+                        task = self.import_image_at(&path, target);
                     }
                 }
                 return task;
@@ -1379,17 +1391,17 @@ impl AppModel {
                 self.close_current();
                 self.query.clear();
                 // A note started inside a folder carries that tag from the outset.
-                let tag_line = match &self.view {
-                    View::Tag(t) => Some(format!("\n\n#{t}\n")),
-                    _ => None,
+                // Every note opens as a heading; a note started inside a
+                // folder also carries that tag from the outset.
+                let body = match &self.view {
+                    View::Tag(t) => format!("# \n\n#{t}\n"),
+                    _ => "# ".to_owned(),
                 };
                 let created = self.store.as_mut().and_then(|s| match s.create() {
                     Ok(mut note) => {
-                        if let Some(line) = tag_line {
-                            note.body = line;
-                            if let Err(err) = s.save(&mut note) {
-                                tracing::error!(%err, "pre-filling folder tag");
-                            }
+                        note.body = body;
+                        if let Err(err) = s.save(&mut note) {
+                            tracing::error!(%err, "pre-filling new note");
                         }
                         Some(note)
                     }
@@ -1402,6 +1414,10 @@ impl AppModel {
                     self.refresh_tags();
                     self.refresh_list();
                     self.open_note(&note.id);
+                    // Caret after the `# `, ready for the title.
+                    if let Some(c) = self.blocks.focused_text() {
+                        c.perform(text_editor::Action::Move(text_editor::Motion::End));
+                    }
                     return Task::batch([self.update_title(), self.focus_editor()]);
                 }
                 return self.update_title();
@@ -1977,7 +1993,7 @@ impl AppModel {
         let framed = retro::pane_el(
             p,
             self.title_font(),
-            note.title.clone(),
+            String::new(),
             Some(badge),
             column,
             p.panel,
@@ -1987,6 +2003,7 @@ impl AppModel {
             |data, _action| Message::Dropped(data),
         )
         .on_enter(|_, _, _| Message::DragEnter)
+        .on_motion(|x, y| Message::DragMotion(x as f32, y as f32))
         .on_leave(|| Message::DragLeave)
         .into()
     }
@@ -2809,6 +2826,22 @@ impl AppModel {
         let drag = self.dragging.filter(|d| d.active);
         let offsets = self.blocks.line_offsets();
         let target = drag.and_then(|d| d.target);
+        // A file dragged in from outside: the text widgets draw the line where
+        // it lands; images and rules get the same indicator from here.
+        let drop = self.drop_hover.then_some(self.drop_target).flatten();
+        let mut drop_claimed = false;
+        for (i, block) in items.iter().enumerate() {
+            if let Block::Text { content, .. } = block {
+                let owns =
+                    drop.is_some_and(|t| !drop_claimed && t >= offsets[i] && t <= offsets[i + 1]);
+                if owns {
+                    drop_claimed = true;
+                    content.set_drop_marker(drop.map(|t| t - offsets[i]));
+                } else {
+                    content.set_drop_marker(None);
+                }
+            }
+        }
         let text_el = |i: usize, content: &'a crate::editor::Content, id: widget::Id| {
             if drag.is_some() {
                 self.drag_lines(p, content, offsets[i], target, i == last_text)
@@ -2941,7 +2974,8 @@ impl AppModel {
                 String::new()
             })
             .size(f32::from(self.font_size))
-            .padding([6, 10]);
+            .padding([6, 10])
+            .drop_label(fl!("drop-here"));
         if is_last {
             editor = editor.min_height(220.0);
         }
@@ -3024,6 +3058,40 @@ impl AppModel {
 
     /// Copy a file into assets/ and drop it into the note at the caret.
     fn import_image(&mut self, path: &std::path::Path) -> Task<cosmic::Action<Message>> {
+        self.import_image_at(path, None)
+    }
+
+    /// Body line a drag at window position (`x`, `y`) would drop before:
+    /// found through the text widgets' last drawn bounds and their layout.
+    fn drop_line_at(&self, _x: f32, y: f32) -> usize {
+        let offsets = self.blocks.line_offsets();
+        for (i, block) in self.blocks.items.iter().enumerate() {
+            let Block::Text { content, .. } = block else {
+                continue;
+            };
+            let b = content.bounds();
+            if b.height <= 0.0 {
+                continue;
+            }
+            if y < b.y {
+                return offsets[i];
+            }
+            if y < b.y + b.height {
+                let (line, after) = content.line_at_y(y - b.y - 6.0);
+                let lines = offsets[i + 1] - offsets[i];
+                return (offsets[i] + line + usize::from(after)).min(offsets[i] + lines);
+            }
+        }
+        *offsets.last().unwrap_or(&0)
+    }
+
+    /// Import an image and place it before body line `target` (or at the
+    /// caret when `None`).
+    fn import_image_at(
+        &mut self,
+        path: &std::path::Path,
+        target: Option<usize>,
+    ) -> Task<cosmic::Action<Message>> {
         if self.current.as_ref().is_none_or(|n| n.trashed) {
             return Task::none();
         }
@@ -3051,7 +3119,19 @@ impl AppModel {
             width: None,
         };
         self.record(EditKind::Other);
-        self.blocks.insert_image(r);
+        let next = self.blocks.insert_image(r);
+        if let Some(target) = target
+            && let Some(block) = next.checked_sub(1)
+        {
+            // The insert added a line at the caret; keep the target honest.
+            let img_line = self.blocks.line_offsets()[block];
+            let target = if img_line < target {
+                target + 1
+            } else {
+                target
+            };
+            self.blocks.move_image(block, target);
+        }
         self.dirty = true;
         self.last_edit = Instant::now();
         self.focus_editor()
