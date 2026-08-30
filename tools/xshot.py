@@ -83,10 +83,18 @@ def main():
     ap.add_argument("--script", default=None, help="JJB_SCRIPT steps, e.g. 'new;type:Hi;wait:1500'")
     ap.add_argument("--settle", type=float, default=1.5, help="seconds before capture")
     ap.add_argument("--keep", action="store_true", help="leave the app running")
+    ap.add_argument("--notes-dir", default=None,
+                    help="notes directory for the run (default: a fresh scratch dir, so the "
+                         "real notes are never touched; pass the real path to see them)")
     args = ap.parse_args()
 
     env = dict(os.environ, DISPLAY=args.display)
     env.pop("WAYLAND_DISPLAY", None)
+    if args.notes_dir is None:
+        import tempfile
+        args.notes_dir = tempfile.mkdtemp(prefix="jjb-notes-")
+        log("scratch notes dir:", args.notes_dir)
+    env["JJB_NOTES_DIR"] = args.notes_dir
     env.setdefault("RUST_LOG", "jotjotboom=info,warn")
     if args.script:
         env["JJB_SCRIPT"] = args.script

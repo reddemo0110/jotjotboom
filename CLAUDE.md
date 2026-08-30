@@ -15,11 +15,13 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
 - `just install-user` — release build + per-user install (~/.local: binary,
   launcher entry with absolute Exec, icon, metainfo); `just uninstall-user`
 - `RUST_LOG=jotjotboom=debug cargo run` for tracing output
-- Visual check without a human: `tools/xshot.py out.png [--keys ctrl+n --type 'text']`
-  runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (steps:
+- Visual check without a human: `tools/xshot.py out.png [--script ...]`
+  runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (`step:arg` form, e.g. `--script 'new;type:Hello;wait:1000'`; steps:
   new, type, search, select, pin, trash, folder, format, selectall, dock,
-  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, iconset, attach, wait, exit; `;` separates steps — write `\;` inside text),
-  and captures the window with X auto-repeat switched off. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
+  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, linkdrag, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, iconset, attach, wait, exit; `;` separates steps — write `\;` inside text),
+  and captures the window with X auto-repeat switched off. It runs against a
+  fresh scratch notes dir (`JJB_NOTES_DIR`); pass `--notes-dir ~/Documents/JotJotBoom`
+  only when the real notes are needed for the picture — steps like `new`/`type`/`attach` write files. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
   hook (iced `window::screenshot`) silently drops editor text and menu labels.
 
 libcosmic is pulled from git; its API moves. When in doubt, read the checkout

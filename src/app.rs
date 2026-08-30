@@ -223,6 +223,9 @@ pub enum Message {
     ResizeStart(usize),
     /// Left button went down on a picture: a click (menu) or the start of a drag.
     ImagePress(usize),
+    /// Left button went down on a link card: the start of a drag (a
+    /// double-click opens the target instead).
+    LinkPress(usize),
     /// While dragging, the pointer is over the slot before this body line.
     DragOver(usize),
     MouseMoved(Point),
@@ -946,7 +949,17 @@ impl AppModel {
             }
             Message::DragMotion(x, y) => {
                 self.drop_hover = true;
-                self.drop_target = Some(self.drop_line_at(x, y));
+                let target = self.drop_line_at(x, y);
+                tracing::debug!(
+                    offer = ?(x, y),
+                    pointer = ?self.blocks.items.iter().find_map(|b| match b {
+                        Block::Text { content, .. } => content.pointer_y(),
+                        _ => None,
+                    }),
+                    target,
+                    "drag over note"
+                );
+                self.drop_target = Some(target);
             }
 
             Message::Dropped(list) => {
@@ -1356,6 +1369,20 @@ impl AppModel {
                 });
             }
 
+            Message::LinkPress(block) => {
+                let editable = self.current.as_ref().is_some_and(|n| !n.trashed);
+                self.link_menu = None;
+                if !editable {
+                    return Task::none();
+                }
+                self.dragging = Some(ImageDrag {
+                    block,
+                    start: Point::new(self.mouse_x, self.mouse_y),
+                    active: false,
+                    target: None,
+                });
+            }
+
             Message::DragOver(line) => {
                 if let Some(d) = &mut self.dragging
                     && d.active
@@ -1389,7 +1416,12 @@ impl AppModel {
                 }
                 if let Some(d) = self.dragging.take() {
                     if !d.active {
-                        return self.update(Message::ImageMenu(Some(d.block)));
+                        // A plain click: pictures open their menu, link
+                        // cards wait for a double-click.
+                        if matches!(self.blocks.items.get(d.block), Some(Block::Image(_))) {
+                            return self.update(Message::ImageMenu(Some(d.block)));
+                        }
+                        return Task::none();
                     }
                     if let Some(target) = d.target {
                         let snap = self.snapshot();
@@ -2414,6 +2446,10 @@ impl AppModel {
         .on_enter(|_, _, _| Message::DragEnter)
         .on_motion(|x, y| Message::DragMotion(x as f32, y as f32))
         .on_leave(|| Message::DragLeave)
+        // The drag also reaches the editors as pointer motion, translated by
+        // the scroll container on the way: that is the position `drop_line_at`
+        // reads, since the raw offer coordinates know nothing about scrolling.
+        .forward_drag_as_cursor(true)
         .into()
     }
 
@@ -3673,10 +3709,20 @@ impl AppModel {
         Task::batch(tasks)
     }
 
-    /// Body line a drag at window position (`x`, `y`) would drop before:
-    /// found through the text widgets' last drawn bounds and their layout.
-    fn drop_line_at(&self, _x: f32, y: f32) -> usize {
+    /// Body line a drag would drop before. The offer's own coordinates
+    /// (`_x`, `_y`) are window-relative and ignore scrolling, so the pointer
+    /// position is read back from the editors instead: the drag is forwarded
+    /// to them as cursor motion, which the scroll container translates into
+    /// the same space as their recorded bounds.
+    fn drop_line_at(&self, _x: f32, _y: f32) -> usize {
         let offsets = self.blocks.line_offsets();
+        let pointer = self.blocks.items.iter().find_map(|b| match b {
+            Block::Text { content, .. } => content.pointer_y(),
+            _ => None,
+        });
+        let Some(y) = pointer else {
+            return self.drop_target.unwrap_or(0);
+        };
         for (i, block) in self.blocks.items.iter().enumerate() {
             let Block::Text { content, .. } = block else {
                 continue;
@@ -3950,10 +3996,17 @@ impl AppModel {
         } else {
             Message::OpenFile(l.target.clone())
         };
+        // Double-click opens the target; press and drag moves the card, the
+        // same way a picture moves.
         let clickable =
             widget::mouse_area(widget::container(body).padding([8, 12]).width(Length::Fill))
-                .on_press(open_msg)
-                .interaction(mouse::Interaction::Pointer);
+                .on_press(Message::LinkPress(block))
+                .on_double_click(open_msg)
+                .interaction(if editable {
+                    mouse::Interaction::Grab
+                } else {
+                    mouse::Interaction::Pointer
+                });
         let dots = widget::container(
             widget::button::custom(retro::accent(p, "⋯").size(14))
                 .padding([0, 6])
@@ -4637,6 +4690,18 @@ impl AppModel {
                     } else {
                         Task::none()
                     }
+                }
+                None => Task::none(),
+            },
+            Step::LinkDrag(n, line) => match self.blocks.links().get(n).map(|(b, _)| *b) {
+                Some(b) => {
+                    self.dragging = Some(ImageDrag {
+                        block: b,
+                        start: Point::ORIGIN,
+                        active: true,
+                        target: Some(line),
+                    });
+                    Task::none()
                 }
                 None => Task::none(),
             },

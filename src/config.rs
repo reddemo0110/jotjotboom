@@ -53,6 +53,11 @@ pub struct Config {
 impl Config {
     /// Resolve the notes directory, falling back to `~/Documents/JotJotBoom`.
     pub fn notes_dir(&self) -> PathBuf {
+        // `JJB_NOTES_DIR` lets the screenshot harness (and anyone testing)
+        // point a run at a scratch directory without touching real notes.
+        if let Some(dir) = std::env::var_os("JJB_NOTES_DIR").filter(|d| !d.is_empty()) {
+            return PathBuf::from(dir);
+        }
         if !self.notes_dir.trim().is_empty() {
             return PathBuf::from(shellexpand_home(self.notes_dir.trim()));
         }

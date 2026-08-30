@@ -56,6 +56,8 @@ pub enum Step {
     ImgMenu(usize),
     /// Show the n-th image mid-drag with the drop line before body line `line`: `imgdrag:n:line`.
     ImgDrag(usize, usize),
+    /// Start dragging the n-th link card with the drop slot before `line`.
+    LinkDrag(usize, usize),
     /// Move the n-th image to sit before body line `line`: `imgmove:n:line`.
     ImgMove(usize, usize),
     /// Set the caption of the n-th image: `imgcaption:n:text`.
@@ -151,6 +153,10 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "imgdrag" => {
                     let (n, line) = arg.trim().split_once(':')?;
                     Step::ImgDrag(n.parse().ok()?, line.parse().ok()?)
+                }
+                "linkdrag" => {
+                    let (n, line) = arg.trim().split_once(':')?;
+                    Step::LinkDrag(n.parse().ok()?, line.parse().ok()?)
                 }
                 "imgmove" => {
                     let (n, line) = arg.trim().split_once(':')?;

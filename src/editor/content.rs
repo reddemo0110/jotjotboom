@@ -34,9 +34,13 @@ struct Inner {
     /// Set by the app after an automatic rewrite (`[]` → task box, a box
     /// toggle): the widget should render the caret's line, not reveal it.
     render_hint: bool,
-    /// Where the widget was last drawn (window coordinates), so the app can
-    /// map a drag-and-drop pointer position onto a line.
+    /// The widget's layout bounds, recorded on every event (drawing skips
+    /// editors scrolled out of view, events do not). In the scroll
+    /// container's coordinate space, the same one `pointer_y` uses.
     bounds: Rectangle,
+    /// The pointer's last known vertical position, in the same coordinate
+    /// space as `bounds`; a drag from outside is forwarded as pointer motion.
+    pointer_y: Option<f32>,
     /// A drop indicator to draw before this line (`line_count` = after the
     /// last line), while a file is being dragged over the note.
     drop_marker: Option<usize>,
@@ -100,6 +104,7 @@ impl RichContent {
             line_keys: Vec::new(),
             render_hint: false,
             bounds: Rectangle::default(),
+            pointer_y: None,
             drop_marker: None,
         }))
     }
@@ -160,6 +165,14 @@ impl RichContent {
 
     pub fn bounds(&self) -> Rectangle {
         self.0.borrow().bounds
+    }
+
+    pub fn set_pointer_y(&self, y: Option<f32>) {
+        self.0.borrow_mut().pointer_y = y;
+    }
+
+    pub fn pointer_y(&self) -> Option<f32> {
+        self.0.borrow().pointer_y
     }
 
     pub fn set_drop_marker(&self, line: Option<usize>) {

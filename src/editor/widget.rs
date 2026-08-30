@@ -283,6 +283,16 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
     ) {
         let state = tree.state.downcast_mut::<State>();
         let bounds = layout.bounds();
+        // Keep the app's picture of where this editor sits current even when
+        // it is scrolled out of view and never drawn.
+        self.content.set_bounds(bounds);
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                self.content.set_pointer_y(cursor.position().map(|p| p.y));
+            }
+            Event::Mouse(mouse::Event::CursorLeft) => self.content.set_pointer_y(None),
+            _ => {}
+        }
 
         if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_)))
             && cursor.position_over(bounds).is_none()
@@ -481,7 +491,6 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
     ) {
         let state = tree.state.downcast_ref::<State>();
         let bounds = layout.bounds();
-        self.content.set_bounds(bounds);
         let text_bounds = bounds.shrink(self.padding);
         let origin = text_bounds.position() - Point::ORIGIN;
         let p = &self.palette;
