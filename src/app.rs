@@ -60,8 +60,10 @@ pub struct AppModel {
     task_marker: String,
     /// Maximum width of the note text column.
     measure: retro::Measure,
+    /// Launcher icon: a theme's colours, or `None` to follow the theme.
+    icon_theme: Option<retro::Theme>,
     /// Which sections of the Appearance drawer are unfolded.
-    appearance_open: [bool; 4],
+    appearance_open: [bool; 5],
     /// Processed images keyed by path|mtime|style|theme.
     image_cache: HashMap<String, ImageState>,
     /// Block index of the image whose ⋯ menu is open.
@@ -148,6 +150,8 @@ pub enum Message {
     SetDockSize(retro::DockSize),
     SetTaskMarker(String),
     SetMeasure(retro::Measure),
+    /// Launcher icon: `Some(theme)` for that theme's colours, `None` to follow.
+    SetIcon(Option<retro::Theme>),
     /// Fold or unfold the sub-tags of a tag in the sidebar.
     ToggleTagFold(String),
     /// Right-click menu on a tag (None closes it).
@@ -291,6 +295,8 @@ impl cosmic::Application for AppModel {
         let dock_size = retro::DockSize::from_key(&config.dock_size);
         let task_marker = task_marker_from_config(&config.task_marker);
         let measure = retro::Measure::from_key(&config.text_width);
+        let icon_theme =
+            (!config.icon_theme.is_empty()).then(|| retro::Theme::from_key(&config.icon_theme));
         let collapsed: HashSet<String> = config.collapsed_tags.iter().cloned().collect();
         let mut app = AppModel {
             core,
@@ -312,7 +318,8 @@ impl cosmic::Application for AppModel {
             dock_size,
             task_marker,
             measure,
-            appearance_open: [true, false, false, false],
+            icon_theme,
+            appearance_open: [true, false, false, false, false],
             image_cache: HashMap::new(),
             image_menu: None,
             resizing: None,
@@ -366,6 +373,7 @@ impl cosmic::Application for AppModel {
 
         // The Appearance drawer sits beside the note, not over it.
         app.core.window.context_is_overlay = false;
+        app.install_icon();
         let title = app.update_title();
         // Fonts are (re)loaded on `window::Event::Opened` too: a LoadFont
         // action issued before the compositor exists is silently dropped.
@@ -887,6 +895,19 @@ impl AppModel {
                 }
             }
 
+            Message::SetIcon(choice) => {
+                self.icon_theme = choice;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_icon_theme(
+                        handler,
+                        choice.map_or(String::new(), |t| t.key().to_owned()),
+                    )
+                {
+                    tracing::warn!(%why, "saving icon choice");
+                }
+                self.install_icon();
+            }
+
             Message::SetMeasure(measure) => {
                 self.measure = measure;
                 if let Some(handler) = &self.config_handler
@@ -1137,6 +1158,9 @@ impl AppModel {
 
             Message::SetTheme(theme) => {
                 self.theme = theme;
+                if self.icon_theme.is_none() {
+                    self.install_icon();
+                }
                 if let Some(handler) = &self.config_handler
                     && let Err(why) = self.config.set_theme(handler, theme.key().to_owned())
                 {
@@ -1581,6 +1605,17 @@ impl AppModel {
             },
         }
         Task::none()
+    }
+
+    /// Write the chosen (or theme-following) icon into the user's icon theme.
+    fn install_icon(&self) {
+        let theme = self.icon_theme.unwrap_or(self.theme);
+        let svg = crate::icon::svg(&theme.palette(self.core.system_theme()));
+        match crate::icon::install(Self::APP_ID, &svg) {
+            Ok(true) => tracing::info!(theme = theme.key(), "launcher icon updated"),
+            Ok(false) => {}
+            Err(err) => tracing::warn!(%err, "installing launcher icon"),
+        }
     }
 
     /// The face pane titles are set in: VT323 as-is, anything else bold.
@@ -2390,6 +2425,51 @@ impl AppModel {
                     .width(Length::Fill)
                     .class(cosmic::theme::Container::Card),
             );
+        }
+
+        // Icon: the launcher tile in any theme's colours, or following the theme.
+        col = col.push(
+            widget::container(header(fl!("section-icon"), Section::Icon)).padding([8, 0, 0, 0]),
+        );
+        if self.appearance_open[Section::Icon as usize] {
+            col = col.push(widget::text::caption(fl!("icon-hint")));
+            col = col.push(
+                widget::container(
+                    widget::toggler(self.icon_theme.is_none())
+                        .label(fl!("icon-follow"))
+                        .on_toggle(|on| {
+                            Message::SetIcon(if on {
+                                None
+                            } else {
+                                Some(retro::Theme::Phosphor)
+                            })
+                        }),
+                )
+                .padding([4, 0, 8, 0]),
+            );
+            let mut tiles: Vec<Element<'_, Message>> = Vec::with_capacity(retro::Theme::ALL.len());
+            let current = self.icon_theme.unwrap_or(self.theme);
+            for theme in retro::Theme::ALL {
+                let svg = crate::icon::svg(&theme.palette(system));
+                let handle = widget::svg::Handle::from_memory(svg.into_bytes());
+                let selected = current == theme;
+                tiles.push(
+                    widget::tooltip(
+                        widget::button::custom(widget::svg(handle).width(52).height(52))
+                            .padding(2)
+                            .class(if selected {
+                                cosmic::theme::Button::Suggested
+                            } else {
+                                cosmic::theme::Button::Text
+                            })
+                            .on_press(Message::SetIcon(Some(theme))),
+                        widget::text::caption(theme.label()),
+                        widget::tooltip::Position::Top,
+                    )
+                    .into(),
+                );
+            }
+            col = col.push(widget::flex_row(tiles).spacing(4));
         }
         widget::scrollable(col).into()
     }
@@ -3633,10 +3713,14 @@ impl AppModel {
                 "colour" | "color" => Section::Colour,
                 "font" => Section::Font,
                 "tasks" => Section::Tasks,
+                "icon" => Section::Icon,
                 _ => Section::Size,
             })),
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
             Step::Measure(key) => self.update(Message::SetMeasure(retro::Measure::from_key(&key))),
+            Step::Icon(key) => self.update(Message::SetIcon(
+                (key != "follow").then(|| retro::Theme::from_key(&key)),
+            )),
             Step::Follow(title) => self.update(Message::FollowLink(
                 crate::editor::widget::Link::Note(title),
             )),
@@ -3798,6 +3882,7 @@ pub enum Section {
     Font = 1,
     Size = 2,
     Tasks = 3,
+    Icon = 4,
 }
 
 fn title_font_from_config(s: &str) -> retro::EditorFont {

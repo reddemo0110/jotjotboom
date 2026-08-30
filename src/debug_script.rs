@@ -80,6 +80,8 @@ pub enum Step {
     Measure(String),
     /// Follow a wiki link by title, as Ctrl+click would: `follow:Kyoto!`.
     Follow(String),
+    /// Launcher icon: a theme key or `follow`: `icon:amber`.
+    Icon(String),
     /// Walk the notes list like ↑/↓: `nav:+1` / `nav:-1`.
     Nav(i32),
     /// Toggle the task box at line:column of the focused block: `togglebox:2:3`.
@@ -165,6 +167,7 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "marker" => Step::Marker(arg.trim().to_owned()),
                 "measure" => Step::Measure(arg.trim().to_owned()),
                 "follow" => Step::Follow(unescape(arg)),
+                "icon" => Step::Icon(arg.trim().to_owned()),
                 "togglebox" => {
                     let (l, c) = arg.trim().split_once(':')?;
                     Step::ToggleBox(l.parse().ok()?, c.parse().ok()?)

@@ -6,6 +6,7 @@ mod config;
 mod debug_script;
 mod editor;
 mod i18n;
+mod icon;
 mod images;
 mod markdown;
 mod note;

@@ -482,3 +482,23 @@ Copy of Big Fish in Little China with the tangerine accent muted
   cosmic-text content. v0.2 = first release where the note is rendered
   formatted. Fallback if something goes badly wrong: tag
   `v0.1-pre-rich-editor` still builds the old editor.
+
+## 2026-08-30 — The icon: dot dot hash, in the theme's colours
+- Rejected the phosphor-frame icon (title notch, three lines, cursor and a
+  burst all merge below 32 px). Six minimal directions were sheeted at
+  128→16 px; the user chose "dot dot boom", then a sticker cut (rejected:
+  too wide, overlapped dock neighbours), then "dot dot hash" — two jots
+  and a `#`, the sign the app runs on — with the jots on the hash's lower
+  bar.
+- Geometry follows the macOS app-icon grid the reference app uses: tile
+  at 824/1024 of the canvas with clear margin, a continuous-curve
+  squircle, no outline; the marks sit on the golden ratio (boom/hash
+  height = jot × φ², jot→jot × φ = jot→hash). `src/icon.rs` bakes the
+  geometry and fills the colours from a palette: accent gradient tile,
+  white marks (or the theme's ground when the accent is pale).
+- The launcher icon is chosen in Appearance → Icon: any theme's colours,
+  or "follow the colour theme" (default). The app writes the SVG to
+  `~/.local/share/icons/hicolor/scalable/apps/<app id>.svg` and refreshes
+  the cache, so the dock and app library follow; the running window's own
+  icon updates on next launch. `resources/…/icon.svg` ships the Phosphor
+  version for fresh installs. Script step `icon:<theme|follow>`.

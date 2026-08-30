@@ -37,6 +37,8 @@ pub struct Config {
     pub task_marker: String,
     /// Widest the note text gets before it centres: narrow, medium, wide, full.
     pub text_width: String,
+    /// Launcher icon: a theme key, or empty to follow the colour theme.
+    pub icon_theme: String,
 }
 
 impl Config {
