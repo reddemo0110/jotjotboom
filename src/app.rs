@@ -104,6 +104,10 @@ pub struct AppModel {
     tag_menu: Option<String>,
     /// Tag being renamed and the draft name.
     tag_rename: Option<(String, String)>,
+    /// Tag whose icon grid is open.
+    tag_icon_pick: Option<String>,
+    /// Folder icons by tag (shared with the editor's settings).
+    tag_icons: Arc<HashMap<String, crate::pixel::Icon>>,
     rename_id: widget::Id,
     query: String,
     search_id: widget::Id,
@@ -166,6 +170,10 @@ pub enum Message {
     TagRenameInput(String),
     TagRenameCommit,
     TagRenameCancel,
+    /// Open the icon grid for a tag.
+    TagIconPick(String),
+    /// Give a tag an 8-bit icon (`None` = back to `#`).
+    SetTagIcon(String, Option<crate::pixel::Icon>),
     ToggleMarkers,
     ToggleNav,
     ToggleList,
@@ -309,6 +317,7 @@ impl cosmic::Application for AppModel {
         let icon_theme =
             (!config.icon_theme.is_empty()).then(|| retro::Theme::from_key(&config.icon_theme));
         let coffee_unlocked = config.coffee_unlocked;
+        let tag_icons = Arc::new(crate::pixel::parse_assignments(&config.tag_icons));
         let collapsed: HashSet<String> = config.collapsed_tags.iter().cloned().collect();
         let mut app = AppModel {
             core,
@@ -356,6 +365,8 @@ impl cosmic::Application for AppModel {
             collapsed,
             tag_menu: None,
             tag_rename: None,
+            tag_icon_pick: None,
+            tag_icons,
             rename_id: widget::Id::unique(),
             tags: Vec::new(),
             query: String::new(),
@@ -981,6 +992,34 @@ impl AppModel {
             Message::TagMenu(tag) => {
                 self.tag_menu = tag;
                 self.tag_rename = None;
+                self.tag_icon_pick = None;
+            }
+
+            Message::TagIconPick(tag) => {
+                self.tag_menu = None;
+                self.tag_rename = None;
+                self.tag_icon_pick = Some(tag);
+            }
+
+            Message::SetTagIcon(tag, icon) => {
+                self.tag_icon_pick = None;
+                let mut map = (*self.tag_icons).clone();
+                match icon {
+                    Some(i) => {
+                        map.insert(tag, i);
+                    }
+                    None => {
+                        map.remove(&tag);
+                    }
+                }
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self
+                        .config
+                        .set_tag_icons(handler, crate::pixel::serialise_assignments(&map))
+                {
+                    tracing::warn!(%why, "saving folder icons");
+                }
+                self.tag_icons = Arc::new(map);
             }
 
             Message::TagRenameStart(tag) => {
@@ -998,6 +1037,7 @@ impl AppModel {
             Message::TagRenameCancel => {
                 self.tag_rename = None;
                 self.tag_menu = None;
+                self.tag_icon_pick = None;
             }
 
             Message::TagRenameCommit => {
@@ -1913,17 +1953,16 @@ impl AppModel {
             let row = widget::row::with_capacity(5)
                 .push(widget::Space::new().width(Length::Fixed(14.0 * depth as f32)))
                 .push(chevron)
-                .push(
-                    retro::accent2(
-                        p,
-                        if crate::coffee::is_coffee_tag(name) {
-                            "☕"
-                        } else {
-                            "#"
-                        },
-                    )
-                    .size(sz),
-                )
+                .push(match crate::pixel::for_tag(name, &self.tag_icons) {
+                    Some(icon) => Element::from(
+                        widget::svg(widget::svg::Handle::from_memory(
+                            icon.svg(p.accent2).into_bytes(),
+                        ))
+                        .width(sz)
+                        .height(sz),
+                    ),
+                    None => retro::accent2(p, "#").size(sz).into(),
+                })
                 .push(
                     retro::text(p, leaf.to_owned())
                         .font(self.ui_font())
@@ -1945,46 +1984,89 @@ impl AppModel {
             // Right-click: a small menu (rename); the rename is an inline input.
             let item =
                 widget::mouse_area(button).on_right_press(Message::TagMenu(Some(name.clone())));
-            let popup: Option<Element<'a, Message>> =
-                if let Some((t, draft)) = self.tag_rename.as_ref().filter(|(t, _)| t == name) {
-                    let _ = t;
-                    Some(
-                        widget::container(
-                            widget::text_input(fl!("tag-rename-placeholder"), draft)
-                                .id(self.rename_id.clone())
-                                .font(retro::mono())
-                                .size(sz)
-                                .padding([3, 8])
-                                .width(Length::Fixed(200.0))
-                                .leading_icon(
-                                    widget::container(retro::accent2(p, "#"))
-                                        .padding([0, 0, 0, 8])
-                                        .into(),
-                                )
-                                .style(retro::search_class(p))
-                                .on_input(Message::TagRenameInput)
-                                .on_submit(|_| Message::TagRenameCommit),
+            let popup: Option<Element<'a, Message>> = if let Some((t, draft)) =
+                self.tag_rename.as_ref().filter(|(t, _)| t == name)
+            {
+                let _ = t;
+                Some(
+                    widget::container(
+                        widget::text_input(fl!("tag-rename-placeholder"), draft)
+                            .id(self.rename_id.clone())
+                            .font(retro::mono())
+                            .size(sz)
+                            .padding([3, 8])
+                            .width(Length::Fixed(200.0))
+                            .leading_icon(
+                                widget::container(retro::accent2(p, "#"))
+                                    .padding([0, 0, 0, 8])
+                                    .into(),
+                            )
+                            .style(retro::search_class(p))
+                            .on_input(Message::TagRenameInput)
+                            .on_submit(|_| Message::TagRenameCommit),
+                    )
+                    .padding(4)
+                    .class(retro::dock_class(p))
+                    .into(),
+                )
+            } else if self.tag_icon_pick.as_deref() == Some(name.as_str()) {
+                // The 8-bit icon grid for this folder.
+                let current = self.tag_icons.get(name.as_str()).copied();
+                let mut tiles: Vec<Element<'a, Message>> =
+                    Vec::with_capacity(crate::pixel::Icon::ALL.len() + 1);
+                for icon in crate::pixel::Icon::ALL {
+                    let handle = widget::svg::Handle::from_memory(icon.svg(p.accent2).into_bytes());
+                    tiles.push(
+                        widget::tooltip(
+                            widget::button::custom(widget::svg(handle).width(22).height(22))
+                                .padding(4)
+                                .class(retro::row_class(p, current == Some(icon)))
+                                .on_press(Message::SetTagIcon(name.clone(), Some(icon))),
+                            retro::dim(p, icon.label()),
+                            widget::tooltip::Position::Top,
                         )
-                        .padding(4)
+                        .into(),
+                    );
+                }
+                tiles.push(
+                    widget::button::custom(retro::dim(p, fl!("tag-icon-none")).size(sz))
+                        .padding([6, 8])
+                        .class(retro::row_class(p, current.is_none()))
+                        .on_press(Message::SetTagIcon(name.clone(), None))
+                        .into(),
+                );
+                Some(
+                    widget::container(widget::flex_row(tiles).spacing(2))
+                        .padding(6)
+                        .width(Length::Fixed(232.0))
                         .class(retro::dock_class(p))
                         .into(),
-                    )
-                } else if self.tag_menu.as_deref() == Some(name.as_str()) {
-                    Some(
-                        widget::container(
-                            widget::button::custom(retro::text(p, fl!("tag-rename")).size(sz))
-                                .padding([3, 10])
-                                .width(Length::Fixed(160.0))
-                                .class(retro::row_class(p, false))
-                                .on_press(Message::TagRenameStart(name.clone())),
-                        )
-                        .padding(4)
-                        .class(retro::dock_class(p))
-                        .into(),
-                    )
-                } else {
-                    None
+                )
+            } else if self.tag_menu.as_deref() == Some(name.as_str()) {
+                let item = |label: String, msg: Message| {
+                    widget::button::custom(retro::text(p, label).size(sz))
+                        .padding([3, 10])
+                        .width(Length::Fixed(160.0))
+                        .class(retro::row_class(p, false))
+                        .on_press(msg)
                 };
+                Some(
+                    widget::container(
+                        widget::column::with_capacity(2)
+                            .push(item(
+                                fl!("tag-rename"),
+                                Message::TagRenameStart(name.clone()),
+                            ))
+                            .push(item(fl!("tag-icon"), Message::TagIconPick(name.clone())))
+                            .spacing(1),
+                    )
+                    .padding(4)
+                    .class(retro::dock_class(p))
+                    .into(),
+                )
+            } else {
+                None
+            };
             match popup {
                 Some(popup) => {
                     col = col.push(
@@ -3118,6 +3200,7 @@ impl AppModel {
             palette: *p,
             show_markers: self.show_markers,
             font: self.editor_font.font(),
+            tag_icons: Arc::clone(&self.tag_icons),
         };
         let mut editor = crate::editor::RichEditor::new(content, settings)
             .id(id)
@@ -3952,6 +4035,9 @@ impl AppModel {
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
             Step::Measure(key) => self.update(Message::SetMeasure(retro::Measure::from_key(&key))),
             Step::Coffee => self.update(Message::ToggleCoffee),
+            Step::TagIcon(tag, key) => {
+                self.update(Message::SetTagIcon(tag, crate::pixel::Icon::from_key(&key)))
+            }
             Step::Icon(key) => self.update(Message::SetIcon(
                 (key != "follow").then(|| retro::Theme::from_key(&key)),
             )),

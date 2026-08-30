@@ -11,6 +11,7 @@ mod icon;
 mod images;
 mod markdown;
 mod note;
+mod pixel;
 mod retro;
 mod secrets;
 mod store;

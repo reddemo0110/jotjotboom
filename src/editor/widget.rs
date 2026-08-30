@@ -625,27 +625,28 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                 );
             }
         }
-        for r in &overlays.cups {
+        // 8-bit folder icons over the hash of tags that wear one.
+        for (r, icon) in &overlays.tag_icons {
             let rect = at(r);
-            renderer.fill_text(
-                cosmic::iced::advanced::Text {
-                    content: "☕".to_owned(),
-                    bounds: Size::new(rect.width + 8.0, rect.height),
-                    size: (self.size * 0.95).into(),
-                    line_height: cosmic::iced::widget::text::LineHeight::Absolute(
-                        rect.height.into(),
-                    ),
-                    font: self.font,
-                    align_x: cosmic::iced::advanced::text::Alignment::Center,
-                    align_y: cosmic::iced::alignment::Vertical::Center,
-                    shaping: cosmic::iced::advanced::text::Shaping::Advanced,
-                    wrapping: cosmic::iced::advanced::text::Wrapping::None,
-                    ellipsize: cosmic::iced::advanced::text::Ellipsize::None,
-                },
-                Point::new(rect.center_x() + 2.0, rect.center_y()),
-                p.accent2,
-                rect.expand(6.0),
-            );
+            // The glyph is wider than the hash it replaces: hang it to the
+            // left, into the space before the tag, so it never touches the word.
+            let cell = (self.size * 0.92 / 8.0).max(1.0);
+            let ox = rect.x + rect.width - cell * 8.0 - 1.0;
+            let oy = rect.center_y() - cell * 4.0;
+            for (px, py) in icon.pixels() {
+                renderer.fill_quad(
+                    Quad {
+                        bounds: Rectangle {
+                            x: ox + f32::from(px) * cell,
+                            y: oy + f32::from(py) * cell,
+                            width: cell,
+                            height: cell,
+                        },
+                        ..Quad::default()
+                    },
+                    Background::Color(p.accent2),
+                );
+            }
         }
         for r in &overlays.bullets {
             let rect = at(r);

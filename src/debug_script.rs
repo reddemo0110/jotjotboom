@@ -84,6 +84,8 @@ pub enum Step {
     Icon(String),
     /// Toggle the neon coffee sign.
     Coffee,
+    /// Give a tag an 8-bit icon (or `none`): `tagicon:travels:plane`.
+    TagIcon(String, String),
     /// Walk the notes list like ↑/↓: `nav:+1` / `nav:-1`.
     Nav(i32),
     /// Toggle the task box at line:column of the focused block: `togglebox:2:3`.
@@ -171,6 +173,10 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "follow" => Step::Follow(unescape(arg)),
                 "icon" => Step::Icon(arg.trim().to_owned()),
                 "coffee" => Step::Coffee,
+                "tagicon" => {
+                    let (tag, key) = arg.trim().split_once(':')?;
+                    Step::TagIcon(tag.to_owned(), key.to_owned())
+                }
                 "togglebox" => {
                     let (l, c) = arg.trim().split_once(':')?;
                     Step::ToggleBox(l.parse().ok()?, c.parse().ok()?)

@@ -483,6 +483,18 @@ Copy of Big Fish in Little China with the tangerine accent muted
   formatted. Fallback if something goes badly wrong: tag
   `v0.1-pre-rich-editor` still builds the old editor.
 
+## 2026-08-30 — 8-bit folder icons
+- Emoji were rejected as folder icons ("I don't like the emoji style").
+  `src/pixel.rs` holds 21 8×8 one-colour pixel glyphs (coffee, book,
+  camera, home, briefcase, music, heart, star, plane, food, bulb, code,
+  money, gift, leaf, gear, flag, pin, bug, game pad, beer), drawn in the
+  theme's tag colour: as crisp SVG rects in the sidebar and the picker, as
+  quads in the editor over the tag's hash. Right-click a tag → "icon…"
+  opens the grid; "none" restores the `#`. Assignments are per full tag
+  path (a leaf-only match also applies) and persist as `tag=icon` entries
+  in `tag_icons`. Coffee words default to the coffee glyph, so the ☕ egg
+  became the first icon. Script step `tagicon:<tag>:<key|none>`.
+
 ## 2026-08-30 — Coffee
 - Three easter eggs, all opt-in by curiosity: a tag whose leaf is a coffee
   word (`coffee`, `espresso`, `flatwhite`, …) wears a ☕ instead of its `#`

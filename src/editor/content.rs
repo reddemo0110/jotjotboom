@@ -68,8 +68,8 @@ pub enum HotKind {
 #[derive(Default)]
 pub struct Overlays {
     pub hotspots: Vec<Hotspot>,
-    /// Where a coffee tag's hash sits: a ☕ is drawn there.
-    pub cups: Vec<Rectangle>,
+    /// Where a tag's hash sits and the 8-bit icon drawn over it.
+    pub tag_icons: Vec<(Rectangle, crate::pixel::Icon)>,
     pub code_bgs: Vec<Rectangle>,
     pub code_block_rows: Vec<Rectangle>,
     pub boxes: Vec<TaskBox>,
@@ -462,20 +462,22 @@ impl RichContent {
                 for (j, span) in spans.iter().enumerate() {
                     let mut attrs =
                         super::style::span_attrs(span.kind, &base, line_height, is_active, style);
-                    // A coffee tag wears a cup instead of its hash (off the caret line).
-                    if span.kind == markdown::Kind::Tag
-                        && !is_active
-                        && crate::coffee::is_coffee_tag(
-                            line.text()[span.range.clone()].trim_start_matches('#'),
-                        )
-                    {
-                        let hash = attrs
-                            .clone()
-                            .color(cosmic_text::Color::rgba(0, 0, 0, 0))
-                            .metadata(super::style::META_COFFEE);
-                        list.add_span(span.range.start..span.range.start + 1, &hash);
-                        list.add_span(span.range.start + 1..span.range.end, &attrs);
-                        continue;
+                    // A tag with a folder icon wears it instead of its hash (off the caret line).
+                    if span.kind == markdown::Kind::Tag && !is_active {
+                        let tag = line.text()[span.range.clone()].trim_start_matches('#');
+                        if let Some(icon) = crate::pixel::for_tag(tag, &style.tag_icons) {
+                            let idx = crate::pixel::Icon::ALL
+                                .iter()
+                                .position(|i| *i == icon)
+                                .unwrap_or(0);
+                            let hash = attrs
+                                .clone()
+                                .color(cosmic_text::Color::rgba(0, 0, 0, 0))
+                                .metadata(super::style::META_TAGICON_BASE + idx);
+                            list.add_span(span.range.start..span.range.start + 1, &hash);
+                            list.add_span(span.range.start + 1..span.range.end, &attrs);
+                            continue;
+                        }
                     }
                     // A task's `- ` gets no bullet: the box is the marker.
                     if span.kind == markdown::Kind::ListMarker
@@ -599,8 +601,10 @@ impl RichContent {
                 if let Some((r, _, _)) = span_rect(META_BULLET) {
                     o.bullets.push(r);
                 }
-                if let Some((r, _, _)) = span_rect(META_COFFEE) {
-                    o.cups.push(r);
+                for (idx, icon) in crate::pixel::Icon::ALL.iter().enumerate() {
+                    if let Some((r, _, _)) = span_rect(META_TAGICON_BASE + idx) {
+                        o.tag_icons.push((r, *icon));
+                    }
                 }
                 // Links and tags: one hotspot per contiguous run of glyphs.
                 let mut cur: Option<(usize, f32, f32, usize, usize)> = None;
@@ -822,6 +826,7 @@ mod tests {
             palette: crate::retro::Theme::Phosphor.palette(&cosmic::Theme::default()),
             show_markers: false,
             font: cosmic::font::mono(),
+            tag_icons: Default::default(),
         };
         c.update(120.0, cosmic::font::mono(), 15.0, 22.5, &settings, None);
         // Narrow width wraps into several visual lines.
@@ -847,6 +852,7 @@ mod tests {
             palette: crate::retro::Theme::Phosphor.palette(&cosmic::Theme::default()),
             show_markers: false,
             font: cosmic::font::mono(),
+            tag_icons: Default::default(),
         };
         c.update(600.0, cosmic::font::mono(), 15.0, 22.5, &settings, None);
         let o = c.overlays();
