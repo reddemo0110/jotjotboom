@@ -100,6 +100,47 @@ impl RichContent {
         self.0.get_mut().render_hint = true;
     }
 
+    /// Whether a Backspace (`before == true`) or Delete at the caret would
+    /// remove a character that is hidden when the line is rendered — a
+    /// marker, a task box, a list marker. Deleting those blind is the
+    /// classic hidden-markdown trap, so the widget reveals the line first.
+    pub fn delete_touches_marker(&self, before: bool) -> bool {
+        use markdown::Kind;
+        let cursor = self.cursor();
+        if cursor.selection.is_some() {
+            return false;
+        }
+        let Some(line) = self.line(cursor.position.line) else {
+            return false;
+        };
+        let text = line.text.to_string();
+        let col = cursor.position.column;
+        let byte = if before {
+            match text.char_indices().nth(col.checked_sub(1)?) {
+                Some((b, _)) => b,
+                None => return false,
+            }
+        } else {
+            match text.char_indices().nth(col) {
+                Some((b, _)) => b,
+                None => return false,
+            }
+        };
+        let (spans, _) = markdown::scan_line(&text, false);
+        spans.iter().any(|s| {
+            s.range.contains(&byte)
+                && matches!(
+                    s.kind,
+                    Kind::Marker
+                        | Kind::LinkUrl
+                        | Kind::ListMarker
+                        | Kind::TaskBox
+                        | Kind::TaskDone
+                        | Kind::QuoteMarker
+                )
+        })
+    }
+
     pub fn take_render_hint(&self) -> bool {
         std::mem::take(&mut self.0.borrow_mut().render_hint)
     }

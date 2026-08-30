@@ -432,8 +432,13 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                                 Action::Edit(Edit::Insert(c)) => {
                                     matches!(c, '*' | '_' | '`' | '~' | '[' | ']' | '>' | '#')
                                 }
-                                Action::Edit(Edit::Backspace | Edit::Delete | Edit::Paste(_)) => {
-                                    true
+                                // Deleting plain text keeps the line rendered; only
+                                // eating into a hidden marker shows the markdown.
+                                Action::Edit(Edit::Backspace) => {
+                                    self.content.delete_touches_marker(true)
+                                }
+                                Action::Edit(Edit::Delete) => {
+                                    self.content.delete_touches_marker(false)
                                 }
                                 _ => false,
                             };

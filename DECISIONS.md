@@ -466,7 +466,8 @@ Copy of Big Fish in Little China with the tangerine accent muted
 ## 2026-08-30 — Rich editor: raw markdown on double-click only
 - Single click places the caret and keeps the line rendered; the line's
   markdown is revealed by double-click, by typing a marker character
-  (`* _ ` ~ [ ] > #`), by Backspace/Delete or by a paste, and hides again
+  (`* _ ` ~ [ ] > #`), or by a Backspace/Delete that would eat a hidden
+  marker (deleting plain text keeps the line rendered), and hides again
   when the caret leaves. Plain letters keep the line rendered. After `[]`
   expands to a task box, or a box is toggled, the line renders at once
   (`RichContent::render_now`), so a new to-do shows its box before its text.
