@@ -55,6 +55,8 @@ pub enum Theme {
     Adrift,
     /// Follows the COSMIC system theme; frames only.
     Cosmic,
+    /// Hidden: crema on espresso. Found by searching for "coffee".
+    LongBlack,
 }
 
 impl Theme {
@@ -80,6 +82,7 @@ impl Theme {
     pub fn key(self) -> &'static str {
         match self {
             Theme::Phosphor => "phosphor",
+            Theme::LongBlack => "longblack",
             Theme::Amber => "amber",
             Theme::WordPerfect => "wordperfect",
             Theme::Paper => "paper",
@@ -99,6 +102,9 @@ impl Theme {
     }
 
     pub fn from_key(key: &str) -> Theme {
+        if key == Theme::LongBlack.key() {
+            return Theme::LongBlack;
+        }
         Theme::ALL
             .into_iter()
             .find(|t| t.key() == key)
@@ -108,6 +114,7 @@ impl Theme {
     pub fn label(self) -> &'static str {
         match self {
             Theme::Phosphor => "The Terminalator",
+            Theme::LongBlack => "Long Black",
             Theme::Amber => "Amber Dawn",
             Theme::WordPerfect => "Big Trouble in Little Blue",
             Theme::Paper => "Monochromando",
@@ -130,6 +137,7 @@ impl Theme {
     pub fn blurb(self) -> &'static str {
         match self {
             Theme::Phosphor => "P1 green phosphor. It'll be back.",
+            Theme::LongBlack => "Crema on espresso. You found the counter.",
             Theme::Amber => "P3 amber monochrome. Wolverines!",
             Theme::WordPerfect => "white on WordPerfect blue, F-keys optional",
             Theme::Paper => "P4 white phosphor. Let off some steam.",
@@ -150,6 +158,18 @@ impl Theme {
 
     pub fn palette(self, cosmic: &cosmic::Theme) -> Palette {
         match self {
+            Theme::LongBlack => Palette {
+                bg: hex(0x160f0b),
+                panel: hex(0x1d1410),
+                fg: hex(0xf1e2c8),
+                dim: hex(0xb08a63),
+                mute: hex(0x5a4030),
+                accent: hex(0xe0a262),
+                accent2: hex(0xf0c9a0),
+                border: hex(0x3d2b1f),
+                sel: hex(0x4a3222),
+                selfg: hex(0xfff3e0),
+            },
             Theme::Phosphor => Palette {
                 bg: hex(0x050806),
                 panel: hex(0x070b08),

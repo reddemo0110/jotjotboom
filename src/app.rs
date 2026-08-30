@@ -72,6 +72,11 @@ pub struct AppModel {
     resizing: Option<Resize>,
     /// The Ctrl+Shift+H shortcuts overlay.
     show_shortcuts: bool,
+    /// The neon coffee sign (Ctrl+Shift+Enter): current steam frame and glow.
+    coffee: Option<(usize, f32)>,
+    coffee_seed: u32,
+    /// The hidden theme has been found.
+    coffee_unlocked: bool,
     /// A picture being dragged to another line (press, then move).
     dragging: Option<ImageDrag>,
     /// Last known cursor position (window coords), for drag deltas.
@@ -197,6 +202,9 @@ pub enum Message {
     Undo,
     Redo,
     ToggleShortcuts,
+    /// The neon coffee sign.
+    ToggleCoffee,
+    CoffeeTick,
     ToggleSavedInfo,
     SavedInfoTick,
     AutosaveTick,
@@ -300,6 +308,7 @@ impl cosmic::Application for AppModel {
         let measure = retro::Measure::from_key(&config.text_width);
         let icon_theme =
             (!config.icon_theme.is_empty()).then(|| retro::Theme::from_key(&config.icon_theme));
+        let coffee_unlocked = config.coffee_unlocked;
         let collapsed: HashSet<String> = config.collapsed_tags.iter().cloned().collect();
         let mut app = AppModel {
             core,
@@ -328,6 +337,9 @@ impl cosmic::Application for AppModel {
             resizing: None,
             dragging: None,
             show_shortcuts: false,
+            coffee: None,
+            coffee_seed: 7,
+            coffee_unlocked,
             mouse_x: 0.0,
             mouse_y: 0.0,
             live_width: None,
@@ -618,13 +630,20 @@ impl cosmic::Application for AppModel {
         let content = widget::container(panes)
             .width(Length::Fill)
             .height(Length::Fill);
+        let mut layers: Vec<Element<'_, Message>> = vec![content.into()];
         if self.show_shortcuts {
-            cosmic::iced::widget::stack([content.into(), self.shortcuts_overlay(&p)])
+            layers.push(self.shortcuts_overlay(&p));
+        }
+        if self.coffee.is_some() {
+            layers.push(self.coffee_overlay(&p));
+        }
+        if layers.len() == 1 {
+            layers.pop().expect("content")
+        } else {
+            cosmic::iced::widget::stack(layers)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
-        } else {
-            content.into()
         }
     }
 
@@ -673,6 +692,11 @@ impl cosmic::Application for AppModel {
             subscriptions.push(
                 cosmic::iced::time::every(Duration::from_millis(200))
                     .map(|_| Message::AutosaveTick),
+            );
+        }
+        if self.coffee.is_some() {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(170)).map(|_| Message::CoffeeTick),
             );
         }
         if self.saved_info_until.is_some() {
@@ -1032,6 +1056,31 @@ impl AppModel {
                     if let Err(why) = self.config.set_collapsed_tags(handler, list) {
                         tracing::warn!(%why, "saving folded tags");
                     }
+                }
+            }
+
+            Message::ToggleCoffee => {
+                self.coffee = if self.coffee.is_some() {
+                    None
+                } else {
+                    Some((0, 1.0))
+                };
+            }
+
+            Message::CoffeeTick => {
+                if let Some((frame, _)) = self.coffee {
+                    // A cheap LCG: every so often a tube dims, like a real sign.
+                    self.coffee_seed = self
+                        .coffee_seed
+                        .wrapping_mul(1_103_515_245)
+                        .wrapping_add(12_345);
+                    let roll = (self.coffee_seed >> 16) % 13;
+                    let glow = match roll {
+                        0 => 0.35,
+                        1 => 0.7,
+                        _ => 1.0,
+                    };
+                    self.coffee = Some(((frame + 1) % crate::coffee::FRAMES.len(), glow));
                 }
             }
 
@@ -1484,6 +1533,15 @@ impl AppModel {
             }
 
             Message::Search(query) => {
+                if query.trim().eq_ignore_ascii_case("coffee") && !self.coffee_unlocked {
+                    // The counter: the hidden theme appears in Options → Colour.
+                    self.coffee_unlocked = true;
+                    if let Some(handler) = &self.config_handler
+                        && let Err(why) = self.config.set_coffee_unlocked(handler, true)
+                    {
+                        tracing::warn!(%why, "saving the coffee secret");
+                    }
+                }
                 self.query = query;
                 self.refresh_list();
             }
@@ -1565,6 +1623,14 @@ impl AppModel {
             }
 
             Message::Key(modifiers, key, physical) => {
+                let enter = matches!(key, keyboard::Key::Named(keyboard::key::Named::Enter));
+                if enter && modifiers.control() && modifiers.shift() {
+                    return self.update(Message::ToggleCoffee);
+                }
+                if self.coffee.is_some() {
+                    self.coffee = None;
+                    return Task::none();
+                }
                 if self.dragging.is_some()
                     && matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape))
                 {
@@ -1621,6 +1687,80 @@ impl AppModel {
             },
         }
         Task::none()
+    }
+
+    /// The themes on offer: the sixteen, plus Long Black once it is found.
+    fn themes(&self) -> Vec<retro::Theme> {
+        let mut all = retro::Theme::ALL.to_vec();
+        if self.coffee_unlocked || self.theme == retro::Theme::LongBlack {
+            all.push(retro::Theme::LongBlack);
+        }
+        all
+    }
+
+    /// The neon coffee sign: a braille-dot cup whose steam drifts frame by
+    /// frame, tubes buzzing now and then, on a near-black night.
+    fn coffee_overlay<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
+        let (frame, glow) = self.coffee.unwrap_or((0, 1.0));
+        let art = crate::coffee::FRAMES[frame % crate::coffee::FRAMES.len()];
+        let mut lines = art.lines();
+        let steam: String = lines.by_ref().take(4).collect::<Vec<_>>().join("\n");
+        let cup: String = lines.collect::<Vec<_>>().join("\n");
+        let pink = cosmic::iced::Color::from_rgb8(0xff, 0x4f, 0xa3).scale_alpha(glow);
+        let cyan = cosmic::iced::Color::from_rgb8(0x4f, 0xe3, 0xff).scale_alpha(glow);
+        let size = 34.0;
+        // Neon: a soft halo (bigger, faint) under a crisp tube.
+        let neon = |text: String, color: cosmic::iced::Color| {
+            let halo = widget::text(text.clone())
+                .font(retro::mono())
+                .size(size + 1.5)
+                .class(cosmic::theme::Text::Color(color.scale_alpha(0.28)));
+            let tube = widget::text(text)
+                .font(retro::mono())
+                .size(size)
+                .class(cosmic::theme::Text::Color(color));
+            cosmic::iced::widget::stack([
+                widget::container(halo).padding([0, 0, 0, 1]).into(),
+                tube.into(),
+            ])
+        };
+        let sign = widget::column::with_capacity(4)
+            .push(neon(steam, cyan))
+            .push(neon(cup, pink))
+            .push(
+                widget::container(
+                    widget::text(fl!("coffee-caption"))
+                        .font(retro::TITLE_FONT)
+                        .size(64)
+                        .class(cosmic::theme::Text::Color(pink)),
+                )
+                .padding([18, 0, 0, 0]),
+            )
+            .push(
+                widget::text(fl!("coffee-hint"))
+                    .font(retro::TITLE_FONT)
+                    .size(22)
+                    .class(cosmic::theme::Text::Color(cyan.scale_alpha(0.8))),
+            )
+            .align_x(Alignment::Center)
+            .spacing(4);
+        let night = cosmic::iced::Color::from_rgb8(0x07, 0x05, 0x0d).scale_alpha(0.95);
+        let _ = p;
+        widget::mouse_area(
+            widget::container(sign)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .class(cosmic::theme::Container::custom(move |_| {
+                    widget::container::Style {
+                        background: Some(cosmic::iced::Background::Color(night)),
+                        ..Default::default()
+                    }
+                })),
+        )
+        .on_press(Message::ToggleCoffee)
+        .into()
     }
 
     /// Write the chosen (or theme-following) icon into the user's icon theme.
@@ -1773,7 +1913,17 @@ impl AppModel {
             let row = widget::row::with_capacity(5)
                 .push(widget::Space::new().width(Length::Fixed(14.0 * depth as f32)))
                 .push(chevron)
-                .push(retro::accent2(p, "#").size(sz))
+                .push(
+                    retro::accent2(
+                        p,
+                        if crate::coffee::is_coffee_tag(name) {
+                            "☕"
+                        } else {
+                            "#"
+                        },
+                    )
+                    .size(sz),
+                )
                 .push(
                     retro::text(p, leaf.to_owned())
                         .font(self.ui_font())
@@ -2203,7 +2353,7 @@ impl AppModel {
         col = col.push(header(fl!("section-colour"), Section::Colour));
         if self.appearance_open[Section::Colour as usize] {
             col = col.push(widget::text::caption(fl!("theme-picker-hint")));
-            for theme in retro::Theme::ALL {
+            for theme in self.themes() {
                 let palette = theme.palette(system);
                 col = col.push(retro::swatch(
                     theme,
@@ -2469,7 +2619,7 @@ impl AppModel {
             );
             let mut tiles: Vec<Element<'_, Message>> = Vec::with_capacity(retro::Theme::ALL.len());
             let current = self.icon_theme.unwrap_or(self.theme);
-            for theme in retro::Theme::ALL {
+            for theme in self.themes() {
                 let svg = crate::icon::svg(&theme.palette(system));
                 let handle = widget::svg::Handle::from_memory(svg.into_bytes());
                 let selected = current == theme;
@@ -3801,6 +3951,7 @@ impl AppModel {
             })),
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
             Step::Measure(key) => self.update(Message::SetMeasure(retro::Measure::from_key(&key))),
+            Step::Coffee => self.update(Message::ToggleCoffee),
             Step::Icon(key) => self.update(Message::SetIcon(
                 (key != "follow").then(|| retro::Theme::from_key(&key)),
             )),

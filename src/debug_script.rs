@@ -82,6 +82,8 @@ pub enum Step {
     Follow(String),
     /// Launcher icon: a theme key or `follow`: `icon:amber`.
     Icon(String),
+    /// Toggle the neon coffee sign.
+    Coffee,
     /// Walk the notes list like ↑/↓: `nav:+1` / `nav:-1`.
     Nav(i32),
     /// Toggle the task box at line:column of the focused block: `togglebox:2:3`.
@@ -168,6 +170,7 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "measure" => Step::Measure(arg.trim().to_owned()),
                 "follow" => Step::Follow(unescape(arg)),
                 "icon" => Step::Icon(arg.trim().to_owned()),
+                "coffee" => Step::Coffee,
                 "togglebox" => {
                     let (l, c) = arg.trim().split_once(':')?;
                     Step::ToggleBox(l.parse().ok()?, c.parse().ok()?)

@@ -625,6 +625,28 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                 );
             }
         }
+        for r in &overlays.cups {
+            let rect = at(r);
+            renderer.fill_text(
+                cosmic::iced::advanced::Text {
+                    content: "☕".to_owned(),
+                    bounds: Size::new(rect.width + 8.0, rect.height),
+                    size: (self.size * 0.95).into(),
+                    line_height: cosmic::iced::widget::text::LineHeight::Absolute(
+                        rect.height.into(),
+                    ),
+                    font: self.font,
+                    align_x: cosmic::iced::advanced::text::Alignment::Center,
+                    align_y: cosmic::iced::alignment::Vertical::Center,
+                    shaping: cosmic::iced::advanced::text::Shaping::Advanced,
+                    wrapping: cosmic::iced::advanced::text::Wrapping::None,
+                    ellipsize: cosmic::iced::advanced::text::Ellipsize::None,
+                },
+                Point::new(rect.center_x() + 2.0, rect.center_y()),
+                p.accent2,
+                rect.expand(6.0),
+            );
+        }
         for r in &overlays.bullets {
             let rect = at(r);
             renderer.fill_text(

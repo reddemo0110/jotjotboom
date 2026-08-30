@@ -39,6 +39,8 @@ pub struct Config {
     pub text_width: String,
     /// Launcher icon: a theme key, or empty to follow the colour theme.
     pub icon_theme: String,
+    /// The hidden "Long Black" theme has been found (search for "coffee").
+    pub coffee_unlocked: bool,
 }
 
 impl Config {

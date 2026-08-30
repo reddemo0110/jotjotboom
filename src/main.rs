@@ -2,6 +2,7 @@
 
 mod app;
 mod blocks;
+mod coffee;
 mod config;
 mod debug_script;
 mod editor;

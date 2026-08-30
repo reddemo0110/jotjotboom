@@ -68,6 +68,8 @@ pub enum HotKind {
 #[derive(Default)]
 pub struct Overlays {
     pub hotspots: Vec<Hotspot>,
+    /// Where a coffee tag's hash sits: a ☕ is drawn there.
+    pub cups: Vec<Rectangle>,
     pub code_bgs: Vec<Rectangle>,
     pub code_block_rows: Vec<Rectangle>,
     pub boxes: Vec<TaskBox>,
@@ -460,6 +462,21 @@ impl RichContent {
                 for (j, span) in spans.iter().enumerate() {
                     let mut attrs =
                         super::style::span_attrs(span.kind, &base, line_height, is_active, style);
+                    // A coffee tag wears a cup instead of its hash (off the caret line).
+                    if span.kind == markdown::Kind::Tag
+                        && !is_active
+                        && crate::coffee::is_coffee_tag(
+                            line.text()[span.range.clone()].trim_start_matches('#'),
+                        )
+                    {
+                        let hash = attrs
+                            .clone()
+                            .color(cosmic_text::Color::rgba(0, 0, 0, 0))
+                            .metadata(super::style::META_COFFEE);
+                        list.add_span(span.range.start..span.range.start + 1, &hash);
+                        list.add_span(span.range.start + 1..span.range.end, &attrs);
+                        continue;
+                    }
                     // A task's `- ` gets no bullet: the box is the marker.
                     if span.kind == markdown::Kind::ListMarker
                         && !is_active
@@ -581,6 +598,9 @@ impl RichContent {
                 }
                 if let Some((r, _, _)) = span_rect(META_BULLET) {
                     o.bullets.push(r);
+                }
+                if let Some((r, _, _)) = span_rect(META_COFFEE) {
+                    o.cups.push(r);
                 }
                 // Links and tags: one hotspot per contiguous run of glyphs.
                 let mut cur: Option<(usize, f32, f32, usize, usize)> = None;

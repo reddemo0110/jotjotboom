@@ -26,6 +26,8 @@ pub const META_TASK_PREFIX: usize = 7;
 /// Clickable spans: a `[[wiki link]]` target and a `#tag`.
 pub const META_LINK: usize = 8;
 pub const META_TAG: usize = 9;
+/// The `#` of a coffee tag: invisible at width, a cup is drawn over it.
+pub const META_COFFEE: usize = 10;
 
 /// Heading level from the line's leading hashes (0 = not a heading).
 pub fn heading_level(line: &str) -> usize {

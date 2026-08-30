@@ -483,6 +483,17 @@ Copy of Big Fish in Little China with the tangerine accent muted
   formatted. Fallback if something goes badly wrong: tag
   `v0.1-pre-rich-editor` still builds the old editor.
 
+## 2026-08-30 — Coffee
+- Three easter eggs, all opt-in by curiosity: a tag whose leaf is a coffee
+  word (`coffee`, `espresso`, `flatwhite`, …) wears a ☕ instead of its `#`
+  in the sidebar and in rendered notes (`coffee::is_coffee_tag`); typing
+  `coffee` into the search box unlocks the hidden "Long Black" theme
+  (crema on espresso, `coffee_unlocked` in config, listed after the
+  sixteen); Ctrl+Shift+Enter raises a full-window neon sign — a braille-dot
+  cup (`coffee::FRAMES`, generated from a pixel grid) whose steam drifts
+  through four frames every 170 ms with the odd tube dimming, pink cup,
+  cyan steam, VT323 "COFFEE" — any key or click puts it out.
+
 ## 2026-08-30 — Settings gear in the sidebar, Alt+,
 - The drawer (titled Options) is opened from a ⚙ in the top-right of the
   views pane — tooltip "Settings" — and with Alt+, (Ctrl+Shift+C retired);
