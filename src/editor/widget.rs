@@ -236,6 +236,10 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
         // the rendered look.
         let state = tree.state.downcast_mut::<State>();
         let caret_line = self.content.cursor().position.line;
+        if self.content.take_render_hint() {
+            state.reveal_pending = false;
+            state.revealed = None;
+        }
         if state.reveal_pending {
             state.reveal_pending = false;
             state.revealed = Some(caret_line);
@@ -422,8 +426,18 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                             }
                         }
                         Binding::Action(a) => {
-                            // Editing a rendered line shows its markdown while you type.
-                            if matches!(a, Action::Edit(_)) {
+                            // Typing a marker, deleting, or pasting on a rendered
+                            // line shows its markdown; plain text keeps it rendered.
+                            let reveals = match &a {
+                                Action::Edit(Edit::Insert(c)) => {
+                                    matches!(c, '*' | '_' | '`' | '~' | '[' | ']' | '>' | '#')
+                                }
+                                Action::Edit(Edit::Backspace | Edit::Delete | Edit::Paste(_)) => {
+                                    true
+                                }
+                                _ => false,
+                            };
+                            if reveals {
                                 state.reveal_pending = true;
                             }
                             shell.publish(on_action(a));

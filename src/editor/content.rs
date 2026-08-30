@@ -31,6 +31,9 @@ struct Inner {
     active: Option<usize>,
     /// Per line: hash of (text, in-fence) and whether it was styled active.
     line_keys: Vec<(u64, bool)>,
+    /// Set by the app after an automatic rewrite (`[]` → task box, a box
+    /// toggle): the widget should render the caret's line, not reveal it.
+    render_hint: bool,
 }
 
 /// A task box to draw: its square, the mark inside, and whether it is done.
@@ -87,7 +90,18 @@ impl RichContent {
             dirty: true,
             active: None,
             line_keys: Vec::new(),
+            render_hint: false,
         }))
+    }
+
+    /// Ask the widget to show the caret's line rendered at the next layout
+    /// (used after `[]` expands to a task box, or a box is toggled).
+    pub fn render_now(&mut self) {
+        self.0.get_mut().render_hint = true;
+    }
+
+    pub fn take_render_hint(&self) -> bool {
+        std::mem::take(&mut self.0.borrow_mut().render_hint)
     }
 
     fn with_buffer<T>(&self, f: impl FnOnce(&Buffer) -> T) -> T {

@@ -1266,8 +1266,10 @@ impl AppModel {
                 if closes_bracket
                     && editable
                     && let Some(content) = self.blocks.text_mut(block)
+                    && crate::blocks::expand_task_shorthand(content)
                 {
-                    crate::blocks::expand_task_shorthand(content);
+                    // A fresh task box renders at once; no raw `- [ ] ` first.
+                    content.render_now();
                 }
                 // Clicking a task box ticks / unticks it.
                 if is_click && editable {
@@ -1276,6 +1278,7 @@ impl AppModel {
                     if let Some(content) = self.blocks.text_mut(block)
                         && crate::blocks::toggle_task_at_cursor(content, &marker)
                     {
+                        content.render_now();
                         self.push_undo(before);
                         self.last_undo_kind = EditKind::Other;
                         self.dirty = true;
