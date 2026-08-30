@@ -3,6 +3,7 @@
 Hybrid-markdown notes app for the COSMIC desktop, in Rust + libcosmic.
 Read `Project Handover — …md` for the locked architecture and
 `DECISIONS.md` for how the open questions were settled and why.
+`RICH-EDITOR-PLAN.md` is the plan for build step 3 (the cosmic-text editor).
 
 ## Build / run / test
 
