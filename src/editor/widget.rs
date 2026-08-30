@@ -630,9 +630,9 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
             let rect = at(r);
             // The glyph is wider than the hash it replaces: hang it to the
             // left, into the space before the tag, so it never touches the word.
-            let cell = (self.size * 0.92 / 8.0).max(1.0);
-            let ox = rect.x + rect.width - cell * 8.0 - 1.0;
-            let oy = rect.center_y() - cell * 4.0;
+            let cell = self.size * 0.98 / 16.0;
+            let ox = rect.x + rect.width - cell * 16.0 - 1.0;
+            let oy = rect.center_y() - cell * 8.0;
             for (px, py) in icon.pixels() {
                 renderer.fill_quad(
                     Quad {

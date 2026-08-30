@@ -1981,8 +1981,8 @@ impl AppModel {
                         widget::svg(widget::svg::Handle::from_memory(
                             icon.svg(p.accent2).into_bytes(),
                         ))
-                        .width(sz)
-                        .height(sz),
+                        .width(sz + 3.0)
+                        .height(sz + 3.0),
                     ),
                     None => retro::accent2(p, "#").size(sz).into(),
                 })

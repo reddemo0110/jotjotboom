@@ -491,7 +491,7 @@ Copy of Big Fish in Little China with the tangerine accent muted
 
 ## 2026-08-30 — 8-bit folder icons
 - Emoji were rejected as folder icons ("I don't like the emoji style").
-  `src/pixel.rs` holds 21 8×8 one-colour pixel glyphs (coffee, book,
+  `src/pixel.rs` holds 21 16×16 one-colour pixel glyphs (8×8 first, redrawn at 16×16 the same day: "a little too low res") (coffee, book,
   camera, home, briefcase, music, heart, star, plane, food, bulb, code,
   money, gift, leaf, gear, flag, pin, bug, game pad, beer), drawn in the
   theme's tag colour: as crisp SVG rects in the sidebar and the picker, as
