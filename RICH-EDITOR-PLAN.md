@@ -1,6 +1,6 @@
 # Rich editor — build step 3 plan
 
-Status: planned 2026-08-30, not started. Read `DECISIONS.md` for how the app
+Status: planned 2026-08-30; **phase 0 spike passed the same day** (see "Phase 0 result" at the end). Read `DECISIONS.md` for how the app
 got here; this document is the plan for the piece the handover called "the
 long pole".
 
@@ -148,3 +148,35 @@ are mostly the fun part.
   phase 4, not phase 1.
 - *Two editors during the transition* → the config flag; both compile until
   phase 4 removes one.
+
+## Phase 0 result (2026-08-30) — GO
+
+`src/editor/spike.rs`, enabled with `JJB_SPIKE=1`, draws one raw buffer in
+the editor pane. Verified in a capture (`tools/xshot.py`):
+
+- per-span size works: a `# ` heading at 1.6× with its own line height;
+- the collapse trick works: markers set transparent at 0.5 px leave **no
+  visible seam** — `**bold**`, `` `code` ``, `# `, `~~…~~`, `[`/`]` all
+  vanish while staying in the text;
+- code-span background, task box (drawn quad, mark glyph inside) and
+  strike-throughs land exactly where the layout says;
+- cosmic-text 0.19 already computes decoration spans per layout run
+  (`run.decorations`, with the font's strike offset/thickness), so strikes
+  and underlines are a quad per span — no glyph maths of our own.
+
+API notes for phase 1 (the fork's iced 0.14 / cosmic-text 0.19):
+
+- font system: `iced::advanced::graphics::text::font_system().write().raw()`
+  gives the `cosmic_text::FontSystem`;
+- `Buffer::new(fs, metrics)`, then `set_size(w, h)` and
+  `set_rich_text(spans, &default, Shaping::Advanced, None)` take **no**
+  font system; `shape_until_scroll(fs, prune)` does;
+- `to_attributes(Font)` / `to_color(Color)` convert iced types;
+- draw with `renderer.fill_raw(Raw { buffer: Arc::downgrade(&buf), position,
+  color, clip_bounds })` — the renderer honours per-glyph colours; draw
+  quads *before* it for backgrounds and *after* it for strikes;
+- `Attrs::metadata(usize)` survives onto `LayoutGlyph.metadata`, which is
+  how overlays find their glyphs.
+
+Known nit: a decoration span includes leading spaces, so a strike on
+" walk the duck" starts a few px early; trim at render time.

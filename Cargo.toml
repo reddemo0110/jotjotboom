@@ -23,6 +23,8 @@ chrono = "0.4"
 blake3 = "1"
 dirs = "6"
 anyhow = "1"
+# The rich editor drives cosmic-text directly (same version iced uses).
+cosmic-text = "0.19"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Debug-only self-screenshot (JJB_SCREENSHOT=path) for headless visual checks.

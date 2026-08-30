@@ -2837,6 +2837,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "chrono",
+ "cosmic-text",
  "dirs",
  "i18n-embed",
  "i18n-embed-fl",

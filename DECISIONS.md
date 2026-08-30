@@ -427,3 +427,13 @@ Copy of Big Fish in Little China with the tangerine accent muted
   Titles are set bold except for faces that only ship a Regular. The
   single "Editor font only" list stays underneath for mixing.
 - Script step: `pairing:<key>`.
+
+## 2026-08-30 — Rich editor: phase-0 spike passed
+- On branch `rich-editor`. A throwaway widget (`src/editor/spike.rs`,
+  `JJB_SPIKE=1`) proved every unverified assumption in the plan: per-span
+  sizes, seam-free collapsed markers (transparent, 0.5 px), overlays from
+  layout metadata, strikes from cosmic-text's own decoration spans, drawn
+  through `fill_raw`. Findings and exact API notes are in
+  `RICH-EDITOR-PLAN.md`. `cosmic-text = "0.19"` is now a direct dependency
+  (same version iced uses). Next: phase 1, the real widget behind a
+  `rich_editor` config flag.

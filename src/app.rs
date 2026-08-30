@@ -1904,7 +1904,19 @@ impl AppModel {
             .into()
         };
 
-        let text_area: Element<'a, Message> = self.blocks_view(p, note.trashed);
+        let text_area: Element<'a, Message> = if std::env::var_os("JJB_SPIKE").is_some() {
+            // Phase-0 rich-editor spike (see RICH-EDITOR-PLAN.md).
+            widget::container(crate::editor::spike::Spike::new(
+                p,
+                self.editor_font.font(),
+                f32::from(self.font_size),
+                self.measure.max_width().unwrap_or(720.0).min(640.0),
+            ))
+            .padding([6, 10])
+            .into()
+        } else {
+            self.blocks_view(p, note.trashed)
+        };
         let mut column = widget::column::with_capacity(3)
             .push(text_area)
             .spacing(8)

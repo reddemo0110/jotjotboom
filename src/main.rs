@@ -4,6 +4,7 @@ mod app;
 mod blocks;
 mod config;
 mod debug_script;
+mod editor;
 mod i18n;
 mod images;
 mod markdown;
