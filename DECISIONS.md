@@ -463,6 +463,12 @@ Copy of Big Fish in Little China with the tangerine accent muted
   over links/tags with Ctrl held (plus an underline). Task clicks count
   from the list marker onwards, matching where the box is drawn.
 
+## 2026-08-30 — Rich editor: raw markdown on double-click only
+- Single click places the caret and keeps the line rendered; the line's
+  markdown is revealed by double-click or by an edit, and hides again when
+  the caret leaves. (The user asked for click-to-stay-rendered; revealing
+  on edit is the addition that keeps typed `**` from vanishing mid-word.)
+
 ## 2026-08-30 — Rich editor phase 4: only editor, merged
 - IME preedit wired like iced's editor. The stock `text_editor` path,
   the highlighter, the flag and the spike are deleted; `Content` is the

@@ -145,6 +145,11 @@ pub struct State {
     modifiers: keyboard::Modifiers,
     /// Text being composed by an input method, shown at the caret.
     preedit: Option<input_method::Preedit>,
+    /// The line showing its raw markdown (double-clicked or being edited).
+    /// Cleared as soon as the caret leaves it.
+    revealed: Option<usize>,
+    /// Reveal the caret's line at the next layout.
+    reveal_pending: bool,
     last_click: Option<mouse::Click>,
     drag_click: Option<mouse::click::Kind>,
     /// Emitted on the next event once focus was lost by a click elsewhere.
@@ -206,6 +211,8 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
             focus: None,
             modifiers: keyboard::Modifiers::default(),
             preedit: None,
+            revealed: None,
+            reveal_pending: false,
             last_click: None,
             drag_click: None,
             pending: None,
@@ -224,12 +231,19 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
     ) -> layout::Node {
         let width = limits.max().width;
         let inner_w = (width - self.padding.left - self.padding.right).max(1.0);
-        // Markers show on the caret's line while focused, hide elsewhere.
-        let state = tree.state.downcast_ref::<State>();
-        let active = state
-            .focus
-            .is_some()
-            .then(|| self.content.cursor().position.line);
+        // A line shows its raw markdown only while revealed (double-click
+        // or an edit) and the caret is still on it; a single click keeps
+        // the rendered look.
+        let state = tree.state.downcast_mut::<State>();
+        let caret_line = self.content.cursor().position.line;
+        if state.reveal_pending {
+            state.reveal_pending = false;
+            state.revealed = Some(caret_line);
+        }
+        if state.revealed.is_some_and(|l| l != caret_line) || state.focus.is_none() {
+            state.revealed = None;
+        }
+        let active = state.revealed;
         self.content.update(
             inner_w,
             self.font,
@@ -343,7 +357,11 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                     let click = mouse::Click::new(p, mouse::Button::Left, state.last_click);
                     let action = match click.kind() {
                         mouse::click::Kind::Single => Action::Click(p),
-                        mouse::click::Kind::Double => Action::SelectWord,
+                        // Double-click reveals the line's markdown for editing.
+                        mouse::click::Kind::Double => {
+                            state.reveal_pending = true;
+                            Action::Click(p)
+                        }
                         mouse::click::Kind::Triple => Action::SelectLine,
                     };
                     state.focus = Some(Focus::now());
@@ -403,7 +421,13 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                                 shell.publish(on_action(Action::Edit(Edit::Paste(Arc::new(s)))));
                             }
                         }
-                        Binding::Action(a) => shell.publish(on_action(a)),
+                        Binding::Action(a) => {
+                            // Editing a rendered line shows its markdown while you type.
+                            if matches!(a, Action::Edit(_)) {
+                                state.reveal_pending = true;
+                            }
+                            shell.publish(on_action(a));
+                        }
                     }
                 }
                 if captured {

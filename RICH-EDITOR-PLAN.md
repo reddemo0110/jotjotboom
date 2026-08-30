@@ -248,6 +248,15 @@ Known nit: a decoration span includes leading spaces, so a strike on
   to the closing bracket, since the rich editor draws the box over the
   marker's space. Both editors benefit.
 
+## Follow-up (2026-08-30) — reveal on double-click, not on click
+
+The user found "markers appear wherever I click" distracting. Now a
+single click keeps the line rendered and just places the caret; the raw
+markdown shows only for a *revealed* line — revealed by a double-click or
+by starting to edit it (so typed markers stay visible) — and it re-renders
+the moment the caret leaves that line. Triple-click still selects the
+line; double-click no longer selects a word.
+
 ## Phase 4 result (2026-08-30) — the only editor
 
 - IME: `ModifiersChanged` and `InputMethod` events handled; the widget
