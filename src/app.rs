@@ -322,7 +322,7 @@ impl cosmic::Application for AppModel {
             task_marker,
             measure,
             icon_theme,
-            appearance_open: [true, false, false, false, false],
+            appearance_open: [false; 5],
             image_cache: HashMap::new(),
             image_menu: None,
             resizing: None,
