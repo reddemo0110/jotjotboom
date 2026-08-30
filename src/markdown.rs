@@ -33,10 +33,12 @@ pub enum Kind {
     /// Text of a completed task.
     Done,
     Strike,
-    /// An unticked task box `[ ]`.
+    /// An unticked task box `[ ] ` (with its trailing space).
     TaskBox,
-    /// A ticked task box `[x]`.
+    /// A ticked task box `[x] ` (with its trailing space).
     TaskDone,
+    /// The `> ` that opens a quote line.
+    QuoteMarker,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,7 +107,7 @@ pub fn scan_line(line: &str, in_fence: bool) -> (Vec<Span>, bool) {
         };
         spans.push(Span {
             range: pos..end,
-            kind: Kind::Marker,
+            kind: Kind::QuoteMarker,
         });
         pos = end;
         base = Some(Kind::Quote);
@@ -117,19 +119,13 @@ pub fn scan_line(line: &str, in_fence: bool) -> (Vec<Span>, bool) {
             kind: Kind::ListMarker,
         });
         pos += 2;
-        // Task box: `[ ]` open, `[x]` / `[✓]` / `[🦆]` … done.
+        // Task box: `[ ]` open, `[x]` / `[✓]` / `[🦆]` … done. The span
+        // keeps its trailing space so a drawn box leaves a gap.
         if let Some((len, done)) = crate::note::task_box(&line[pos..]) {
-            let close = line[pos..].find(']').unwrap_or(0) + 1;
             spans.push(Span {
-                range: pos..pos + close,
+                range: pos..pos + len,
                 kind: if done { Kind::TaskDone } else { Kind::TaskBox },
             });
-            if len > close {
-                spans.push(Span {
-                    range: pos + close..pos + len,
-                    kind: Kind::Marker,
-                });
-            }
             pos += len;
             if done {
                 base = Some(Kind::Done);
@@ -375,7 +371,7 @@ pub fn style_for(kind: Kind, settings: &Settings) -> Highlight {
             p.mute.scale_alpha(0.45)
         };
         let (color, font) = match kind {
-            Kind::Marker => (ghost, None),
+            Kind::Marker | Kind::QuoteMarker => (ghost, None),
             Kind::Bold => (p.fg, Some(bold)),
             Kind::Italic => (p.fg, Some(italic)),
             Kind::BoldItalic => (p.fg, Some(bold_italic)),
@@ -531,15 +527,14 @@ mod tests {
             kinds("- [x] done ✓"),
             vec![
                 ("- ", Kind::ListMarker),
-                ("[x]", Kind::TaskDone),
-                (" ", Kind::Marker),
+                ("[x] ", Kind::TaskDone),
                 ("done ✓", Kind::Done)
             ]
         );
         assert_eq!(kinds("3. third"), vec![("3. ", Kind::ListMarker)]);
         assert_eq!(
             kinds("> quoted"),
-            vec![("> ", Kind::Marker), ("quoted", Kind::Quote)]
+            vec![("> ", Kind::QuoteMarker), ("quoted", Kind::Quote)]
         );
         assert_eq!(kinds("---"), vec![("---", Kind::Marker)]);
         let (_, fence) = scan_line("```rust", false);

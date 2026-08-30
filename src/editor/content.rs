@@ -91,6 +91,27 @@ struct Inner {
     style: Option<markdown::Settings>,
     /// Whether text changed since attributes were last applied.
     dirty: bool,
+    /// The caret's line at the last styling (markers shown there).
+    active: Option<usize>,
+    /// Per line: hash of (text, in-fence) and whether it was styled active.
+    line_keys: Vec<(u64, bool)>,
+}
+
+/// A task box to draw: its square, the mark inside, and whether it is done.
+pub struct TaskBox {
+    pub rect: Rectangle,
+    pub mark: String,
+    pub done: bool,
+}
+
+#[derive(Default)]
+pub struct Overlays {
+    pub code_bgs: Vec<Rectangle>,
+    pub code_block_rows: Vec<Rectangle>,
+    pub boxes: Vec<TaskBox>,
+    pub bullets: Vec<Rectangle>,
+    pub quote_bars: Vec<Rectangle>,
+    pub strikes: Vec<(Rectangle, Option<cosmic_text::Color>)>,
 }
 
 /// The caret or selection, in buffer coordinates.
@@ -111,6 +132,8 @@ impl RichContent {
             shaped_for: None,
             style: None,
             dirty: true,
+            active: None,
+            line_keys: Vec::new(),
         }))
     }
 
@@ -319,7 +342,9 @@ impl RichContent {
     }
 
     /// Bring the buffer in line with the widget: width, metrics, and the
-    /// per-span attributes from the markdown scanner. Called from layout.
+    /// per-span attributes. `active` is the caret's line while the widget
+    /// has focus: that line shows its markers, the others hide them. Only
+    /// lines whose text or active state changed are re-styled.
     pub fn update(
         &self,
         width: f32,
@@ -327,16 +352,17 @@ impl RichContent {
         size: f32,
         line_height: f32,
         style: &markdown::Settings,
+        active: Option<usize>,
     ) {
         let mut inner = self.0.borrow_mut();
         let key = (width, font, size, line_height);
-        let restyle = inner.style.as_ref() != Some(style);
-        if inner.shaped_for == Some(key) && !inner.dirty && !restyle {
+        let restyle_all = inner.shaped_for != Some(key) || inner.style.as_ref() != Some(style);
+        if !restyle_all && !inner.dirty && inner.active == active {
             return;
         }
         let mut guard = gtext::font_system().write().expect("font system");
         let fs = guard.raw();
-        let base = gtext::to_attributes(font).color(gtext::to_color(style.palette.fg));
+        let mut keys = std::mem::take(&mut inner.line_keys);
         inner.editor.with_buffer_mut(|b| {
             if b.metrics().font_size != size || b.metrics().line_height != line_height {
                 b.set_metrics(Metrics::new(size, line_height));
@@ -344,30 +370,185 @@ impl RichContent {
             if b.size().0 != Some(width) {
                 b.set_size(Some(width), None);
             }
-            // Attributes: today's highlighter look, per line.
+            keys.resize(b.lines.len(), (0, false));
             let mut in_fence = false;
-            for line in &mut b.lines {
+            for (i, line) in b.lines.iter_mut().enumerate() {
+                let is_active = active == Some(i);
                 let (spans, after) = markdown::scan_line(line.text(), in_fence);
+                let was_fence = in_fence;
                 in_fence = after;
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                use std::hash::{Hash, Hasher};
+                line.text().hash(&mut hasher);
+                was_fence.hash(&mut hasher);
+                let k = (hasher.finish(), is_active);
+                if !restyle_all && keys[i] == k {
+                    continue;
+                }
+                keys[i] = k;
+                let level = super::style::heading_level(line.text());
+                let base = super::style::line_base(font, size, line_height, level, style);
                 let mut list = AttrsList::new(&base);
-                for span in spans {
-                    let h = markdown::style_for(span.kind, style);
-                    let mut attrs = match h.font {
-                        Some(f) => gtext::to_attributes(f),
-                        None => base.clone(),
-                    };
-                    if let Some(c) = h.color {
-                        attrs = attrs.color(gtext::to_color(c));
+                for (j, span) in spans.iter().enumerate() {
+                    let mut attrs =
+                        super::style::span_attrs(span.kind, &base, line_height, is_active, style);
+                    // A task's `- ` gets no bullet: the box is the marker.
+                    if span.kind == markdown::Kind::ListMarker
+                        && !is_active
+                        && spans.get(j + 1).is_some_and(|n| {
+                            matches!(n.kind, markdown::Kind::TaskBox | markdown::Kind::TaskDone)
+                        })
+                    {
+                        attrs = attrs.metadata(super::style::META_TASK_PREFIX);
                     }
-                    list.add_span(span.range, &attrs);
+                    list.add_span(span.range.clone(), &attrs);
                 }
                 let _ = line.set_attrs_list(list);
             }
         });
+        inner.line_keys = keys;
         inner.editor.shape_as_needed(fs, false);
         inner.shaped_for = Some(key);
         inner.style = Some(style.clone());
+        inner.active = active;
         inner.dirty = false;
+    }
+
+    /// Everything the widget paints besides the glyphs, computed from the
+    /// laid-out runs: code backgrounds, task boxes, bullets, quote bars,
+    /// and strike-throughs.
+    pub fn overlays(&self) -> Overlays {
+        use super::style::*;
+        let mut o = Overlays::default();
+        self.with_buffer(|b| {
+            let size = b.metrics().font_size;
+            for run in b.layout_runs() {
+                let line_text = b.lines.get(run.line_i).map(|l| l.text()).unwrap_or("");
+                let span_rect = |meta: usize| -> Option<(Rectangle, usize, usize)> {
+                    let mut x0 = f32::MAX;
+                    let mut x1 = f32::MIN;
+                    let (mut s0, mut e0) = (usize::MAX, 0);
+                    for g in run.glyphs.iter().filter(|g| g.metadata == meta) {
+                        x0 = x0.min(g.x);
+                        x1 = x1.max(g.x + g.w);
+                        s0 = s0.min(g.start);
+                        e0 = e0.max(g.end);
+                    }
+                    (x0 < x1).then(|| {
+                        (
+                            Rectangle {
+                                x: x0,
+                                y: run.line_top,
+                                width: x1 - x0,
+                                height: run.line_height,
+                            },
+                            s0,
+                            e0,
+                        )
+                    })
+                };
+                if let Some((r, _, _)) = span_rect(META_CODE) {
+                    let h = size * 1.25;
+                    o.code_bgs.push(Rectangle {
+                        x: r.x - 3.0,
+                        y: r.y + (r.height - h) / 2.0,
+                        width: r.width + 6.0,
+                        height: h,
+                    });
+                }
+                if run.glyphs.iter().any(|g| g.metadata == META_CODE_BLOCK) {
+                    o.code_block_rows.push(Rectangle {
+                        x: 0.0,
+                        y: run.line_top,
+                        width: run.line_w.max(b.size().0.unwrap_or(run.line_w)),
+                        height: run.line_height,
+                    });
+                }
+                for (meta, done) in [(META_TASK_OPEN, false), (META_TASK_DONE, true)] {
+                    if let Some((r, s0, e0)) = span_rect(meta) {
+                        // `[x] ` → the mark between the brackets.
+                        let span_text = line_text.get(s0..e0).unwrap_or("");
+                        let inner = span_text
+                            .strip_prefix('[')
+                            .and_then(|t| t.split(']').next())
+                            .unwrap_or("")
+                            .trim();
+                        let mark = match inner {
+                            "" | " " => String::new(),
+                            "x" | "X" => "✓".to_owned(),
+                            m => m.to_owned(),
+                        };
+                        // Colour emoji ignore a transparent colour, so the real
+                        // glyph stays visible: box it where it is, draw no copy.
+                        let emoji = mark.chars().any(|c| c as u32 >= 0x1F000);
+                        // The box sits where the bullet would: over the `- `
+                        // when there is one, else over the brackets.
+                        let side = (size * 1.1).min(r.width.max(1.0));
+                        let left = if emoji {
+                            r.x + 1.0
+                        } else {
+                            span_rect(META_TASK_PREFIX).map_or(r.x, |(p, _, _)| p.x) + 1.0
+                        };
+                        let (w, h) = if emoji {
+                            (size * 1.5, side)
+                        } else {
+                            (side, side)
+                        };
+                        o.boxes.push(TaskBox {
+                            rect: Rectangle {
+                                x: left,
+                                y: r.y + (r.height - h) / 2.0,
+                                width: w,
+                                height: h,
+                            },
+                            mark: if emoji { String::new() } else { mark },
+                            done,
+                        });
+                    }
+                }
+                if let Some((r, _, _)) = span_rect(META_BULLET) {
+                    o.bullets.push(r);
+                }
+                if let Some((r, _, _)) = span_rect(META_QUOTE) {
+                    o.quote_bars.push(Rectangle {
+                        x: r.x + 2.0,
+                        y: run.line_top + 2.0,
+                        width: 3.0,
+                        height: run.line_height - 4.0,
+                    });
+                }
+                for d in run.decorations {
+                    if !d.data.text_decoration.strikethrough || d.glyph_range.is_empty() {
+                        continue;
+                    }
+                    // Skip leading blanks so the strike starts at the text.
+                    let mut range = d.glyph_range.clone();
+                    while range.start < range.end
+                        && line_text
+                            .get(run.glyphs[range.start].start..run.glyphs[range.start].end)
+                            .is_some_and(|t| t.trim().is_empty())
+                    {
+                        range.start += 1;
+                    }
+                    if range.is_empty() {
+                        continue;
+                    }
+                    let first = &run.glyphs[range.start];
+                    let last = &run.glyphs[range.end - 1];
+                    let m = d.data.strikethrough_metrics;
+                    o.strikes.push((
+                        Rectangle {
+                            x: first.x,
+                            y: run.line_y - m.offset * d.font_size,
+                            width: last.x + last.w - first.x,
+                            height: (m.thickness * d.font_size).max(1.0),
+                        },
+                        d.color_opt,
+                    ));
+                }
+            }
+        });
+        o
     }
 
     /// Height of all laid-out lines.
@@ -511,7 +692,7 @@ mod tests {
             show_markers: false,
             font: cosmic::font::mono(),
         };
-        c.update(120.0, cosmic::font::mono(), 15.0, 22.5, &settings);
+        c.update(120.0, cosmic::font::mono(), 15.0, 22.5, &settings, None);
         // Narrow width wraps into several visual lines.
         assert!(c.height() > 22.5 * 2.0);
         c.perform(Action::Move(Motion::DocumentEnd));

@@ -1,6 +1,6 @@
 # Rich editor — build step 3 plan
 
-Status: planned 2026-08-30; phase 0 spike passed the same day; **phase 1 (core widget) landed 2026-08-30** behind the `rich_editor` flag — see the results at the end. Read `DECISIONS.md` for how the app
+Status: planned 2026-08-30; phase 0 spike passed the same day; phase 1 (core widget) and **phase 2 (rich rendering) landed 2026-08-30** behind the `rich_editor` flag — see the results at the end. Read `DECISIONS.md` for how the app
 got here; this document is the plan for the piece the handover called "the
 long pole".
 
@@ -206,3 +206,29 @@ Known nit: a decoration span includes leading spaces, so a strike on
 - Not yet: rich attributes/overlays (phase 2), IME, scroll-into-view of the
   caret inside the outer scrollable (the stock editor did not do this
   either across blocks).
+
+## Phase 2 result (2026-08-30) — rich rendering
+
+- `src/editor/style.rs` maps span kinds to attributes with two looks per
+  line: the caret's line (while focused) shows dimmed markers exactly as
+  the stock editor did; every other line hides them. Hiding is either
+  *collapsed* (transparent, 0.5 px: `**`, `# `, backticks, `~~`, `[[`,
+  link URLs) or *transparent at full width* (`- `, `[x] `, `> `) so the
+  overlay pass can draw in that exact space and hit-testing / caret columns
+  are untouched.
+- Headings get real per-line metrics (×1.6 / ×1.35 / ×1.15) via the line's
+  base attrs, so the marker and any bold run share the size.
+- `RichContent::overlays()` walks the layout runs and returns what to
+  paint: code-span backgrounds, code-block rows, task boxes (with the mark
+  between the brackets; `x` is shown as ✓), bullets, quote bars, and
+  strikes from cosmic-text's own decoration spans (leading blanks trimmed).
+  The widget paints backgrounds → selection → glyphs → strikes → boxes and
+  marks (`fill_text`) → bullets → caret.
+- Per-line styling cache (hash of text + fence state + active flag) so a
+  caret move re-styles two lines, not the note.
+- Scanner tweaks: a task box span now includes its trailing space; the
+  `> ` of a quote is `Kind::QuoteMarker`.
+- Not in phase 2: inline rules (still `Block::Rule` widgets, which already
+  draw a line), click-to-toggle on the *drawn* box is inherited from the
+  caret-column logic (works because the glyphs keep their width), Ctrl+click
+  on links (phase 3), IME (phase 4).

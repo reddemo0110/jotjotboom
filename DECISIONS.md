@@ -447,3 +447,11 @@ Copy of Big Fish in Little China with the tangerine accent muted
   table, focus operation, caret blink) but draws the shared buffer with
   `fill_raw`, which is what lets phase 2 add sizes, collapsed markers and
   overlays. Details in `RICH-EDITOR-PLAN.md`.
+
+## 2026-08-30 — Rich editor phase 2: the formatted look
+- Behind the same `rich_editor` flag the note now renders formatted:
+  sized headings, hidden markers everywhere but the caret's line, drawn
+  bullets and task boxes (`x` shown as a ✓, other marks as themselves),
+  quote bars, code backgrounds, strike-throughs. Files are unchanged. The
+  two hiding modes (collapsed vs transparent-at-width) and the overlay
+  order are recorded in `RICH-EDITOR-PLAN.md`.

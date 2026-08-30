@@ -7,6 +7,7 @@
 
 pub mod content;
 pub mod spike;
+pub mod style;
 pub mod widget;
 
 pub use content::Content;

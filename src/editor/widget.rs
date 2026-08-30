@@ -163,18 +163,25 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
 
     fn layout(
         &mut self,
-        _tree: &mut Tree,
+        tree: &mut Tree,
         _renderer: &cosmic::Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
         let width = limits.max().width;
         let inner_w = (width - self.padding.left - self.padding.right).max(1.0);
+        // Markers show on the caret's line while focused, hide elsewhere.
+        let state = tree.state.downcast_ref::<State>();
+        let active = state
+            .focus
+            .is_some()
+            .then(|| self.content.cursor().position.line);
         self.content.update(
             inner_w,
             self.font,
             self.size,
             self.line_height,
             &self.settings,
+            active,
         );
         let h =
             (self.content.height() + self.padding.top + self.padding.bottom).max(self.min_height);
@@ -335,6 +342,48 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
         let p = &self.palette;
 
         let highlight = self.content.highlight();
+        let overlays = self.content.overlays();
+        let at = |r: &Rectangle| Rectangle {
+            x: r.x + origin.x,
+            y: r.y + origin.y,
+            ..*r
+        };
+        // Backgrounds first: code blocks, code spans.
+        for r in &overlays.code_block_rows {
+            renderer.fill_quad(
+                Quad {
+                    bounds: at(r),
+                    ..Quad::default()
+                },
+                Background::Color(p.accent2.scale_alpha(0.08)),
+            );
+        }
+        for r in &overlays.code_bgs {
+            renderer.fill_quad(
+                Quad {
+                    bounds: at(r),
+                    border: Border {
+                        radius: 4.0.into(),
+                        ..Default::default()
+                    },
+                    ..Quad::default()
+                },
+                Background::Color(p.accent2.scale_alpha(0.15)),
+            );
+        }
+        for r in &overlays.quote_bars {
+            renderer.fill_quad(
+                Quad {
+                    bounds: at(r),
+                    border: Border {
+                        radius: 1.5.into(),
+                        ..Default::default()
+                    },
+                    ..Quad::default()
+                },
+                Background::Color(p.dim),
+            );
+        }
         if let (Some(_), Highlight::Range(ranges)) = (&state.focus, &highlight) {
             for r in ranges {
                 if let Some(r) = text_bounds.intersection(&(*r + origin)) {
@@ -378,6 +427,83 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
             });
         }
 
+        // On top of the glyphs: strikes, task boxes with their mark, bullets.
+        for (r, c) in &overlays.strikes {
+            let color = c.map_or(p.fg.scale_alpha(0.6), |c| {
+                let [r, g, b, a] = c.as_rgba();
+                Color::from_rgba8(r, g, b, f32::from(a) / 255.0)
+            });
+            renderer.fill_quad(
+                Quad {
+                    bounds: at(r),
+                    ..Quad::default()
+                },
+                Background::Color(color),
+            );
+        }
+        for b in &overlays.boxes {
+            let rect = at(&b.rect);
+            renderer.fill_quad(
+                Quad {
+                    bounds: rect,
+                    border: Border {
+                        color: if b.done { p.accent } else { p.dim },
+                        width: 1.5,
+                        radius: 3.0.into(),
+                    },
+                    ..Quad::default()
+                },
+                Background::Color(if b.done {
+                    p.accent.scale_alpha(0.18)
+                } else {
+                    Color::TRANSPARENT
+                }),
+            );
+            if !b.mark.is_empty() {
+                renderer.fill_text(
+                    cosmic::iced::advanced::Text {
+                        content: b.mark.clone(),
+                        bounds: Size::new(rect.width, rect.height),
+                        size: (rect.height * 0.8).into(),
+                        line_height: cosmic::iced::widget::text::LineHeight::Absolute(
+                            rect.height.into(),
+                        ),
+                        font: self.font,
+                        align_x: cosmic::iced::advanced::text::Alignment::Center,
+                        align_y: cosmic::iced::alignment::Vertical::Center,
+                        shaping: cosmic::iced::advanced::text::Shaping::Advanced,
+                        wrapping: cosmic::iced::advanced::text::Wrapping::None,
+                        ellipsize: cosmic::iced::advanced::text::Ellipsize::None,
+                    },
+                    Point::new(rect.center_x(), rect.center_y()),
+                    p.accent,
+                    rect.expand(4.0),
+                );
+            }
+        }
+        for r in &overlays.bullets {
+            let rect = at(r);
+            renderer.fill_text(
+                cosmic::iced::advanced::Text {
+                    content: "•".to_owned(),
+                    bounds: Size::new(rect.width, rect.height),
+                    size: self.size.into(),
+                    line_height: cosmic::iced::widget::text::LineHeight::Absolute(
+                        rect.height.into(),
+                    ),
+                    font: self.font,
+                    align_x: cosmic::iced::advanced::text::Alignment::Left,
+                    align_y: cosmic::iced::alignment::Vertical::Center,
+                    shaping: cosmic::iced::advanced::text::Shaping::Advanced,
+                    wrapping: cosmic::iced::advanced::text::Wrapping::None,
+                    ellipsize: cosmic::iced::advanced::text::Ellipsize::None,
+                },
+                Point::new(rect.x + 2.0, rect.center_y()),
+                p.accent,
+                rect.expand(2.0),
+            );
+        }
+
         if let (Some(f), Highlight::Caret(at)) = (&state.focus, &highlight)
             && f.caret_visible()
         {
@@ -399,7 +525,6 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                 );
             }
         }
-        let _ = Color::TRANSPARENT;
     }
 
     fn mouse_interaction(
