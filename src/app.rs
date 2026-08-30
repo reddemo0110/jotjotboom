@@ -6,7 +6,7 @@ use crate::debug_script::{self, Step};
 use crate::fl;
 use crate::images::{self, Align, FrameStyle, ImageRef, PickerEntry, Processed, UriList};
 use crate::markdown;
-use crate::note::{Note, NoteSummary};
+use crate::note::{self, Note, NoteSummary};
 use crate::retro::{self, Palette};
 use crate::store::{Store, View};
 use chrono::{DateTime, Datelike, Local, Utc};
@@ -18,7 +18,7 @@ use cosmic::iced::{Alignment, Event, Length, Point, Subscription, event, mouse, 
 use cosmic::prelude::*;
 use cosmic::widget::menu::action::MenuAction as _;
 use cosmic::widget::{self, about::About, icon, menu, nav_bar, text_editor};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,7 +33,6 @@ const UNDO_DEPTH: usize = 200;
 const UNDO_GROUP_IDLE: Duration = Duration::from_millis(700);
 const NAV_WIDTH: f32 = 230.0;
 const NOTE_LIST_WIDTH: f32 = 320.0;
-const GAP: u16 = 14;
 /// Pointer travel (px) that turns a press on a picture into a drag.
 const DRAG_THRESHOLD: f32 = 6.0;
 
@@ -48,6 +47,21 @@ pub struct AppModel {
     show_markers: bool,
     show_nav: bool,
     show_list: bool,
+    /// Editor typeface, per-pane text sizes (px) and dock scale — all persisted.
+    editor_font: retro::EditorFont,
+    /// Sidebar + list face, and the pane-title face (a designer pairing sets all three).
+    ui_font: retro::EditorFont,
+    title_font: retro::EditorFont,
+    font_size: u16,
+    sidebar_size: u16,
+    list_size: u16,
+    dock_size: retro::DockSize,
+    /// What a finished task shows inside its brackets.
+    task_marker: String,
+    /// Maximum width of the note text column.
+    measure: retro::Measure,
+    /// Which sections of the Appearance drawer are unfolded.
+    appearance_open: [bool; 4],
     /// Processed images keyed by path|mtime|style|theme.
     image_cache: HashMap<String, ImageState>,
     /// Block index of the image whose ⋯ menu is open.
@@ -76,8 +90,16 @@ pub struct AppModel {
     view_counts: [usize; 3],
     /// Tag tree (full path, count), depth-first.
     tags: Vec<(String, usize)>,
+    /// Tags whose sub-tags are folded away.
+    collapsed: HashSet<String>,
+    /// Tag whose right-click menu is open.
+    tag_menu: Option<String>,
+    /// Tag being renamed and the draft name.
+    tag_rename: Option<(String, String)>,
+    rename_id: widget::Id,
     query: String,
     search_id: widget::Id,
+    notes_scroll_id: widget::Id,
     /// The dock's `+` is expanded, showing new-note / new-folder.
     dock_open: bool,
     new_folder: String,
@@ -111,7 +133,27 @@ pub enum Message {
     ToggleContextPage(ContextPage),
     UpdateConfig(Config),
     Key(keyboard::Modifiers, keyboard::Key, Physical),
+    /// ↑ / ↓ outside the editor: open the note above / below, like mail.
+    NavigateNotes(i32),
     SetTheme(retro::Theme),
+    SetFont(retro::EditorFont),
+    /// Apply a designer pairing (titles, chrome, note) by key.
+    SetPairing(String),
+    RestoreFonts,
+    /// Grow (+) or shrink (−) one pane's text, in px.
+    SizeStep(Pane, i16),
+    ToggleSection(Section),
+    SetDockSize(retro::DockSize),
+    SetTaskMarker(String),
+    SetMeasure(retro::Measure),
+    /// Fold or unfold the sub-tags of a tag in the sidebar.
+    ToggleTagFold(String),
+    /// Right-click menu on a tag (None closes it).
+    TagMenu(Option<String>),
+    TagRenameStart(String),
+    TagRenameInput(String),
+    TagRenameCommit,
+    TagRenameCancel,
     ToggleMarkers,
     ToggleNav,
     ToggleList,
@@ -139,6 +181,8 @@ pub enum Message {
     MouseReleased,
     OpenImage(String),
     FontLoaded,
+    /// The window exists (so the compositor can register fonts): load the bundled faces.
+    LoadFonts,
 
     Editor(usize, text_editor::Action),
     Undo,
@@ -231,6 +275,21 @@ impl cosmic::Application for AppModel {
         let theme = retro::Theme::from_key(&config.theme);
         let show_markers = config.show_markers;
         let (show_nav, show_list) = (!config.hide_nav, !config.hide_list);
+        let editor_font = retro::EditorFont::from_key(&config.editor_font);
+        let ui_font = retro::EditorFont::from_key(&config.ui_font);
+        let title_font = title_font_from_config(&config.title_font);
+        let font_size = size_from_config(
+            config.editor_font_size,
+            retro::FONT_SIZE_DEFAULT,
+            retro::FONT_SIZE_MIN,
+            retro::FONT_SIZE_MAX,
+        );
+        let sidebar_size = pane_size_from_config(config.sidebar_font_size);
+        let list_size = pane_size_from_config(config.list_font_size);
+        let dock_size = retro::DockSize::from_key(&config.dock_size);
+        let task_marker = task_marker_from_config(&config.task_marker);
+        let measure = retro::Measure::from_key(&config.text_width);
+        let collapsed: HashSet<String> = config.collapsed_tags.iter().cloned().collect();
         let mut app = AppModel {
             core,
             context_page: ContextPage::default(),
@@ -242,6 +301,16 @@ impl cosmic::Application for AppModel {
             show_markers,
             show_nav,
             show_list,
+            editor_font,
+            ui_font,
+            title_font,
+            font_size,
+            sidebar_size,
+            list_size,
+            dock_size,
+            task_marker,
+            measure,
+            appearance_open: [true, false, false, false],
             image_cache: HashMap::new(),
             image_menu: None,
             resizing: None,
@@ -259,9 +328,14 @@ impl cosmic::Application for AppModel {
             store_error,
             view: View::All,
             view_counts: [0; 3],
+            collapsed,
+            tag_menu: None,
+            tag_rename: None,
+            rename_id: widget::Id::unique(),
             tags: Vec::new(),
             query: String::new(),
             search_id: widget::Id::unique(),
+            notes_scroll_id: widget::Id::unique(),
             dock_open: false,
             new_folder: String::new(),
             folder_id: widget::Id::unique(),
@@ -288,14 +362,12 @@ impl cosmic::Application for AppModel {
             app.open_note(&first);
         }
 
+        // The Appearance drawer sits beside the note, not over it.
+        app.core.window.context_is_overlay = false;
         let title = app.update_title();
-        let font = cosmic::iced::font::load(retro::TITLE_FONT_BYTES).map(|result| {
-            if let Err(err) = result {
-                tracing::error!(?err, "loading title font");
-            }
-            cosmic::Action::App(Message::FontLoaded)
-        });
-        (app, Task::batch([font, title]))
+        // Fonts are (re)loaded on `window::Event::Opened` too: a LoadFont
+        // action issued before the compositor exists is silently dropped.
+        (app, Task::batch([load_fonts(), title]))
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
@@ -466,7 +538,7 @@ impl cosmic::Application for AppModel {
                 self.theme_picker(),
                 Message::ToggleContextPage(ContextPage::Themes),
             )
-            .title(fl!("theme-colours")),
+            .title(fl!("appearance")),
             ContextPage::Picker => context_drawer::context_drawer(
                 self.file_picker(),
                 Message::ToggleContextPage(ContextPage::Picker),
@@ -487,14 +559,18 @@ impl cosmic::Application for AppModel {
                 .into();
         }
 
-        let nav = widget::column::with_capacity(2)
+        // Flat layout: panes butt against each other with hairlines between.
+        let nav = widget::column::with_capacity(3)
             .push(
                 widget::container(self.views_frame(&p))
-                    .height(Length::Fixed(140.0))
+                    // Three rows plus the header; grows with the sidebar text.
+                    .height(Length::Fixed(
+                        (f32::from(self.sidebar_size) * 1.3 + 8.0) * 3.0 + 66.0,
+                    ))
                     .width(Length::Fill),
             )
+            .push(retro::hrule(&p))
             .push(self.tags_frame(&p))
-            .spacing(GAP)
             .width(Length::Fixed(NAV_WIDTH))
             .height(Length::Fill);
 
@@ -502,33 +578,30 @@ impl cosmic::Application for AppModel {
             .width(Length::Fixed(NOTE_LIST_WIDTH))
             .height(Length::Fill);
 
-        let mut editor_col = widget::column::with_capacity(2)
+        let mut editor_col = widget::column::with_capacity(3)
             .push(self.editor_frame(&p))
-            .spacing(GAP)
             .width(Length::Fill)
             .height(Length::Fill);
         if !self.backlinks.is_empty() {
-            editor_col = editor_col.push(
+            editor_col = editor_col.push(retro::hrule(&p)).push(
                 widget::container(self.backlinks_frame(&p))
-                    .height(Length::Fixed(64.0))
+                    .height(Length::Fixed(58.0))
                     .width(Length::Fill),
             );
         }
 
-        let mut panes = widget::row::with_capacity(3)
-            .spacing(GAP)
+        let mut panes = widget::row::with_capacity(5)
             .width(Length::Fill)
             .height(Length::Fill);
         if self.show_nav {
-            panes = panes.push(nav);
+            panes = panes.push(nav).push(retro::vrule(&p));
         }
         if self.show_list {
-            panes = panes.push(list);
+            panes = panes.push(list).push(retro::vrule(&p));
         }
         panes = panes.push(editor_col);
 
         let content = widget::container(panes)
-            .padding([GAP + 4, GAP, GAP, GAP])
             .width(Length::Fill)
             .height(Length::Fill);
         if self.show_shortcuts {
@@ -546,7 +619,22 @@ impl cosmic::Application for AppModel {
             self.core()
                 .watch_config::<Config>(Self::APP_ID)
                 .map(|update| Message::UpdateConfig(update.config)),
-            event::listen_with(|event, _status, _window| match event {
+            event::listen_with(|event, status, _window| match event {
+                // Arrows nobody consumed (the editor is not focused) walk the list.
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(keyboard::key::Named::ArrowDown),
+                    modifiers,
+                    ..
+                }) if status == event::Status::Ignored && modifiers.is_empty() => {
+                    Some(Message::NavigateNotes(1))
+                }
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(keyboard::key::Named::ArrowUp),
+                    modifiers,
+                    ..
+                }) if status == event::Status::Ignored && modifiers.is_empty() => {
+                    Some(Message::NavigateNotes(-1))
+                }
                 Event::Keyboard(keyboard::Event::KeyPressed {
                     key,
                     modifiers,
@@ -556,6 +644,7 @@ impl cosmic::Application for AppModel {
                 Event::Window(window::Event::FileDropped(paths)) => {
                     Some(Message::ImagesDropped(paths))
                 }
+                Event::Window(window::Event::Opened { .. }) => Some(Message::LoadFonts),
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     Some(Message::MouseMoved(position))
                 }
@@ -716,6 +805,183 @@ impl AppModel {
                 self.edit_ref_kind(block, EditKind::Typing, |r| r.alt = caption);
             }
 
+            Message::SetFont(font) => {
+                self.editor_font = font;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_editor_font(handler, font.key().to_owned())
+                {
+                    tracing::warn!(%why, "saving editor font");
+                }
+            }
+
+            Message::SetPairing(key) => {
+                if let Some(pair) = retro::Pairing::from_key(&key) {
+                    self.apply_pairing(pair);
+                }
+            }
+
+            Message::RestoreFonts => {
+                self.apply_pairing(retro::Pairing::default_pairing());
+            }
+
+            Message::SizeStep(pane, step) => {
+                let (current, min, max) = match pane {
+                    Pane::Editor => (self.font_size, retro::FONT_SIZE_MIN, retro::FONT_SIZE_MAX),
+                    Pane::Sidebar => (
+                        self.sidebar_size,
+                        retro::PANE_SIZE_MIN,
+                        retro::PANE_SIZE_MAX,
+                    ),
+                    Pane::List => (self.list_size, retro::PANE_SIZE_MIN, retro::PANE_SIZE_MAX),
+                };
+                let next = (i32::from(current) + i32::from(step))
+                    .clamp(i32::from(min), i32::from(max)) as u16;
+                let saved = match (pane, &self.config_handler) {
+                    (Pane::Editor, Some(h)) => {
+                        self.font_size = next;
+                        self.config.set_editor_font_size(h, next).map(|_| ())
+                    }
+                    (Pane::Sidebar, Some(h)) => {
+                        self.sidebar_size = next;
+                        self.config.set_sidebar_font_size(h, next).map(|_| ())
+                    }
+                    (Pane::List, Some(h)) => {
+                        self.list_size = next;
+                        self.config.set_list_font_size(h, next).map(|_| ())
+                    }
+                    (Pane::Editor, None) => {
+                        self.font_size = next;
+                        Ok(())
+                    }
+                    (Pane::Sidebar, None) => {
+                        self.sidebar_size = next;
+                        Ok(())
+                    }
+                    (Pane::List, None) => {
+                        self.list_size = next;
+                        Ok(())
+                    }
+                };
+                if let Err(why) = saved {
+                    tracing::warn!(%why, ?pane, "saving text size");
+                }
+            }
+
+            Message::SetMeasure(measure) => {
+                self.measure = measure;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self
+                        .config
+                        .set_text_width(handler, measure.key().to_owned())
+                {
+                    tracing::warn!(%why, "saving text width");
+                }
+            }
+
+            Message::SetTaskMarker(marker) => {
+                self.task_marker = marker.clone();
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_task_marker(handler, marker)
+                {
+                    tracing::warn!(%why, "saving task marker");
+                }
+            }
+
+            Message::ToggleSection(section) => {
+                let i = section as usize;
+                self.appearance_open[i] = !self.appearance_open[i];
+            }
+
+            Message::SetDockSize(size) => {
+                self.dock_size = size;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_dock_size(handler, size.key().to_owned())
+                {
+                    tracing::warn!(%why, "saving dock size");
+                }
+            }
+
+            Message::TagMenu(tag) => {
+                self.tag_menu = tag;
+                self.tag_rename = None;
+            }
+
+            Message::TagRenameStart(tag) => {
+                self.tag_menu = None;
+                self.tag_rename = Some((tag.clone(), tag));
+                return widget::text_input::focus(self.rename_id.clone());
+            }
+
+            Message::TagRenameInput(draft) => {
+                if let Some(r) = &mut self.tag_rename {
+                    r.1 = draft;
+                }
+            }
+
+            Message::TagRenameCancel => {
+                self.tag_rename = None;
+                self.tag_menu = None;
+            }
+
+            Message::TagRenameCommit => {
+                let Some((old, draft)) = self.tag_rename.take() else {
+                    return Task::none();
+                };
+                let Some(new) = note::normalize_tag(&draft) else {
+                    return Task::none();
+                };
+                if new == old {
+                    return Task::none();
+                }
+                // Files are rewritten on disk: the open note must be saved first.
+                self.flush();
+                let under =
+                    |t: &str| t == old || (t.starts_with(&old) && t[old.len()..].starts_with('/'));
+                let remap = |t: &str| format!("{new}{}", &t[old.len()..]);
+                let current_affected = self
+                    .current
+                    .as_ref()
+                    .is_some_and(|n| note::extract_tags(&n.body).iter().any(|t| under(t)));
+                let Some(store) = self.store.as_mut() else {
+                    return Task::none();
+                };
+                match store.rename_tag(&old, &new) {
+                    Ok(n) => tracing::info!(old, new, notes = n, "renamed tag"),
+                    Err(err) => {
+                        tracing::error!(%err, old, new, "renaming tag");
+                        return Task::none();
+                    }
+                }
+                if let View::Tag(t) = &self.view
+                    && under(t)
+                {
+                    self.view = View::Tag(remap(t));
+                }
+                self.collapsed = self
+                    .collapsed
+                    .iter()
+                    .map(|t| if under(t) { remap(t) } else { t.clone() })
+                    .collect();
+                if current_affected && let Some(id) = self.current.as_ref().map(|n| n.id.clone()) {
+                    self.open_note(&id);
+                }
+                self.refresh_tags();
+                self.refresh_list();
+            }
+
+            Message::ToggleTagFold(tag) => {
+                if !self.collapsed.remove(&tag) {
+                    self.collapsed.insert(tag);
+                }
+                if let Some(handler) = &self.config_handler {
+                    let mut list: Vec<String> = self.collapsed.iter().cloned().collect();
+                    list.sort();
+                    if let Err(why) = self.config.set_collapsed_tags(handler, list) {
+                        tracing::warn!(%why, "saving folded tags");
+                    }
+                }
+            }
+
             Message::ToggleShortcuts => {
                 self.show_shortcuts = !self.show_shortcuts;
             }
@@ -847,6 +1113,8 @@ impl AppModel {
 
             Message::FontLoaded => {}
 
+            Message::LoadFonts => return load_fonts(),
+
             Message::SetTheme(theme) => {
                 self.theme = theme;
                 if let Some(handler) = &self.config_handler
@@ -913,10 +1181,13 @@ impl AppModel {
                     match &action {
                         Action::Edit(Edit::Backspace) if at_start && editable => {
                             if let Some(prev) = block.checked_sub(1)
-                                && matches!(self.blocks.items.get(prev), Some(Block::Image(_)))
+                                && matches!(
+                                    self.blocks.items.get(prev),
+                                    Some(Block::Image(_) | Block::Rule(_))
+                                )
                             {
                                 self.record(EditKind::Other);
-                                self.blocks.remove_image(prev);
+                                self.blocks.remove_block(prev);
                                 self.dirty = true;
                                 self.last_edit = Instant::now();
                                 return self.focus_editor();
@@ -944,6 +1215,9 @@ impl AppModel {
                     }
                 }
                 let is_edit = action.is_edit();
+                let is_click = matches!(action, Action::Click(_));
+                let finishes_line = matches!(action, Action::Edit(Edit::Enter | Edit::Paste(_)));
+                let closes_bracket = matches!(action, Action::Edit(Edit::Insert(']')));
                 if is_edit && editable {
                     let kind = match &action {
                         Action::Edit(Edit::Insert(_) | Edit::Enter | Edit::Indent) => {
@@ -962,6 +1236,31 @@ impl AppModel {
                 if is_edit && editable {
                     self.dirty = true;
                     self.last_edit = Instant::now();
+                }
+                // A finished `---` line (Enter / paste) becomes a rule block.
+                if finishes_line && editable && self.blocks.needs_resplit() && self.blocks.resplit()
+                {
+                    return self.focus_editor();
+                }
+                // `[]` at the start of a line becomes a task box.
+                if closes_bracket
+                    && editable
+                    && let Some(content) = self.blocks.text_mut(block)
+                {
+                    crate::blocks::expand_task_shorthand(content);
+                }
+                // Clicking a task box ticks / unticks it.
+                if is_click && editable {
+                    let before = self.snapshot();
+                    let marker = self.task_marker.clone();
+                    if let Some(content) = self.blocks.text_mut(block)
+                        && crate::blocks::toggle_task_at_cursor(content, &marker)
+                    {
+                        self.push_undo(before);
+                        self.last_undo_kind = EditKind::Other;
+                        self.dirty = true;
+                        self.last_edit = Instant::now();
+                    }
                 }
             }
 
@@ -983,6 +1282,37 @@ impl AppModel {
                     self.open_note(&first);
                 }
                 return self.update_title();
+            }
+
+            Message::NavigateNotes(delta) => {
+                let len = self.notes.len();
+                if len == 0 {
+                    return Task::none();
+                }
+                let at = self
+                    .current
+                    .as_ref()
+                    .and_then(|c| self.notes.iter().position(|n| n.id == c.id));
+                let next = match at {
+                    Some(i) => (i as i64 + i64::from(delta)).clamp(0, len as i64 - 1) as usize,
+                    None if delta > 0 => 0,
+                    None => len - 1,
+                };
+                let id = self.notes[next].id.clone();
+                // Keep the selection in view (rows vary in height; this is close enough).
+                let y = if len > 1 {
+                    next as f32 / (len - 1) as f32
+                } else {
+                    0.0
+                };
+                let scroll = cosmic::iced::widget::scrollable::snap_to(
+                    self.notes_scroll_id.clone(),
+                    cosmic::iced::widget::scrollable::RelativeOffset {
+                        x: None,
+                        y: Some(y),
+                    },
+                );
+                return Task::batch([self.update(Message::Select(id)), scroll]);
             }
 
             Message::Select(id) => {
@@ -1203,6 +1533,20 @@ impl AppModel {
                 self.show_markers = config.show_markers;
                 self.show_nav = !config.hide_nav;
                 self.show_list = !config.hide_list;
+                self.editor_font = retro::EditorFont::from_key(&config.editor_font);
+                self.ui_font = retro::EditorFont::from_key(&config.ui_font);
+                self.title_font = title_font_from_config(&config.title_font);
+                self.font_size = size_from_config(
+                    config.editor_font_size,
+                    retro::FONT_SIZE_DEFAULT,
+                    retro::FONT_SIZE_MIN,
+                    retro::FONT_SIZE_MAX,
+                );
+                self.sidebar_size = pane_size_from_config(config.sidebar_font_size);
+                self.list_size = pane_size_from_config(config.list_font_size);
+                self.dock_size = retro::DockSize::from_key(&config.dock_size);
+                self.task_marker = task_marker_from_config(&config.task_marker);
+                self.measure = retro::Measure::from_key(&config.text_width);
                 self.config = config;
             }
 
@@ -1214,6 +1558,48 @@ impl AppModel {
             },
         }
         Task::none()
+    }
+
+    /// The face pane titles are set in: VT323 as-is, anything else bold.
+    fn title_font(&self) -> cosmic::font::Font {
+        let f = self.title_font.font();
+        if self.title_font.has_bold() {
+            cosmic::font::Font {
+                weight: cosmic::iced::font::Weight::Bold,
+                ..f
+            }
+        } else {
+            f
+        }
+    }
+
+    fn ui_font(&self) -> cosmic::font::Font {
+        self.ui_font.font()
+    }
+
+    fn apply_pairing(&mut self, pair: &retro::Pairing) {
+        self.editor_font = pair.body;
+        self.ui_font = pair.ui;
+        self.title_font = pair.title;
+        if let Some(handler) = &self.config_handler {
+            for (why, _) in [
+                self.config
+                    .set_editor_font(handler, pair.body.key().to_owned())
+                    .err(),
+                self.config
+                    .set_ui_font(handler, pair.ui.key().to_owned())
+                    .err(),
+                self.config
+                    .set_title_font(handler, pair.title.key().to_owned())
+                    .err(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(|e| (e, ()))
+            {
+                tracing::warn!(%why, "saving font pairing");
+            }
+        }
     }
 
     fn palette(&self) -> Palette {
@@ -1228,14 +1614,16 @@ impl AppModel {
             (View::Untagged, fl!("nav-untagged"), self.view_counts[1]),
             (View::Trash, fl!("nav-trash"), self.view_counts[2]),
         ];
+        let sz = f32::from(self.sidebar_size);
         let mut col = widget::column::with_capacity(3).spacing(2);
         for (view, label, count) in rows {
             let selected = self.view == view;
             let marker = if selected { "▌" } else { " " };
+            let ui = self.ui_font();
             let row = widget::row::with_capacity(3)
-                .push(retro::accent(p, marker))
-                .push(retro::text(p, label).width(Length::Fill))
-                .push(retro::dim(p, count.to_string()))
+                .push(retro::accent(p, marker).size(sz))
+                .push(retro::text(p, label).font(ui).size(sz).width(Length::Fill))
+                .push(retro::dim(p, count.to_string()).font(ui).size(sz - 1.0))
                 .spacing(8)
                 .align_y(Alignment::Center);
             col = col.push(
@@ -1246,38 +1634,123 @@ impl AppModel {
                     .on_press(Message::SetView(view)),
             );
         }
-        retro::frame(p, fl!("frame-views"), None, col)
+        retro::pane(p, self.title_font(), fl!("frame-views"), None, col, p.bg)
     }
 
     fn tags_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
+        let sz = f32::from(self.sidebar_size);
         let mut col = widget::column::with_capacity(self.tags.len()).spacing(1);
         for (name, count) in &self.tags {
+            // Hidden while any ancestor is folded.
+            let folded_away = name
+                .match_indices('/')
+                .any(|(i, _)| self.collapsed.contains(&name[..i]));
+            if folded_away {
+                continue;
+            }
             let depth = name.matches('/').count();
             let leaf = name.rsplit('/').next().unwrap_or(name);
-            let prefix = if depth == 0 {
-                String::new()
-            } else {
-                format!("{}└─ ", "   ".repeat(depth - 1))
-            };
+            let has_children = self.tags.iter().any(|(other, _)| {
+                other.len() > name.len() + 1 && other.starts_with(&format!("{name}/"))
+            });
+            let folded = self.collapsed.contains(name);
             let selected = matches!(&self.view, View::Tag(t) if t == name);
             let count_text = if *count > 0 {
                 count.to_string()
             } else {
                 String::new()
             };
-            let row = widget::row::with_capacity(4)
-                .push(retro::dim(p, prefix).class(cosmic::theme::Text::Color(p.mute)))
-                .push(retro::accent2(p, "#"))
-                .push(retro::text(p, leaf.to_owned()).width(Length::Fill))
-                .push(retro::dim(p, count_text))
+            let chevron: Element<'a, Message> = if has_children {
+                widget::button::custom(
+                    retro::dim(p, if folded { "▸" } else { "▾" })
+                        .size(sz - 1.0)
+                        .class(cosmic::theme::Text::Color(p.dim)),
+                )
+                .padding([0, 3])
+                .class(retro::row_class(p, false))
+                .on_press(Message::ToggleTagFold(name.clone()))
+                .into()
+            } else {
+                widget::container(retro::dim(p, " ").size(sz - 1.0))
+                    .padding([0, 3])
+                    .into()
+            };
+            let row = widget::row::with_capacity(5)
+                .push(widget::Space::new().width(Length::Fixed(14.0 * depth as f32)))
+                .push(chevron)
+                .push(retro::accent2(p, "#").size(sz))
+                .push(
+                    retro::text(p, leaf.to_owned())
+                        .font(self.ui_font())
+                        .size(sz)
+                        .width(Length::Fill),
+                )
+                .push(
+                    retro::dim(p, count_text)
+                        .font(self.ui_font())
+                        .size(sz - 1.0),
+                )
+                .spacing(4)
                 .align_y(Alignment::Center);
-            col = col.push(
-                widget::button::custom(row)
-                    .padding([3, 8])
-                    .width(Length::Fill)
-                    .class(retro::row_class(p, selected))
-                    .on_press(Message::SetView(View::Tag(name.clone()))),
-            );
+            let button = widget::button::custom(row)
+                .padding([3, 8, 3, 4])
+                .width(Length::Fill)
+                .class(retro::row_class(p, selected))
+                .on_press(Message::SetView(View::Tag(name.clone())));
+            // Right-click: a small menu (rename); the rename is an inline input.
+            let item =
+                widget::mouse_area(button).on_right_press(Message::TagMenu(Some(name.clone())));
+            let popup: Option<Element<'a, Message>> =
+                if let Some((t, draft)) = self.tag_rename.as_ref().filter(|(t, _)| t == name) {
+                    let _ = t;
+                    Some(
+                        widget::container(
+                            widget::text_input(fl!("tag-rename-placeholder"), draft)
+                                .id(self.rename_id.clone())
+                                .font(retro::mono())
+                                .size(sz)
+                                .padding([3, 8])
+                                .width(Length::Fixed(200.0))
+                                .leading_icon(
+                                    widget::container(retro::accent2(p, "#"))
+                                        .padding([0, 0, 0, 8])
+                                        .into(),
+                                )
+                                .style(retro::search_class(p))
+                                .on_input(Message::TagRenameInput)
+                                .on_submit(|_| Message::TagRenameCommit),
+                        )
+                        .padding(4)
+                        .class(retro::dock_class(p))
+                        .into(),
+                    )
+                } else if self.tag_menu.as_deref() == Some(name.as_str()) {
+                    Some(
+                        widget::container(
+                            widget::button::custom(retro::text(p, fl!("tag-rename")).size(sz))
+                                .padding([3, 10])
+                                .width(Length::Fixed(160.0))
+                                .class(retro::row_class(p, false))
+                                .on_press(Message::TagRenameStart(name.clone())),
+                        )
+                        .padding(4)
+                        .class(retro::dock_class(p))
+                        .into(),
+                    )
+                } else {
+                    None
+                };
+            match popup {
+                Some(popup) => {
+                    col = col.push(
+                        widget::popover(item)
+                            .popup(popup)
+                            .position(widget::popover::Position::Bottom)
+                            .on_close(Message::TagRenameCancel),
+                    );
+                }
+                None => col = col.push(item),
+            }
         }
         let body: Element<'_, Message> = if self.tags.is_empty() {
             widget::container(retro::dim(p, fl!("no-tags-yet")))
@@ -1286,7 +1759,7 @@ impl AppModel {
         } else {
             widget::scrollable(col).height(Length::Fill).into()
         };
-        retro::frame(p, fl!("frame-tags"), None, body)
+        retro::pane(p, self.title_font(), fl!("frame-tags"), None, body, p.bg)
     }
 
     fn notes_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
@@ -1309,8 +1782,8 @@ impl AppModel {
 
         let search = widget::text_input(fl!("search-placeholder"), &self.query)
             .id(self.search_id.clone())
-            .font(retro::mono())
-            .size(13)
+            .font(self.ui_font())
+            .size(f32::from(self.list_size))
             .padding([5, 8])
             .leading_icon(
                 widget::container(retro::accent(p, "/"))
@@ -1336,14 +1809,23 @@ impl AppModel {
             for note in &self.notes {
                 let selected = self.current.as_ref().is_some_and(|c| c.id == note.id);
                 col = col.push(
-                    widget::button::custom(note_row(p, note, selected))
-                        .padding([7, 8])
-                        .width(Length::Fill)
-                        .class(retro::row_class(p, selected))
-                        .on_press(Message::Select(note.id.clone())),
+                    widget::button::custom(note_row(
+                        p,
+                        note,
+                        selected,
+                        self.list_size,
+                        self.ui_font(),
+                    ))
+                    .padding([7, 8])
+                    .width(Length::Fill)
+                    .class(retro::row_class(p, selected))
+                    .on_press(Message::Select(note.id.clone())),
                 );
             }
-            widget::scrollable(col).height(Length::Fill).into()
+            widget::scrollable(col)
+                .id(self.notes_scroll_id.clone())
+                .height(Length::Fill)
+                .into()
         };
 
         let content = widget::column::with_capacity(2)
@@ -1352,7 +1834,14 @@ impl AppModel {
             .spacing(8)
             .width(Length::Fill)
             .height(Length::Fill);
-        retro::frame(p, fl!("frame-notes"), Some(badge), content)
+        retro::pane(
+            p,
+            self.title_font(),
+            fl!("frame-notes"),
+            Some(badge),
+            content,
+            p.panel,
+        )
     }
 
     fn editor_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
@@ -1368,7 +1857,14 @@ impl AppModel {
                 .spacing(8)
                 .width(Length::Fill)
                 .height(Length::Fill);
-            return retro::frame(p, fl!("app-title").to_lowercase(), None, content);
+            return retro::pane(
+                p,
+                self.title_font(),
+                fl!("app-title").to_lowercase(),
+                None,
+                content,
+                p.panel,
+            );
         };
         // Quiet by default: a tick. Click it for the last save time; a failed
         // save replaces it with a warning until the next one succeeds.
@@ -1420,13 +1916,13 @@ impl AppModel {
         }
         column = column.push(self.dock(p));
 
-        let framed = retro::frame_el(
+        let framed = retro::pane_el(
             p,
+            self.title_font(),
             note.title.clone(),
             Some(badge),
             column,
-            Length::Fill,
-            21.0,
+            p.panel,
         );
         widget::dnd_destination::dnd_destination_for_data::<UriList, Message>(
             framed,
@@ -1450,8 +1946,9 @@ impl AppModel {
                     .on_press(Message::Select(link.id.clone())),
             );
         }
-        retro::frame(
+        retro::pane(
             p,
+            self.title_font(),
             fl!("linked-from").to_lowercase(),
             None,
             widget::scrollable(row).direction(
@@ -1459,6 +1956,7 @@ impl AppModel {
                     cosmic::iced::widget::scrollable::Scrollbar::default(),
                 ),
             ),
+            p.panel,
         )
     }
 
@@ -1471,65 +1969,83 @@ impl AppModel {
             widget::container(retro::dim(p, "│").class(cosmic::theme::Text::Color(p.mute)))
                 .padding([0, 1])
         };
-        let mut row = widget::row::with_capacity(16)
-            .spacing(1)
-            .align_y(Alignment::Center);
+        let ds = self.dock_size;
+        // A wrapping row, so the bigger sizes fold onto extra lines instead
+        // of running off the pane.
+        let mut items: Vec<Element<'a, Message>> = Vec::with_capacity(16);
 
         for format in Format::ALL {
-            let button = widget::button::custom(retro::text(p, format.glyph()).size(14))
-                .padding([3, 7])
+            let button = widget::button::custom(retro::text(p, format.glyph()).size(ds.glyph()))
+                .padding(ds.pad())
                 .class(retro::row_class(p, false))
                 .on_press_maybe(editable.then_some(Message::Format(format)));
-            row = row.push(widget::tooltip(
-                button,
-                retro::dim(
-                    p,
-                    self.with_shortcut(format.label(), MenuAction::Format(format)),
-                ),
-                widget::tooltip::Position::Top,
-            ));
+            items.push(
+                widget::tooltip(
+                    button,
+                    retro::dim(
+                        p,
+                        self.with_shortcut(format.label(), MenuAction::Format(format)),
+                    ),
+                    widget::tooltip::Position::Top,
+                )
+                .into(),
+            );
         }
 
-        row = row.push(divider()).push(widget::tooltip(
-            widget::button::custom(retro::accent(p, "+").size(16))
-                .padding([1, 7])
-                .class(retro::row_class(p, self.dock_open))
-                .on_press(Message::ToggleDock),
-            retro::dim(p, self.with_shortcut(fl!("dock-plus"), MenuAction::NewNote)),
-            widget::tooltip::Position::Top,
-        ));
+        items.push(divider().into());
+        items.push(
+            widget::tooltip(
+                widget::button::custom(retro::accent(p, "+").size(ds.glyph() + 2.0))
+                    .padding([ds.pad()[0].saturating_sub(2), ds.pad()[1]])
+                    .class(retro::row_class(p, self.dock_open))
+                    .on_press(Message::ToggleDock),
+                retro::dim(p, self.with_shortcut(fl!("dock-plus"), MenuAction::NewNote)),
+                widget::tooltip::Position::Top,
+            )
+            .into(),
+        );
 
-        row = row.push(widget::tooltip(
-            widget::button::custom(retro::accent(p, "⧉").size(15))
-                .padding([2, 7])
-                .class(retro::row_class(p, false))
-                .on_press_maybe(editable.then_some(Message::PickImage)),
-            retro::dim(
-                p,
-                self.with_shortcut(fl!("dock-image"), MenuAction::AddImage),
-            ),
-            widget::tooltip::Position::Top,
-        ));
-
-        row = row.push(divider()).push(widget::tooltip(
-            widget::button::custom(retro::accent2(p, "◐").size(15))
-                .padding([2, 7])
-                .class(retro::row_class(
+        items.push(
+            widget::tooltip(
+                widget::button::custom(retro::accent(p, "⧉").size(ds.glyph() + 1.0))
+                    .padding([ds.pad()[0].saturating_sub(1), ds.pad()[1]])
+                    .class(retro::row_class(p, false))
+                    .on_press_maybe(editable.then_some(Message::PickImage)),
+                retro::dim(
                     p,
-                    self.core.window.show_context && self.context_page == ContextPage::Themes,
-                ))
-                .on_press(Message::ToggleContextPage(ContextPage::Themes)),
-            retro::dim(
-                p,
-                self.with_shortcut(fl!("theme-colours"), MenuAction::Themes),
-            ),
-            widget::tooltip::Position::Top,
-        ));
+                    self.with_shortcut(fl!("dock-image"), MenuAction::AddImage),
+                ),
+                widget::tooltip::Position::Top,
+            )
+            .into(),
+        );
+
+        items.push(divider().into());
+        items.push(
+            widget::tooltip(
+                widget::button::custom(retro::accent2(p, "◐").size(ds.glyph() + 1.0))
+                    .padding([ds.pad()[0].saturating_sub(1), ds.pad()[1]])
+                    .class(retro::row_class(
+                        p,
+                        self.core.window.show_context && self.context_page == ContextPage::Themes,
+                    ))
+                    .on_press(Message::ToggleContextPage(ContextPage::Themes)),
+                retro::dim(
+                    p,
+                    self.with_shortcut(fl!("theme-colours"), MenuAction::Themes),
+                ),
+                widget::tooltip::Position::Top,
+            )
+            .into(),
+        );
+        let row = widget::flex_row(items)
+            .spacing(1)
+            .align_items(Alignment::Center);
 
         let pill = |content: Element<'a, Message>| {
             widget::container(
                 widget::container(content)
-                    .padding([3, 6])
+                    .padding(ds.pill())
                     .class(retro::dock_class(p)),
             )
             .width(Length::Fill)
@@ -1582,22 +2098,275 @@ impl AppModel {
     }
 
     /// The theme picker shown in the context drawer.
+    /// The Appearance drawer: Colour, Font and Size, each foldable.
     fn theme_picker(&self) -> Element<'_, Message> {
         let system = self.core.system_theme();
         let label_color: cosmic::iced::Color = system.cosmic().background(false).on.into();
-        let mut col = widget::column::with_capacity(retro::Theme::ALL.len() + 1)
-            .push(widget::text::caption(fl!("theme-picker-hint")))
+        let header = |label: String, section: Section| {
+            let open = self.appearance_open[section as usize];
+            widget::button::custom(
+                widget::row::with_capacity(2)
+                    .push(widget::text(if open { "▾" } else { "▸" }).size(16))
+                    .push(widget::text::heading(label))
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill),
+            )
+            .padding([6, 4])
+            .width(Length::Fill)
+            .class(cosmic::theme::Button::Text)
+            .on_press(Message::ToggleSection(section))
+        };
+        let mut col = widget::column::with_capacity(40)
             .spacing(6)
             .width(Length::Fill);
-        for theme in retro::Theme::ALL {
-            let palette = theme.palette(system);
-            col = col.push(retro::swatch(
-                theme,
-                &palette,
-                self.theme == theme,
-                label_color,
-                Message::SetTheme(theme),
-            ));
+
+        // Colour.
+        col = col.push(header(fl!("section-colour"), Section::Colour));
+        if self.appearance_open[Section::Colour as usize] {
+            col = col.push(widget::text::caption(fl!("theme-picker-hint")));
+            for theme in retro::Theme::ALL {
+                let palette = theme.palette(system);
+                col = col.push(retro::swatch(
+                    theme,
+                    &palette,
+                    self.theme == theme,
+                    label_color,
+                    Message::SetTheme(theme),
+                ));
+            }
+        }
+
+        // Font.
+        col = col.push(
+            widget::container(header(fl!("section-font"), Section::Font)).padding([8, 0, 0, 0]),
+        );
+        if self.appearance_open[Section::Font as usize] {
+            col = col.push(widget::text::caption(fl!("font-pairings-hint")));
+            let current = retro::PAIRINGS.iter().find(|pr| {
+                pr.title == self.title_font && pr.ui == self.ui_font && pr.body == self.editor_font
+            });
+            for pair in &retro::PAIRINGS {
+                let selected = current == Some(pair);
+                let title_font = if pair.title.has_bold() {
+                    cosmic::font::Font {
+                        weight: cosmic::iced::font::Weight::Bold,
+                        ..pair.title.font()
+                    }
+                } else {
+                    pair.title.font()
+                };
+                let sample = widget::column::with_capacity(4)
+                    .push(widget::text(pair.name).font(title_font).size(20))
+                    .push(
+                        widget::text(fl!("pairing-sample-ui"))
+                            .font(pair.ui.font())
+                            .size(13),
+                    )
+                    .push(
+                        widget::text(fl!("pairing-sample-body"))
+                            .font(pair.body.font())
+                            .size(15),
+                    )
+                    .push(widget::text::caption(pair.blurb))
+                    .spacing(3);
+                col = col.push(
+                    widget::button::custom(widget::container(sample).width(Length::Fill))
+                        .padding([8, 10])
+                        .width(Length::Fill)
+                        .class(if selected {
+                            cosmic::theme::Button::Suggested
+                        } else {
+                            cosmic::theme::Button::Standard
+                        })
+                        .on_press(Message::SetPairing(pair.key.to_owned())),
+                );
+            }
+            col = col.push(
+                widget::button::custom(widget::text(fl!("font-restore")))
+                    .padding([6, 12])
+                    .class(cosmic::theme::Button::Standard)
+                    .on_press(Message::RestoreFonts),
+            );
+            col = col.push(
+                widget::container(widget::text::heading(fl!("font-editor-only")))
+                    .padding([8, 0, 0, 0]),
+            );
+            for font in retro::EditorFont::ALL {
+                let selected = self.editor_font == font;
+                let sample = widget::column::with_capacity(2)
+                    .push(widget::text(font.label()).font(font.font()).size(17))
+                    .push(widget::text::caption(font.blurb()))
+                    .spacing(2);
+                col = col.push(
+                    widget::button::custom(widget::container(sample).width(Length::Fill))
+                        .padding([6, 10])
+                        .width(Length::Fill)
+                        .class(if selected {
+                            cosmic::theme::Button::Suggested
+                        } else {
+                            cosmic::theme::Button::Standard
+                        })
+                        .on_press(Message::SetFont(font)),
+                );
+            }
+        }
+
+        // Size: one card per pane with a live sample, then the dock.
+        col = col.push(
+            widget::container(header(fl!("section-size"), Section::Size)).padding([8, 0, 0, 0]),
+        );
+        if self.appearance_open[Section::Size as usize] {
+            let cards = [
+                (
+                    Pane::Sidebar,
+                    fl!("size-sidebar"),
+                    fl!("size-sample-sidebar"),
+                    self.sidebar_size,
+                    retro::mono(),
+                    retro::PANE_SIZE_MIN,
+                    retro::PANE_SIZE_MAX,
+                ),
+                (
+                    Pane::List,
+                    fl!("size-list"),
+                    fl!("size-sample-list"),
+                    self.list_size,
+                    retro::mono(),
+                    retro::PANE_SIZE_MIN,
+                    retro::PANE_SIZE_MAX,
+                ),
+                (
+                    Pane::Editor,
+                    fl!("size-editor"),
+                    fl!("size-sample-editor"),
+                    self.font_size,
+                    self.editor_font.font(),
+                    retro::FONT_SIZE_MIN,
+                    retro::FONT_SIZE_MAX,
+                ),
+            ];
+            for (pane, label, sample, size, font, min, max) in cards {
+                let step = |glyph: &'static str, delta: i16, enabled: bool| {
+                    widget::button::custom(widget::text(glyph).size(16))
+                        .padding([0, 10])
+                        .class(cosmic::theme::Button::Standard)
+                        .on_press_maybe(enabled.then_some(Message::SizeStep(pane, delta)))
+                };
+                let controls = widget::row::with_capacity(4)
+                    .push(widget::text::heading(label).width(Length::Fill))
+                    .push(step("−", -1, size > min))
+                    .push(widget::text(format!("{size} px")).size(14))
+                    .push(step("+", 1, size < max))
+                    .spacing(8)
+                    .align_y(Alignment::Center);
+                let card = widget::column::with_capacity(2)
+                    .push(controls)
+                    .push(widget::text(sample).font(font).size(f32::from(size)))
+                    .spacing(6)
+                    .width(Length::Fill);
+                col = col.push(
+                    widget::container(card)
+                        .padding([8, 12])
+                        .width(Length::Fill)
+                        .class(cosmic::theme::Container::Card),
+                );
+            }
+
+            col = col.push(
+                widget::container(widget::text::heading(fl!("dock-size"))).padding([6, 0, 0, 0]),
+            );
+            let mut sizes = widget::row::with_capacity(4).spacing(6);
+            for size in retro::DockSize::ALL {
+                sizes = sizes.push(
+                    widget::button::custom(widget::text(size.label()))
+                        .padding([4, 10])
+                        .class(if self.dock_size == size {
+                            cosmic::theme::Button::Suggested
+                        } else {
+                            cosmic::theme::Button::Standard
+                        })
+                        .on_press(Message::SetDockSize(size)),
+                );
+            }
+            col = col.push(sizes);
+
+            col = col.push(
+                widget::container(widget::text::heading(fl!("text-width"))).padding([6, 0, 0, 0]),
+            );
+            col = col.push(widget::text::caption(fl!("text-width-hint")));
+            let mut widths = widget::row::with_capacity(4).spacing(6);
+            for m in retro::Measure::ALL {
+                widths = widths.push(widget::tooltip(
+                    widget::button::custom(widget::text(m.label()).size(15))
+                        .padding([4, 10])
+                        .class(if self.measure == m {
+                            cosmic::theme::Button::Suggested
+                        } else {
+                            cosmic::theme::Button::Standard
+                        })
+                        .on_press(Message::SetMeasure(m)),
+                    widget::text::caption(m.blurb()),
+                    widget::tooltip::Position::Top,
+                ));
+            }
+            col = col.push(widths);
+        }
+
+        // Tasks: what a finished one is marked with.
+        col = col.push(
+            widget::container(header(fl!("section-tasks"), Section::Tasks)).padding([8, 0, 0, 0]),
+        );
+        if self.appearance_open[Section::Tasks as usize] {
+            col = col.push(widget::text::caption(fl!("task-marker-hint")));
+            let mut marks: Vec<Element<'_, Message>> =
+                Vec::with_capacity(retro::TASK_MARKERS.len());
+            for (mark, blurb) in retro::TASK_MARKERS {
+                let selected = self.task_marker == mark;
+                marks.push(
+                    widget::tooltip(
+                        widget::button::custom(
+                            widget::text(format!("[{mark}]"))
+                                .font(retro::mono())
+                                .size(16),
+                        )
+                        .padding([4, 8])
+                        .class(if selected {
+                            cosmic::theme::Button::Suggested
+                        } else {
+                            cosmic::theme::Button::Standard
+                        })
+                        .on_press(Message::SetTaskMarker(mark.to_owned())),
+                        widget::text::caption(blurb),
+                        widget::tooltip::Position::Top,
+                    )
+                    .into(),
+                );
+            }
+            col = col.push(widget::flex_row(marks).spacing(6));
+            let p = self.palette();
+            let sample = widget::column::with_capacity(2)
+                .push(
+                    retro::text(&p, fl!("task-sample-open"))
+                        .font(self.editor_font.font())
+                        .size(f32::from(self.font_size)),
+                )
+                .push(
+                    retro::text(
+                        &p,
+                        fl!("task-sample-done", mark = self.task_marker.as_str()),
+                    )
+                    .font(self.editor_font.font())
+                    .size(f32::from(self.font_size))
+                    .class(cosmic::theme::Text::Color(p.fg.scale_alpha(0.45))),
+                )
+                .spacing(4);
+            col = col.push(
+                widget::container(sample)
+                    .padding([8, 12])
+                    .width(Length::Fill)
+                    .class(cosmic::theme::Container::Card),
+            );
         }
         widget::scrollable(col).into()
     }
@@ -1632,7 +2401,15 @@ impl AppModel {
                     _ => ("[[", "]]"),
                 };
                 if let Some(selection) = editor.selection() {
-                    let text = format!("{before}{selection}{after}");
+                    // Already wrapped? Then this press unwraps it.
+                    let inner = selection
+                        .strip_prefix(before)
+                        .and_then(|s| s.strip_suffix(after))
+                        .filter(|s| !s.is_empty());
+                    let text = match inner {
+                        Some(inner) => inner.to_owned(),
+                        None => format!("{before}{selection}{after}"),
+                    };
                     perform(editor, Action::Edit(Edit::Paste(Arc::new(text))));
                 } else {
                     insert_str(editor, before);
@@ -1649,32 +2426,64 @@ impl AppModel {
                     Format::Bullet => "- ",
                     _ => "- [ ] ",
                 };
+                // Every line the selection touches (or just the cursor's).
                 let cursor = editor.cursor();
-                let line = editor
-                    .line(cursor.position.line)
+                let (first, last) = match cursor.selection {
+                    Some(sel) => (
+                        sel.line.min(cursor.position.line),
+                        sel.line.max(cursor.position.line),
+                    ),
+                    None => (cursor.position.line, cursor.position.line),
+                };
+                // Toggle: strip the same prefix if the line already carries it,
+                // otherwise replace a different line prefix and add ours. With
+                // several lines, the first line decides for all of them.
+                let first_text = editor
+                    .line(first)
                     .map(|l| l.text.into_owned())
                     .unwrap_or_default();
-                perform(editor, Action::Move(Motion::Home));
-                // Toggle: strip the same prefix if the line already carries it,
-                // otherwise replace a different line prefix and add ours.
-                let existing = ["- [ ] ", "- [x] ", "## ", "# ", "- "]
-                    .into_iter()
-                    .find(|p| line.starts_with(p));
-                if let Some(existing) = existing {
-                    for _ in 0..existing.chars().count() {
-                        perform(editor, Action::Edit(Edit::Delete));
+                let remove_only = line_prefix(&first_text).map(|(_, f)| f) == Some(format);
+                for l in first..=last {
+                    let line = editor
+                        .line(l)
+                        .map(|t| t.text.into_owned())
+                        .unwrap_or_default();
+                    editor.move_to(text_editor::Cursor {
+                        position: text_editor::Position { line: l, column: 0 },
+                        selection: None,
+                    });
+                    if let Some((len, _)) = line_prefix(&line) {
+                        for _ in 0..line[..len].chars().count() {
+                            perform(editor, Action::Edit(Edit::Delete));
+                        }
                     }
-                }
-                if existing != Some(prefix) {
-                    insert_str(editor, prefix);
+                    if !remove_only {
+                        insert_str(editor, prefix);
+                    }
                 }
                 perform(editor, Action::Move(Motion::End));
             }
             Format::Tag => insert_str(editor, "#"),
-            Format::Rule => insert_str(editor, "\n---\n"),
+            Format::Rule => {
+                // A rule wants a line of its own; it is drawn as a full-width line.
+                let cursor = editor.cursor();
+                let line_empty = editor
+                    .line(cursor.position.line)
+                    .is_none_or(|l| l.text.trim().is_empty());
+                if line_empty {
+                    perform(editor, Action::Move(Motion::End));
+                    insert_str(editor, "---\n");
+                } else {
+                    perform(editor, Action::Move(Motion::End));
+                    insert_str(editor, "\n---\n");
+                }
+            }
         }
         self.dirty = true;
         self.last_edit = Instant::now();
+        if self.blocks.needs_resplit() {
+            self.blocks.resplit();
+        }
     }
 
     /// In-app image picker: folders first, then image files.
@@ -1913,6 +2722,34 @@ impl AppModel {
                     col = col.push(text_el(i, content, id.clone()));
                     i += 1;
                 }
+                Block::Rule(_) => {
+                    if drag.is_some() && target == Some(offsets[i]) {
+                        col = col.push(retro::drop_line(p, fl!("drop-here")));
+                    }
+                    let rule = retro::rule_block(p);
+                    if drag.is_some() {
+                        let slot = |line: usize| {
+                            widget::mouse_area(
+                                widget::Space::new()
+                                    .width(Length::Fill)
+                                    .height(Length::Fill),
+                            )
+                            .on_move(move |_| Message::DragOver(line))
+                            .interaction(mouse::Interaction::Grabbing)
+                        };
+                        let halves = widget::column::with_capacity(2)
+                            .push(slot(offsets[i]))
+                            .push(slot(offsets[i] + 1))
+                            .width(Length::Fill)
+                            .height(Length::Fill);
+                        col = col.push(
+                            cosmic::iced::widget::stack([rule, halves.into()]).width(Length::Fill),
+                        );
+                    } else {
+                        col = col.push(rule);
+                    }
+                    i += 1;
+                }
                 Block::Image(r) => {
                     if drag.is_some() && target == Some(offsets[i]) {
                         col = col.push(retro::drop_line(p, fl!("drop-here")));
@@ -1963,6 +2800,15 @@ impl AppModel {
         if drag.is_some() && target == offsets.last().copied() {
             col = col.push(retro::drop_line(p, fl!("drop-here")));
         }
+        // The measure: the column never grows past the chosen width and sits
+        // centred with margins; a narrower pane simply wraps the text.
+        let mut column = widget::container(col).width(Length::Fill);
+        if let Some(max) = self.measure.max_width() {
+            column = column.max_width(max);
+        }
+        let col = widget::container(column)
+            .width(Length::Fill)
+            .align_x(Alignment::Center);
         widget::scrollable(col)
             .height(Length::Fill)
             .width(Length::Fill)
@@ -1981,7 +2827,7 @@ impl AppModel {
         let settings = markdown::Settings {
             palette: *p,
             show_markers: self.show_markers,
-            font: retro::mono(),
+            font: self.editor_font.font(),
         };
         let mut editor = cosmic::iced::widget::text_editor(content)
             .id(id)
@@ -1990,8 +2836,8 @@ impl AppModel {
             } else {
                 String::new()
             })
-            .font(retro::mono())
-            .size(15)
+            .font(self.editor_font.font())
+            .size(f32::from(self.font_size))
             .line_height(1.5)
             .padding([6, 10])
             .style(retro::editor_style(*p))
@@ -2220,8 +3066,8 @@ impl AppModel {
                     line.to_owned()
                 };
                 let line_el = retro::text(p, shown)
-                    .font(retro::mono())
-                    .size(15)
+                    .font(self.editor_font.font())
+                    .size(f32::from(self.font_size))
                     .line_height(1.5)
                     .width(Length::Fill);
                 let halves = widget::column::with_capacity(2)
@@ -2734,6 +3580,53 @@ impl AppModel {
                 None => Task::none(),
             },
             Step::Theme(key) => self.update(Message::SetTheme(retro::Theme::from_key(&key))),
+            Step::Fold(tag) => self.update(Message::ToggleTagFold(tag)),
+            Step::Nav(delta) => self.update(Message::NavigateNotes(delta)),
+            Step::ToggleBox(line, col) => {
+                let block = self.blocks.focused;
+                if let Some(c) = self.blocks.text_mut(block) {
+                    c.move_to(text_editor::Cursor {
+                        position: text_editor::Position { line, column: col },
+                        selection: None,
+                    });
+                }
+                let before = self.snapshot();
+                let marker = self.task_marker.clone();
+                if let Some(c) = self.blocks.text_mut(block)
+                    && crate::blocks::toggle_task_at_cursor(c, &marker)
+                {
+                    self.push_undo(before);
+                    self.dirty = true;
+                    self.last_edit = Instant::now();
+                }
+                Task::none()
+            }
+            Step::TagMenu(tag) => self.update(Message::TagMenu(Some(tag))),
+            Step::RenameTag(old, new) => {
+                self.tag_rename = Some((old, new));
+                self.update(Message::TagRenameCommit)
+            }
+            Step::Font(key) => self.update(Message::SetFont(retro::EditorFont::from_key(&key))),
+            Step::Pairing(key) => self.update(Message::SetPairing(key)),
+            Step::Section(name) => self.update(Message::ToggleSection(match name.as_str() {
+                "colour" | "color" => Section::Colour,
+                "font" => Section::Font,
+                "tasks" => Section::Tasks,
+                _ => Section::Size,
+            })),
+            Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
+            Step::Measure(key) => self.update(Message::SetMeasure(retro::Measure::from_key(&key))),
+            Step::Size(pane, delta) => {
+                let pane = match pane.as_str() {
+                    "sidebar" => Pane::Sidebar,
+                    "list" => Pane::List,
+                    _ => Pane::Editor,
+                };
+                self.update(Message::SizeStep(pane, delta))
+            }
+            Step::DockSize(key) => {
+                self.update(Message::SetDockSize(retro::DockSize::from_key(&key)))
+            }
             Step::Trash => self.update(Message::TrashCurrent),
             Step::Wait(_) => Task::none(),
             Step::Exit => {
@@ -2774,25 +3667,37 @@ fn header_button<'a>(
     .into()
 }
 
-fn note_row<'a>(p: &Palette, note: &'a NoteSummary, selected: bool) -> Element<'a, Message> {
+fn note_row<'a>(
+    p: &Palette,
+    note: &'a NoteSummary,
+    selected: bool,
+    size: u16,
+    ui: cosmic::font::Font,
+) -> Element<'a, Message> {
     let fg = if selected { p.selfg } else { p.fg };
+    let size = f32::from(size);
     let mut title_row = widget::row::with_capacity(3)
         .spacing(8)
         .align_y(Alignment::Center);
     if note.pinned {
-        title_row = title_row.push(retro::accent(p, "▲"));
+        title_row = title_row.push(retro::accent(p, "▲").size(size));
     }
     title_row = title_row
         .push(
             retro::text(p, note.title.clone())
                 .font(cosmic::font::Font {
                     weight: cosmic::iced::font::Weight::Bold,
-                    ..retro::mono()
+                    ..ui
                 })
+                .size(size)
                 .class(cosmic::theme::Text::Color(fg))
                 .width(Length::Fill),
         )
-        .push(retro::dim(p, format_date(note.modified)).size(11));
+        .push(
+            retro::dim(p, format_date(note.modified))
+                .font(ui)
+                .size(size - 2.0),
+        );
 
     let mut column = widget::column::with_capacity(2)
         .push(title_row)
@@ -2800,7 +3705,7 @@ fn note_row<'a>(p: &Palette, note: &'a NoteSummary, selected: bool) -> Element<'
         .width(Length::Fill);
     if !note.preview.is_empty() {
         let preview: String = note.preview.chars().take(90).collect();
-        column = column.push(retro::dim(p, preview));
+        column = column.push(retro::dim(p, preview).font(ui).size(size - 1.0));
     }
     column.into()
 }
@@ -2824,6 +3729,85 @@ fn format_time(when: DateTime<Utc>) -> String {
 
 /// Expand `a/b/c` tags into a depth-first tree, inserting implicit parents
 /// (`a`, `a/b`) that no note carries directly with a count of 0.
+/// Register every bundled font with the renderer (the title font and the
+/// editor faces). Safe to repeat: already-loaded byte slices are skipped.
+fn load_fonts() -> Task<cosmic::Action<Message>> {
+    let load = |bytes: &'static [u8]| {
+        cosmic::iced::font::load(bytes).map(|result| {
+            if let Err(err) = result {
+                tracing::error!(?err, "loading bundled font");
+            }
+            cosmic::Action::App(Message::FontLoaded)
+        })
+    };
+    let mut tasks = vec![load(retro::TITLE_FONT_BYTES)];
+    tasks.extend(retro::EDITOR_FONT_FILES.iter().map(|b| load(b)));
+    Task::batch(tasks)
+}
+
+/// Config stores 0 for "default"; anything else is clamped to the allowed range.
+fn size_from_config(px: u16, default: u16, min: u16, max: u16) -> u16 {
+    if px == 0 { default } else { px.clamp(min, max) }
+}
+
+fn pane_size_from_config(px: u16) -> u16 {
+    size_from_config(
+        px,
+        retro::PANE_SIZE_DEFAULT,
+        retro::PANE_SIZE_MIN,
+        retro::PANE_SIZE_MAX,
+    )
+}
+
+/// A text column whose size the user can set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Sidebar,
+    List,
+    Editor,
+}
+
+/// Foldable sections of the Appearance drawer (index into `appearance_open`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Colour = 0,
+    Font = 1,
+    Size = 2,
+    Tasks = 3,
+}
+
+fn title_font_from_config(s: &str) -> retro::EditorFont {
+    if s.is_empty() {
+        retro::EditorFont::Vt323
+    } else {
+        retro::EditorFont::from_key(s)
+    }
+}
+
+fn task_marker_from_config(s: &str) -> String {
+    if s.is_empty() {
+        "x".to_owned()
+    } else {
+        s.to_owned()
+    }
+}
+
+/// The block prefix a line already carries and the dock action that makes
+/// it: `# ` (H1), `## ` (H2), `- ` (bullet), `- [ ] ` / `- [✓] ` (to-do).
+fn line_prefix(line: &str) -> Option<(usize, Format)> {
+    if line.starts_with("## ") {
+        return Some((3, Format::H2));
+    }
+    if line.starts_with("# ") {
+        return Some((2, Format::H1));
+    }
+    let lm = note::list_marker(line)?;
+    match note::task_box(&line[lm..]) {
+        Some((len, _)) => Some((lm + len, Format::Todo)),
+        None => Some((lm, Format::Bullet)),
+    }
+}
+
 fn tag_tree(tags: &[(String, usize)]) -> Vec<(String, usize)> {
     let mut out: Vec<(String, usize)> = Vec::new();
     for (name, count) in tags {

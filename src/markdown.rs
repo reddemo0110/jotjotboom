@@ -33,6 +33,10 @@ pub enum Kind {
     /// Text of a completed task.
     Done,
     Strike,
+    /// An unticked task box `[ ]`.
+    TaskBox,
+    /// A ticked task box `[x]`.
+    TaskDone,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,20 +117,23 @@ pub fn scan_line(line: &str, in_fence: bool) -> (Vec<Span>, bool) {
             kind: Kind::ListMarker,
         });
         pos += 2;
-        // Task box.
-        if line[pos..].starts_with("[ ] ") {
+        // Task box: `[ ]` open, `[x]` / `[✓]` / `[🦆]` … done.
+        if let Some((len, done)) = crate::note::task_box(&line[pos..]) {
+            let close = line[pos..].find(']').unwrap_or(0) + 1;
             spans.push(Span {
-                range: pos..pos + 4,
-                kind: Kind::Marker,
+                range: pos..pos + close,
+                kind: if done { Kind::TaskDone } else { Kind::TaskBox },
             });
-            pos += 4;
-        } else if line[pos..].starts_with("[x] ") || line[pos..].starts_with("[X] ") {
-            spans.push(Span {
-                range: pos..pos + 4,
-                kind: Kind::Marker,
-            });
-            pos += 4;
-            base = Some(Kind::Done);
+            if len > close {
+                spans.push(Span {
+                    range: pos + close..pos + len,
+                    kind: Kind::Marker,
+                });
+            }
+            pos += len;
+            if done {
+                base = Some(Kind::Done);
+            }
         }
     } else {
         let digits = bytes[pos..]
@@ -370,7 +377,10 @@ impl MarkdownHighlighter {
             Kind::LinkUrl => (ghost, None),
             Kind::ListMarker => (p.accent, None),
             Kind::Quote => (p.dim, Some(italic)),
-            Kind::Done | Kind::Strike => (p.dim, None),
+            // Finished tasks fade into the theme rather than change colour.
+            Kind::Done | Kind::Strike => (p.fg.scale_alpha(0.45), None),
+            Kind::TaskBox => (p.dim, None),
+            Kind::TaskDone => (p.accent, Some(bold)),
         };
         Highlight {
             color: Some(color),
@@ -513,7 +523,8 @@ mod tests {
             kinds("- [x] done ✓"),
             vec![
                 ("- ", Kind::ListMarker),
-                ("[x] ", Kind::Marker),
+                ("[x]", Kind::TaskDone),
+                (" ", Kind::Marker),
                 ("done ✓", Kind::Done)
             ]
         );

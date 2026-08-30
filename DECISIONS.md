@@ -263,24 +263,17 @@ Copy of Big Fish in Little China with the tangerine accent muted
   destination pointing at the directory, not the file — fixed.
 
 ## 2026-08-30 — Comic frame and drag-to-move pictures
-- New frame style `comic` ("comic book"). First attempt (posterise raw
-  pixels + Sobel + black dot screen) looked like a muddy screen door; the
-  rewrite follows what the Photoshop "photo to comic" tutorials (Poster
-  Edges / Cutout / Color Halftone on Darken) and the OpenCV "Toonify"
-  pipeline agree on: (1) bilateral-smooth first, on a half-size copy, so
-  colour regions are homogeneous before anything else; (2) auto-levels to
-  the 2nd–98th percentile plus a lift, scaling chroma with the lift so
-  shadows stay coloured instead of going grey — on a comic page black is
-  only ever ink; (3) five cel bands of lightness with chroma snapped;
-  (4) outlines from the gradient of the smoothed luma with hysteresis,
-  specks under 14 px dropped (Toonify's min-area rule), thickened one
-  pixel; (5) one 45° Ben-Day screen of dots in the shadows only, each dot a
-  darker ink of the colour under it, sized by the continuous tone (the
-  dots do the shading inside a flat band); (6) cream paper, red plate a
-  pixel off-register. A four-plate CMYK rosette was tried and rejected:
-  authentic, but it turns dark regions into olive mud at note sizes.
-  The panel is a thick ink border on a newsprint gutter; a caption becomes
-  a yellow narration box in the top-left corner. Not palette-dependent.
+- New frame style `comic` ("comic book"): a 45° halftone screen (5 px
+  cells) over the photo, slightly desaturated (chroma × 0.8) to account for
+  the ink — dot size follows the tone at each cell centre, paper shows
+  between the dots, and each dot is a darker ink of the colour under it.
+  Two heavier versions were built and thrown out: posterise + Sobel + black
+  dots (muddy), then the full Photoshop/Toonify pipeline (bilateral smooth,
+  auto-levels, cel bands, hysteresis outlines, Ben-Day shadows) — the user
+  judged the flattening and outlines "terrible" on real photos, so the
+  treatment is just the halftone. The panel is a thick ink border on a
+  newsprint gutter; a caption becomes a yellow narration box in the
+  top-left corner. Not palette-dependent.
 - A picture is moved by dragging it (press, then travel > 6 px; a plain click
   still opens the ⋯ menu). While dragging, the note switches to a "drop
   mode": each body line is drawn as plain text with a top half (drop above)
@@ -293,3 +286,144 @@ Copy of Big Fish in Little China with the tangerine accent muted
   the pointer (window-to-editor coordinates are not available to `view`).
 - Script hook: `imgdrag:n:line` shows drop mode with the line before body
   line `line`; `imgmove:n:line` performs the move.
+
+## 2026-08-30 — Flat layout: hairlines, not gaps; foldable sub-tags
+- The user sent a reference screenshot: panes are flat and butt against each
+  other, separated by one-pixel lines, no gutters, no boxes. The btop-style
+  frames (Option A) are retired for the three columns: `retro::pane` is a
+  flat pane with the title (still VT323 in the accent) as a header row and
+  no border; `retro::vrule` / `retro::hrule` are the hairlines. The sidebar
+  sits on `bg`, list and editor on `panel`, so the tonal step reads like
+  the reference's darker sidebar. `frame_sized` stays for the inline "box frame"
+  image style. `GAP` is gone.
+- Sub-tags fold: a parent tag gets a ▸/▾ chevron; clicking it hides or
+  shows everything beneath it. Folded tags persist in cosmic-config
+  (`collapsed_tags`, full paths). Default is expanded. Indent is 14 px per
+  level instead of the old `└─` prefix. Script step `fold:<tag>`.
+
+## 2026-08-30 — Dock sizes, clean previews, text size, editor fonts
+- Dock size: Small / Medium / Large / WOW! (`retro::DockSize`), chosen in
+  the Appearance drawer, persisted as `dock_size`. The dock is now a
+  `flex_row`, so the big sizes wrap onto extra lines instead of running
+  off the pane.
+- Titles and previews only ever contain typed text: `strip_inline_markup`
+  swallows an image's `{frame=… w=…}` attributes with the image, the title
+  is the first line that still says something afterwards, and the preview
+  starts after that line (not after "the first non-blank line", which was
+  wrong when a note opened with a picture). `SCHEMA_VERSION` bumped to 2 so
+  the derived index rebuilds and stale previews disappear.
+- Editor text size: − / + at the foot of the sidebar, 1 px a step,
+  10–48 px, persisted as `editor_font_size` (0 = default 15). Applies to
+  every text block and the drag-mode lines.
+- Editor fonts: eight bundled faces (OFL/UFL, `resources/fonts`) plus the
+  system monospace — IBM Plex Mono, Fira Mono, Ubuntu Mono, Anonymous Pro,
+  Space Mono, Courier Prime, B612 Mono, VT323. Static Regular/Bold/Italic
+  files were chosen over variable fonts because cosmic-text picks faces by
+  weight and would render a variable font's bold as regular. Picked in the
+  Appearance drawer, persisted as `editor_font`. ~3.8 MB in the binary.
+- Bug found on the way: `iced::font::load` issued from `init()` is
+  silently dropped when the compositor does not exist yet (winit's
+  `Action::LoadFont` is `if let Some(compositor)`), so the VT323 title font
+  had never actually rendered under the xshot harness. Fonts are now also
+  loaded on `window::Event::Opened`; already-loaded slices are skipped.
+- Script steps: `font:<key>`, `fontsize:+n|-n`, `docksize:<key>`.
+
+## 2026-08-30 — Appearance drawer: Colour / Font / Size, beside the note
+- The drawer is now three foldable sections (▸/▾ headers, Colour open by
+  default): Colour (themes), Font (the nine editor faces), Size. Size has a
+  card per text pane — Sidebar, Notes list, Editor — each with a live
+  sample in that pane's font and − / + (1 px a step; sidebar and list
+  9–30 px, editor 10–48 px), then the dock size row. Persisted as
+  `sidebar_font_size`, `list_font_size`, `editor_font_size` (0 = default;
+  13 / 13 / 15). The − / + footer that lived at the foot of the sidebar is
+  gone — the user judged text size an occasional setting, not a control.
+- The views pane's fixed height now follows the sidebar size so "Trash"
+  never clips.
+- `core.window.context_is_overlay = false`: libcosmic lays the drawer out
+  beside the content instead of over the note being written. On a narrow
+  window the editor column gives way to the drawer; on a wide one both fit.
+- Script steps: `size:<sidebar|list|editor>:±n`, `section:<colour|font|size>`.
+
+## 2026-08-30 — Rename a tag everywhere
+- Right-click a tag in the sidebar → a small popover with "rename…"; that
+  swaps to an inline input pre-filled with the full path (`travels/japan`).
+  Enter commits, Esc / click-away cancels. `note::rename_tag` rewrites
+  `#old` and every `#old/…` in a body (same scanner as `extract_tags`, so
+  code fences, inline code and `#oldx` are left alone; the user's casing on
+  the unrenamed remainder is kept). `Store::rename_tag` applies it to every
+  file (trash included), re-indexes each changed file, and renames folder
+  entries under the old path. The open note is flushed first and reloaded
+  afterwards if it carried the tag; the current view and the folded set are
+  remapped. Unit-tested at both layers.
+- Script steps: `tagmenu:<tag>`, `renametag:<old>:<new>`.
+
+## 2026-08-30 — Arrow navigation, real rules, clickable task boxes, format review
+- ↑ / ↓ that nothing consumed (the editor is not focused — e.g. right after
+  clicking a note) open the note above / below, like a mail client, and the
+  list snaps so the selection stays in view. Implemented on the event
+  subscription's `Status::Ignored`, so the editor's own caret movement is
+  untouched.
+- `---` / `***` / `___` lines are blocks of their own (`Segment::Rule`,
+  `Block::Rule`), drawn as a full-width 2 px line in the muted colour.
+  Typing one (Enter after `---`) or pressing the rule button re-splits the
+  block live with the caret preserved (`Blocks::resplit`); Backspace at the
+  start of the text below removes it, like an image. Fenced `---` stays
+  text.
+- Task boxes: clicking `[ ]` / `[x]` flips it (one undo step). `[x]` is
+  drawn in the accent, bold; the finished text is the theme foreground at
+  45 % alpha. What the stock iced text editor cannot do — a real tick
+  glyph, a strike-through line, hidden markers, heading sizes — is exactly
+  the custom rich-editor milestone (build step 3); the highlighter can only
+  set colour and font per span.
+- Format buttons reviewed: bold / italic / code / link now unwrap when the
+  selection is already wrapped; heading / bullet / to-do apply to every
+  line a selection touches (the first line decides add vs remove) and
+  recognise `* ` / `+ ` / `[X]` prefixes; the rule button always puts the
+  rule on a line of its own.
+- Script steps: `nav:±n`, `togglebox:<line>:<col>`.
+
+## 2026-08-30 — `[]` makes a task; pick your own "done" mark
+- Typing `]` right after `[` at the start of a line (indent and a `- `
+  allowed) expands to `- [ ] ` (`Blocks::expand_task_shorthand`).
+- A task box is `[ ]` open, or `[` + one mark + `]` done. The mark lives
+  in the file: `- [✓] milk`, `- [🦆] milk`. Everything that reads boxes —
+  the highlighter, previews, the click toggle, the dock's to-do toggle —
+  goes through `note::task_box`, which accepts any single mark (≤ 12
+  bytes, no spaces), so `[x]` from other apps still works. Chosen in the
+  Appearance drawer's new Tasks section (x, ✓, ✔, –, •, ★, 🦆, 🔥, 💀, 🍕,
+  🐈, 🚀, 👍, 🍺) with a live sample; persisted as `task_marker`
+  (empty = x). The hint says plainly that other markdown apps only count
+  `x` as done — the user chose visible ticks over strict GFM.
+- Script step: `marker:<mark>`.
+
+## 2026-08-30 — The measure: a centred text column
+- Like Craft and other reading-first editors (the user sent references), the note text
+  lives in a column that stops growing at a chosen width and centres with
+  margins; a narrower pane just wraps the text to fit. Implemented as a
+  `max_width` container around the block column inside the editor's
+  scrollable, so images, rules and drop-mode lines follow the same measure.
+- Four widths, rated in fish in the Size section: 🐟 560 px, 🐟🐟 720 px
+  (default), 🐟🐟🐟 920 px, 🐟🐟🐟🐟 no limit. Persisted as `text_width`.
+- Script step: `measure:<key>`.
+
+## 2026-08-30 — Designer font pairings
+- Research (Typewolf, Pagecloud, Inspotype, Fontfabric, Readium's libre
+  font list) agrees on the recipe: a display or serif for headings over a
+  calm sans for UI, or one superfamily throughout; Atkinson Hyperlegible
+  and Lexend are the accessibility picks; Lato + a serif, PT Sans + PT
+  Serif, and Plex are the canonical free pairs. Only families with static
+  Regular/Bold/Italic files were bundled (cosmic-text ignores variable
+  axes): IBM Plex Serif, Lato, PT Sans, PT Serif, Atkinson Hyperlegible,
+  Ubuntu, Spectral, DM Serif Display, Special Elite. Skipped for being
+  variable-only: Playfair Display, Libre Baskerville, Merriweather, Source
+  Sans/Serif, Literata, Lexend, Cormorant. Fonts are now ~13 MB of the
+  binary.
+- Eight pairings (`retro::PAIRINGS`), each setting three faces — pane
+  titles, sidebar + list, note: JotJotBoom (default: VT323 / system mono /
+  system mono), Plex, Editorial (Spectral + Lato), Magazine (DM Serif
+  Display + Lato), ParaType (PT Serif + PT Sans), Hyperlegible, Ubuntu,
+  Typewriter (Special Elite + Courier Prime). Persisted as `title_font`,
+  `ui_font`, `editor_font`; "Restore default fonts" re-applies the first.
+  Titles are set bold except for faces that only ship a Regular. The
+  single "Editor font only" list stays underneath for mixing.
+- Script step: `pairing:<key>`.

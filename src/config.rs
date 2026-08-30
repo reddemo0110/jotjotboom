@@ -18,6 +18,25 @@ pub struct Config {
     pub hide_nav: bool,
     /// Collapse the notes list.
     pub hide_list: bool,
+    /// Tags whose sub-tags are folded away in the sidebar (full paths).
+    pub collapsed_tags: Vec<String>,
+    /// Editor font key (see `retro::EditorFont::key`). Empty = system monospace.
+    pub editor_font: String,
+    /// Sidebar + notes-list font key. Empty = system monospace.
+    pub ui_font: String,
+    /// Pane-title font key. Empty = VT323.
+    pub title_font: String,
+    /// Editor text size in px. 0 = default.
+    pub editor_font_size: u16,
+    /// Sidebar (views/tags) and notes-list text sizes in px. 0 = default.
+    pub sidebar_font_size: u16,
+    pub list_font_size: u16,
+    /// Dock size key: small, medium, large, wow. Empty = medium.
+    pub dock_size: String,
+    /// What goes inside the brackets of a finished task. Empty = "x".
+    pub task_marker: String,
+    /// Widest the note text gets before it centres: narrow, medium, wide, full.
+    pub text_width: String,
 }
 
 impl Config {

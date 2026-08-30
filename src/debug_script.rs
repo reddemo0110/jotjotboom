@@ -60,6 +60,30 @@ pub enum Step {
     ImgCaption(usize, String),
     /// Switch theme by key.
     Theme(String),
+    /// Fold / unfold the sub-tags of a tag: `fold:travels`.
+    Fold(String),
+    /// Editor font by key: `font:plex`.
+    Font(String),
+    /// Designer font pairing by key: `pairing:editorial`.
+    Pairing(String),
+    /// Step a pane's text size: `size:editor:+3`, `size:sidebar:-1`, `size:list:+2`.
+    Size(String, i16),
+    /// Dock size by key: `docksize:wow`.
+    DockSize(String),
+    /// Fold / unfold an Appearance section: `section:colour|font|size`.
+    Section(String),
+    /// Open the right-click menu of a tag: `tagmenu:travels`.
+    TagMenu(String),
+    /// Set the finished-task mark: `marker:🦆`.
+    Marker(String),
+    /// Set the text column width: `measure:narrow|medium|wide|full`.
+    Measure(String),
+    /// Walk the notes list like ↑/↓: `nav:+1` / `nav:-1`.
+    Nav(i32),
+    /// Toggle the task box at line:column of the focused block: `togglebox:2:3`.
+    ToggleBox(usize, usize),
+    /// Rename a tag everywhere: `renametag:old:new`.
+    RenameTag(String, String),
     /// Pause for the given milliseconds (lets autosave run).
     Wait(u64),
     /// Flush and quit.
@@ -122,6 +146,30 @@ pub fn parse(script: &str) -> Vec<Step> {
                     Step::ImgCaption(n.trim().parse().ok()?, unescape(text))
                 }
                 "theme" => Step::Theme(arg.trim().to_owned()),
+                "fold" => Step::Fold(arg.trim().to_owned()),
+                "font" => Step::Font(arg.trim().to_owned()),
+                "pairing" => Step::Pairing(arg.trim().to_owned()),
+                "size" => {
+                    let (pane, delta) = arg.trim().split_once(':')?;
+                    Step::Size(
+                        pane.to_owned(),
+                        delta.trim().trim_start_matches('+').parse().ok()?,
+                    )
+                }
+                "docksize" => Step::DockSize(arg.trim().to_owned()),
+                "section" => Step::Section(arg.trim().to_owned()),
+                "tagmenu" => Step::TagMenu(arg.trim().to_owned()),
+                "nav" => Step::Nav(arg.trim().trim_start_matches('+').parse().ok()?),
+                "marker" => Step::Marker(arg.trim().to_owned()),
+                "measure" => Step::Measure(arg.trim().to_owned()),
+                "togglebox" => {
+                    let (l, c) = arg.trim().split_once(':')?;
+                    Step::ToggleBox(l.parse().ok()?, c.parse().ok()?)
+                }
+                "renametag" => {
+                    let (old, new) = arg.trim().split_once(':')?;
+                    Step::RenameTag(old.to_owned(), new.to_owned())
+                }
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
                 "exit" => Step::Exit,
                 other => {

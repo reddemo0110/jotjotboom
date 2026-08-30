@@ -12,6 +12,8 @@ pub enum Block {
         id: widget::Id,
     },
     Image(ImageRef),
+    /// A horizontal rule, drawn full-width; the markdown is kept verbatim.
+    Rule(String),
 }
 
 pub struct Blocks {
@@ -36,6 +38,7 @@ impl Blocks {
                     id: widget::Id::unique(),
                 },
                 Segment::Image(r) => Block::Image(r),
+                Segment::Rule(t) => Block::Rule(t),
             })
             .collect();
         Self { items, focused: 0 }
@@ -49,6 +52,7 @@ impl Blocks {
             .map(|b| match b {
                 Block::Text { content, .. } => Segment::Text(content_text(content)),
                 Block::Image(r) => Segment::Image(r.clone()),
+                Block::Rule(t) => Segment::Rule(t.clone()),
             })
             .collect();
         images::join(&segments)
@@ -60,6 +64,7 @@ impl Blocks {
             .map(|b| match b {
                 Block::Text { content, .. } => Segment::Text(content_text(content)),
                 Block::Image(r) => Segment::Image(r.clone()),
+                Block::Rule(t) => Segment::Rule(t.clone()),
             })
             .collect()
     }
@@ -185,7 +190,15 @@ impl Blocks {
 
     /// Remove the image block at `block`, merging the text around it.
     pub fn remove_image(&mut self, block: usize) {
-        if !matches!(self.items.get(block), Some(Block::Image(_))) {
+        self.remove_block(block);
+    }
+
+    /// Remove a non-text block (image or rule), merging the text around it.
+    pub fn remove_block(&mut self, block: usize) {
+        if !matches!(
+            self.items.get(block),
+            Some(Block::Image(_) | Block::Rule(_))
+        ) {
             return;
         }
         let mut segs = self.segments();
@@ -228,11 +241,75 @@ impl Blocks {
                         t.split('\n').count()
                     }
                 }
-                Block::Image(_) => 1,
+                Block::Image(_) | Block::Rule(_) => 1,
             };
         }
         out.push(line);
         out
+    }
+
+    /// Re-split after typing: a `---` line inside a text block becomes a
+    /// rule block of its own (images likewise). Keeps the caret where it
+    /// was, in whichever block now owns that line. Returns whether the
+    /// block structure changed.
+    pub fn resplit(&mut self) -> bool {
+        let body = self.body();
+        let fresh = Blocks::from_body(&body);
+        let same_shape = fresh.items.len() == self.items.len()
+            && fresh
+                .items
+                .iter()
+                .zip(&self.items)
+                .all(|(a, b)| std::mem::discriminant(a) == std::mem::discriminant(b));
+        if same_shape {
+            return false;
+        }
+        let offsets = self.line_offsets();
+        let (line, column) = self
+            .text(self.focused)
+            .map(|c| {
+                let cur = c.cursor().position;
+                (offsets[self.focused] + cur.line, cur.column)
+            })
+            .unwrap_or((0, 0));
+        self.items = fresh.items;
+        let offsets = self.line_offsets();
+        // The text block that owns the caret's line (a rule owns its own
+        // line, so a caret "on" it lands in the text after it).
+        let owner = (0..self.items.len())
+            .filter(|&i| matches!(self.items[i], Block::Text { .. }))
+            .find(|&i| line >= offsets[i] && line < offsets[i + 1].max(offsets[i] + 1))
+            .or_else(|| self.text_after(0).or(Some(0)))
+            .unwrap_or(0);
+        self.focused = if matches!(self.items.get(owner), Some(Block::Text { .. })) {
+            owner
+        } else {
+            self.last_text()
+        };
+        let local = line.saturating_sub(offsets[self.focused]);
+        if let Some(c) = self.focused_text() {
+            // Never point past the end of the line we land on (cosmic-text
+            // panics on an out-of-range caret).
+            let local = local.min(c.line_count().saturating_sub(1));
+            let len = c.line(local).map_or(0, |l| l.text.chars().count());
+            c.move_to(text_editor::Cursor {
+                position: text_editor::Position {
+                    line: local,
+                    column: column.min(len),
+                },
+                selection: None,
+            });
+        }
+        true
+    }
+
+    /// Whether the focused block holds a line that should be its own block.
+    pub fn needs_resplit(&self) -> bool {
+        self.text(self.focused).is_some_and(|c| {
+            content_text(c)
+                .split('\n')
+                .any(|l| images::is_rule_line(l) || images::parse_line(l).is_some())
+        })
     }
 
     /// Move the image at `block` so that its line sits just before body line
@@ -271,6 +348,86 @@ impl Blocks {
     }
 }
 
+/// If the cursor sits on a task box (`- [ ] ` / `- [x] `), flip it, marking
+/// a finished task with `marker`. Returns whether anything changed.
+pub fn toggle_task_at_cursor(content: &mut text_editor::Content, marker: &str) -> bool {
+    use crate::note::{list_marker, task_box};
+    use text_editor::{Action, Cursor, Edit, Motion, Position};
+    let cursor = content.cursor();
+    let Some(line) = content.line(cursor.position.line) else {
+        return false;
+    };
+    let text = line.text.to_string();
+    let indent = text.len() - text.trim_start().len();
+    let Some(lm) = list_marker(&text[indent..]) else {
+        return false;
+    };
+    let box_start = indent + lm;
+    let Some((_, done)) = task_box(&text[box_start..]) else {
+        return false;
+    };
+    let close = text[box_start..].find(']').unwrap_or(0) + 1;
+    let box_chars = text[box_start..box_start + close].chars().count();
+    let start_col = text[..box_start].chars().count();
+    // Only a click on the box itself (or just after it) counts.
+    let col = cursor.position.column;
+    if col < start_col || col > start_col + box_chars {
+        return false;
+    }
+    let flipped = if done {
+        "[ ]".to_owned()
+    } else {
+        format!("[{marker}]")
+    };
+    content.move_to(Cursor {
+        position: Position {
+            line: cursor.position.line,
+            column: start_col,
+        },
+        selection: None,
+    });
+    for _ in 0..box_chars {
+        content.perform(Action::Select(Motion::Right));
+    }
+    content.perform(Action::Edit(Edit::Paste(std::sync::Arc::new(flipped))));
+    content.perform(Action::Move(Motion::End));
+    true
+}
+
+/// Typing `[]` at the start of a line (after an optional `- `) turns it
+/// into a task: `- [ ] `. Call right after a `]` was inserted.
+pub fn expand_task_shorthand(content: &mut text_editor::Content) -> bool {
+    use crate::note::list_marker;
+    use text_editor::{Action, Cursor, Edit, Motion, Position};
+    let cursor = content.cursor();
+    let Some(line) = content.line(cursor.position.line) else {
+        return false;
+    };
+    let text = line.text.to_string();
+    let before: String = text.chars().take(cursor.position.column).collect();
+    let indent_len = before.len() - before.trim_start().len();
+    let body = &before[indent_len..];
+    let body = list_marker(body).map_or(body, |n| &body[n..]);
+    if body != "[]" {
+        return false;
+    }
+    let indent = &before[..indent_len];
+    content.move_to(Cursor {
+        position: Position {
+            line: cursor.position.line,
+            column: 0,
+        },
+        selection: None,
+    });
+    for _ in 0..before.chars().count() {
+        content.perform(Action::Select(Motion::Right));
+    }
+    content.perform(Action::Edit(Edit::Paste(std::sync::Arc::new(format!(
+        "{indent}- [ ] "
+    )))));
+    true
+}
+
 /// `Content::text()` appends a trailing newline; drop it so joins stay exact.
 fn content_text(content: &text_editor::Content) -> String {
     let mut t = content.text();
@@ -297,6 +454,93 @@ mod tests {
         assert_eq!(b.images().len(), 1);
         b.remove_image(1);
         assert_eq!(b.body(), "hello\nworld\n");
+    }
+
+    #[test]
+    fn rules_are_blocks_and_task_boxes_toggle() {
+        use text_editor::{Action, Cursor, Edit, Motion, Position};
+        let mut b = Blocks::from_body("one\n---\n- [ ] milk\n- [x] eggs\n");
+        assert!(matches!(b.items.get(1), Some(Block::Rule(r)) if r == "---"));
+        assert_eq!(b.line_offsets(), vec![0, 1, 2, 4]);
+        assert_eq!(b.body(), "one\n---\n- [ ] milk\n- [x] eggs\n");
+        let at = |line, column| Cursor {
+            position: Position { line, column },
+            selection: None,
+        };
+        let c = b.text_mut(2).unwrap();
+        // Click on the box flips it; a click in the text does nothing.
+        c.move_to(at(0, 3));
+        assert!(toggle_task_at_cursor(c, "🦆"));
+        c.move_to(at(1, 8));
+        assert!(!toggle_task_at_cursor(c, "x"));
+        c.move_to(at(1, 2));
+        assert!(toggle_task_at_cursor(c, "x"));
+        assert_eq!(b.body(), "one\n---\n- [🦆] milk\n- [ ] eggs\n");
+        // A duck unticks again, and `[]` typed on a fresh line expands.
+        let c = b.text_mut(2).unwrap();
+        c.move_to(at(0, 4));
+        assert!(toggle_task_at_cursor(c, "✓"));
+        assert_eq!(b.body(), "one\n---\n- [ ] milk\n- [ ] eggs\n");
+        let c = b.text_mut(2).unwrap();
+        c.perform(Action::Move(Motion::DocumentEnd));
+        for ch in "\n  []".chars() {
+            c.perform(Action::Edit(if ch == '\n' {
+                Edit::Enter
+            } else {
+                Edit::Insert(ch)
+            }));
+        }
+        assert!(expand_task_shorthand(c));
+        for ch in "bread".chars() {
+            c.perform(Action::Edit(Edit::Insert(ch)));
+        }
+        assert_eq!(
+            b.body(),
+            "one\n---\n- [ ] milk\n- [ ] eggs\n  - [ ] bread\n"
+        );
+        assert!(!expand_task_shorthand(b.text_mut(2).unwrap()));
+        b.remove_block(1);
+        assert_eq!(b.body(), "one\n- [ ] milk\n- [ ] eggs\n  - [ ] bread\n");
+    }
+
+    #[test]
+    fn typing_a_rule_splits_live_and_keeps_the_caret() {
+        use text_editor::{Action, Edit, Motion};
+        let mut b = Blocks::from_body("alpha\n");
+        let c = b.focused_text().unwrap();
+        c.perform(Action::Move(Motion::DocumentEnd));
+        for ch in "\n---\nbeta".chars() {
+            c.perform(Action::Edit(if ch == '\n' {
+                Edit::Enter
+            } else {
+                Edit::Insert(ch)
+            }));
+        }
+        assert!(b.needs_resplit());
+        assert!(b.resplit());
+        assert_eq!(b.body(), "alpha\n---\nbeta\n");
+        assert!(matches!(b.items.get(1), Some(Block::Rule(_))));
+        assert_eq!(b.focused, 2);
+        let cur = b.text(2).unwrap().cursor().position;
+        assert_eq!((cur.line, cur.column), (0, 4));
+        assert!(!b.resplit());
+        // Caret on the rule line itself (typed `---`, no Enter yet) lands in
+        // the empty block after it, clamped to its length.
+        let mut b = Blocks::from_body("alpha\n");
+        let c = b.focused_text().unwrap();
+        c.perform(Action::Move(Motion::DocumentEnd));
+        for ch in "\n---".chars() {
+            c.perform(Action::Edit(if ch == '\n' {
+                Edit::Enter
+            } else {
+                Edit::Insert(ch)
+            }));
+        }
+        assert!(b.resplit());
+        assert_eq!(b.body(), "alpha\n---\n");
+        assert_eq!(b.focused, 2);
+        let cur = b.text(2).unwrap().cursor().position;
+        assert_eq!((cur.line, cur.column), (0, 0));
     }
 
     #[test]

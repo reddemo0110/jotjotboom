@@ -380,6 +380,472 @@ pub fn mono() -> Font {
     cosmic::font::mono()
 }
 
+/// Bundled editor fonts (all OFL/UFL, files under `resources/fonts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EditorFont {
+    #[default]
+    System,
+    Plex,
+    Fira,
+    Ubuntu,
+    Anonymous,
+    Space,
+    Courier,
+    B612,
+    Vt323,
+    PlexSerif,
+    Lato,
+    PtSans,
+    PtSerif,
+    Atkinson,
+    UbuntuSans,
+    Spectral,
+    DmSerif,
+    SpecialElite,
+}
+
+macro_rules! font_files {
+    ($($path:literal),* $(,)?) => { &[$(include_bytes!(concat!("../resources/fonts/", $path))),*] };
+}
+
+impl EditorFont {
+    pub const ALL: [EditorFont; 18] = [
+        EditorFont::System,
+        EditorFont::Plex,
+        EditorFont::Fira,
+        EditorFont::Ubuntu,
+        EditorFont::Anonymous,
+        EditorFont::Space,
+        EditorFont::Courier,
+        EditorFont::B612,
+        EditorFont::Vt323,
+        EditorFont::PlexSerif,
+        EditorFont::Lato,
+        EditorFont::PtSans,
+        EditorFont::PtSerif,
+        EditorFont::Atkinson,
+        EditorFont::UbuntuSans,
+        EditorFont::Spectral,
+        EditorFont::DmSerif,
+        EditorFont::SpecialElite,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            EditorFont::System => "system",
+            EditorFont::Plex => "plex",
+            EditorFont::Fira => "fira",
+            EditorFont::Ubuntu => "ubuntu",
+            EditorFont::Anonymous => "anonymous",
+            EditorFont::Space => "space",
+            EditorFont::Courier => "courier",
+            EditorFont::B612 => "b612",
+            EditorFont::Vt323 => "vt323",
+            EditorFont::PlexSerif => "plexserif",
+            EditorFont::Lato => "lato",
+            EditorFont::PtSans => "ptsans",
+            EditorFont::PtSerif => "ptserif",
+            EditorFont::Atkinson => "atkinson",
+            EditorFont::UbuntuSans => "ubuntusans",
+            EditorFont::Spectral => "spectral",
+            EditorFont::DmSerif => "dmserif",
+            EditorFont::SpecialElite => "specialelite",
+        }
+    }
+
+    pub fn from_key(key: &str) -> EditorFont {
+        EditorFont::ALL
+            .into_iter()
+            .find(|f| f.key() == key)
+            .unwrap_or_default()
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            EditorFont::System => "System monospace",
+            EditorFont::Plex => "IBM Plex Mono",
+            EditorFont::Fira => "Fira Mono",
+            EditorFont::Ubuntu => "Ubuntu Mono",
+            EditorFont::Anonymous => "Anonymous Pro",
+            EditorFont::Space => "Space Mono",
+            EditorFont::Courier => "Courier Prime",
+            EditorFont::B612 => "B612 Mono",
+            EditorFont::Vt323 => "VT323",
+            EditorFont::PlexSerif => "IBM Plex Serif",
+            EditorFont::Lato => "Lato",
+            EditorFont::PtSans => "PT Sans",
+            EditorFont::PtSerif => "PT Serif",
+            EditorFont::Atkinson => "Atkinson Hyperlegible",
+            EditorFont::UbuntuSans => "Ubuntu",
+            EditorFont::Spectral => "Spectral",
+            EditorFont::DmSerif => "DM Serif Display",
+            EditorFont::SpecialElite => "Special Elite",
+        }
+    }
+
+    pub fn blurb(self) -> &'static str {
+        match self {
+            EditorFont::System => "whatever your desktop uses",
+            EditorFont::Plex => "IBM's clean workhorse",
+            EditorFont::Fira => "Mozilla's, wide and friendly",
+            EditorFont::Ubuntu => "narrow, humanist, a bit cheeky",
+            EditorFont::Anonymous => "classic terminal, sharp serifs",
+            EditorFont::Space => "Colophon's geometric oddball",
+            EditorFont::Courier => "the typewriter, done properly",
+            EditorFont::B612 => "Airbus cockpit font, built to be read",
+            EditorFont::Vt323 => "the title font, pixel terminal",
+            EditorFont::PlexSerif => "IBM's serif, made for screens",
+            EditorFont::Lato => "warm, friendly humanist sans",
+            EditorFont::PtSans => "ParaType's public sans",
+            EditorFont::PtSerif => "ParaType's public serif",
+            EditorFont::Atkinson => "Braille Institute's low-vision face",
+            EditorFont::UbuntuSans => "the Ubuntu sans",
+            EditorFont::Spectral => "a serif drawn for reading on screens",
+            EditorFont::DmSerif => "high-contrast display serif",
+            EditorFont::SpecialElite => "a well-used typewriter",
+        }
+    }
+
+    /// Faces that only ship a Regular; bold is synthesised by the renderer's
+    /// nearest match, so titles in them are set at their normal weight.
+    pub fn has_bold(self) -> bool {
+        !matches!(
+            self,
+            EditorFont::Vt323 | EditorFont::DmSerif | EditorFont::SpecialElite
+        )
+    }
+
+    /// The font to hand to widgets. Bundled faces are loaded at start-up
+    /// (see [`EDITOR_FONT_FILES`]); until then cosmic-text falls back.
+    pub fn font(self) -> Font {
+        match self {
+            EditorFont::System => mono(),
+            EditorFont::Vt323 => TITLE_FONT,
+            _ => Font {
+                family: Family::Name(self.label()),
+                ..Font::DEFAULT
+            },
+        }
+    }
+}
+
+/// Every bundled face that must be registered before the editor uses it.
+pub const EDITOR_FONT_FILES: &[&[u8]] = font_files![
+    "ofl/ibmplexmono/IBMPlexMono-Regular.ttf",
+    "ofl/ibmplexmono/IBMPlexMono-Bold.ttf",
+    "ofl/ibmplexmono/IBMPlexMono-Italic.ttf",
+    "ofl/ibmplexmono/IBMPlexMono-BoldItalic.ttf",
+    "ofl/firamono/FiraMono-Regular.ttf",
+    "ofl/firamono/FiraMono-Bold.ttf",
+    "ufl/ubuntumono/UbuntuMono-Regular.ttf",
+    "ufl/ubuntumono/UbuntuMono-Bold.ttf",
+    "ufl/ubuntumono/UbuntuMono-Italic.ttf",
+    "ufl/ubuntumono/UbuntuMono-BoldItalic.ttf",
+    "ofl/anonymouspro/AnonymousPro-Regular.ttf",
+    "ofl/anonymouspro/AnonymousPro-Bold.ttf",
+    "ofl/anonymouspro/AnonymousPro-Italic.ttf",
+    "ofl/anonymouspro/AnonymousPro-BoldItalic.ttf",
+    "ofl/spacemono/SpaceMono-Regular.ttf",
+    "ofl/spacemono/SpaceMono-Bold.ttf",
+    "ofl/spacemono/SpaceMono-Italic.ttf",
+    "ofl/spacemono/SpaceMono-BoldItalic.ttf",
+    "ofl/courierprime/CourierPrime-Regular.ttf",
+    "ofl/courierprime/CourierPrime-Bold.ttf",
+    "ofl/courierprime/CourierPrime-Italic.ttf",
+    "ofl/courierprime/CourierPrime-BoldItalic.ttf",
+    "ofl/b612mono/B612Mono-Regular.ttf",
+    "ofl/b612mono/B612Mono-Bold.ttf",
+    "ofl/b612mono/B612Mono-Italic.ttf",
+    "ofl/b612mono/B612Mono-BoldItalic.ttf",
+    "ofl/ibmplexserif/IBMPlexSerif-Regular.ttf",
+    "ofl/ibmplexserif/IBMPlexSerif-Bold.ttf",
+    "ofl/ibmplexserif/IBMPlexSerif-Italic.ttf",
+    "ofl/ibmplexserif/IBMPlexSerif-BoldItalic.ttf",
+    "ofl/lato/Lato-Regular.ttf",
+    "ofl/lato/Lato-Bold.ttf",
+    "ofl/lato/Lato-Italic.ttf",
+    "ofl/lato/Lato-BoldItalic.ttf",
+    "ofl/ptsans/PT_Sans-Web-Regular.ttf",
+    "ofl/ptsans/PT_Sans-Web-Bold.ttf",
+    "ofl/ptsans/PT_Sans-Web-Italic.ttf",
+    "ofl/ptsans/PT_Sans-Web-BoldItalic.ttf",
+    "ofl/ptserif/PT_Serif-Web-Regular.ttf",
+    "ofl/ptserif/PT_Serif-Web-Bold.ttf",
+    "ofl/ptserif/PT_Serif-Web-Italic.ttf",
+    "ofl/ptserif/PT_Serif-Web-BoldItalic.ttf",
+    "ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Regular.ttf",
+    "ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Bold.ttf",
+    "ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Italic.ttf",
+    "ofl/atkinsonhyperlegible/AtkinsonHyperlegible-BoldItalic.ttf",
+    "ufl/ubuntu/Ubuntu-Regular.ttf",
+    "ufl/ubuntu/Ubuntu-Bold.ttf",
+    "ufl/ubuntu/Ubuntu-Italic.ttf",
+    "ufl/ubuntu/Ubuntu-BoldItalic.ttf",
+    "ofl/spectral/Spectral-Regular.ttf",
+    "ofl/spectral/Spectral-Bold.ttf",
+    "ofl/spectral/Spectral-Italic.ttf",
+    "ofl/spectral/Spectral-BoldItalic.ttf",
+    "ofl/dmserifdisplay/DMSerifDisplay-Regular.ttf",
+    "ofl/dmserifdisplay/DMSerifDisplay-Italic.ttf",
+    "apache/specialelite/SpecialElite-Regular.ttf",
+];
+
+/// A designer pairing: one face for pane titles, one for the sidebar and
+/// list, one for the note. Sourced from the usual pairing guides — a
+/// display or serif over a calm sans, or one superfamily throughout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pairing {
+    pub key: &'static str,
+    pub name: &'static str,
+    pub blurb: &'static str,
+    pub title: EditorFont,
+    pub ui: EditorFont,
+    pub body: EditorFont,
+}
+
+pub const PAIRINGS: [Pairing; 8] = [
+    Pairing {
+        key: "jotjotboom",
+        name: "JotJotBoom",
+        blurb: "the default — VT323 titles, your system monospace everywhere else",
+        title: EditorFont::Vt323,
+        ui: EditorFont::System,
+        body: EditorFont::System,
+    },
+    Pairing {
+        key: "plex",
+        name: "Plex",
+        blurb: "IBM's superfamily: Plex Serif titles and notes, Plex Mono for the chrome",
+        title: EditorFont::PlexSerif,
+        ui: EditorFont::Plex,
+        body: EditorFont::PlexSerif,
+    },
+    Pairing {
+        key: "editorial",
+        name: "Editorial",
+        blurb: "Spectral, a screen serif, over Lato — the classic serif-body / sans-UI split",
+        title: EditorFont::Spectral,
+        ui: EditorFont::Lato,
+        body: EditorFont::Spectral,
+    },
+    Pairing {
+        key: "magazine",
+        name: "Magazine",
+        blurb: "DM Serif Display headlines, Lato for everything you read and click",
+        title: EditorFont::DmSerif,
+        ui: EditorFont::Lato,
+        body: EditorFont::Lato,
+    },
+    Pairing {
+        key: "paratype",
+        name: "ParaType",
+        blurb: "PT Serif and PT Sans, drawn together to be used together",
+        title: EditorFont::PtSerif,
+        ui: EditorFont::PtSans,
+        body: EditorFont::PtSerif,
+    },
+    Pairing {
+        key: "hyperlegible",
+        name: "Hyperlegible",
+        blurb: "Atkinson Hyperlegible throughout — built for low vision, kind to everyone",
+        title: EditorFont::Atkinson,
+        ui: EditorFont::Atkinson,
+        body: EditorFont::Atkinson,
+    },
+    Pairing {
+        key: "ubuntu",
+        name: "Ubuntu",
+        blurb: "the Ubuntu family: humanist sans for the chrome, Ubuntu Mono for the note",
+        title: EditorFont::UbuntuSans,
+        ui: EditorFont::UbuntuSans,
+        body: EditorFont::Ubuntu,
+    },
+    Pairing {
+        key: "typewriter",
+        name: "Typewriter",
+        blurb: "Special Elite titles over Courier Prime — a manuscript in progress",
+        title: EditorFont::SpecialElite,
+        ui: EditorFont::Courier,
+        body: EditorFont::Courier,
+    },
+];
+
+impl Pairing {
+    pub fn from_key(key: &str) -> Option<&'static Pairing> {
+        PAIRINGS.iter().find(|p| p.key == key)
+    }
+
+    pub fn default_pairing() -> &'static Pairing {
+        &PAIRINGS[0]
+    }
+}
+
+/// How wide the note text may get before the column centres itself with
+/// margins (Craft style). Narrower windows always wrap to fit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Measure {
+    Narrow,
+    #[default]
+    Medium,
+    Wide,
+    Full,
+}
+
+impl Measure {
+    pub const ALL: [Measure; 4] = [
+        Measure::Narrow,
+        Measure::Medium,
+        Measure::Wide,
+        Measure::Full,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Measure::Narrow => "narrow",
+            Measure::Medium => "medium",
+            Measure::Wide => "wide",
+            Measure::Full => "full",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Measure {
+        Measure::ALL
+            .into_iter()
+            .find(|m| m.key() == key)
+            .unwrap_or_default()
+    }
+
+    /// One fish per notch: the wider the water, the more fish.
+    pub fn label(self) -> &'static str {
+        match self {
+            Measure::Narrow => "🐟",
+            Measure::Medium => "🐟🐟",
+            Measure::Wide => "🐟🐟🐟",
+            Measure::Full => "🐟🐟🐟🐟",
+        }
+    }
+
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Measure::Narrow => "narrow — a paperback",
+            Measure::Medium => "medium — a letter",
+            Measure::Wide => "wide — a broadsheet",
+            Measure::Full => "full — the whole pane",
+        }
+    }
+
+    /// Maximum text column width in px (`None` = no limit).
+    pub fn max_width(self) -> Option<f32> {
+        match self {
+            Measure::Narrow => Some(560.0),
+            Measure::Medium => Some(720.0),
+            Measure::Wide => Some(920.0),
+            Measure::Full => None,
+        }
+    }
+}
+
+/// Marks offered for a finished task (`- [x]`, `- [✓]`, `- [🦆]`, …).
+pub const TASK_MARKERS: [(&str, &str); 14] = [
+    ("x", "the classic"),
+    ("✓", "tick"),
+    ("✔", "heavy tick"),
+    ("–", "dash"),
+    ("•", "dot"),
+    ("★", "star"),
+    ("🦆", "duck"),
+    ("🔥", "on fire"),
+    ("💀", "dead to me"),
+    ("🍕", "pizza'd"),
+    ("🐈", "cat approved"),
+    ("🚀", "shipped"),
+    ("👍", "thumbs up"),
+    ("🍺", "beer o'clock"),
+];
+
+/// Editor text size limits (px).
+pub const FONT_SIZE_DEFAULT: u16 = 15;
+pub const FONT_SIZE_MIN: u16 = 10;
+pub const FONT_SIZE_MAX: u16 = 48;
+/// Sidebar / notes-list text size limits (px).
+pub const PANE_SIZE_DEFAULT: u16 = 13;
+pub const PANE_SIZE_MIN: u16 = 9;
+pub const PANE_SIZE_MAX: u16 = 30;
+
+/// How big the dock pill and its buttons are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DockSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+    Wow,
+}
+
+impl DockSize {
+    pub const ALL: [DockSize; 4] = [
+        DockSize::Small,
+        DockSize::Medium,
+        DockSize::Large,
+        DockSize::Wow,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            DockSize::Small => "small",
+            DockSize::Medium => "medium",
+            DockSize::Large => "large",
+            DockSize::Wow => "wow",
+        }
+    }
+
+    pub fn from_key(key: &str) -> DockSize {
+        DockSize::ALL
+            .into_iter()
+            .find(|d| d.key() == key)
+            .unwrap_or_default()
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DockSize::Small => "Small",
+            DockSize::Medium => "Medium",
+            DockSize::Large => "Large",
+            DockSize::Wow => "WOW!",
+        }
+    }
+
+    /// Glyph size of a format button.
+    pub fn glyph(self) -> f32 {
+        match self {
+            DockSize::Small => 12.0,
+            DockSize::Medium => 14.0,
+            DockSize::Large => 18.0,
+            DockSize::Wow => 26.0,
+        }
+    }
+
+    /// Button padding [vertical, horizontal].
+    pub fn pad(self) -> [u16; 2] {
+        match self {
+            DockSize::Small => [2, 5],
+            DockSize::Medium => [3, 7],
+            DockSize::Large => [5, 10],
+            DockSize::Wow => [8, 15],
+        }
+    }
+
+    /// Pill padding [vertical, horizontal].
+    pub fn pill(self) -> [u16; 2] {
+        match self {
+            DockSize::Small => [2, 4],
+            DockSize::Medium => [3, 6],
+            DockSize::Large => [5, 9],
+            DockSize::Wow => [8, 14],
+        }
+    }
+}
+
 /// Body text in the panel colour scheme.
 pub fn text<'a>(p: &Palette, s: impl Into<std::borrow::Cow<'a, str>> + 'a) -> Text<'a> {
     widget::text(s)
@@ -417,15 +883,115 @@ pub fn title<'a>(p: &Palette, s: impl Into<std::borrow::Cow<'a, str>> + 'a) -> T
         .class(theme::Text::Color(p.accent))
 }
 
-/// A btop-style frame: 1px rounded border with the title cut into the top edge
-/// and an optional right-hand badge.
-pub fn frame<'a, M: 'static>(
+/// A flat pane in the flat layout: the title (and optional badge) as a
+/// header row, the content below, no border — panes sit against each other
+/// separated by [`vrule`] / [`hrule`] hairlines.
+pub fn pane<'a, M: 'static>(
     p: &Palette,
+    title_font: Font,
     title_text: impl Into<std::borrow::Cow<'a, str>> + 'a,
     badge: Option<String>,
     content: impl Into<Element<'a, M>>,
+    bg: Color,
 ) -> Element<'a, M> {
-    frame_sized(p, title_text, badge, content, Length::Fill, 21.0)
+    let badge = badge.map(|b| dim(p, b).into());
+    pane_el(p, title_font, title_text, badge, content, bg)
+}
+
+/// [`pane`] with an arbitrary element as the right-hand badge.
+pub fn pane_el<'a, M: 'static>(
+    p: &Palette,
+    title_font: Font,
+    title_text: impl Into<std::borrow::Cow<'a, str>> + 'a,
+    badge: Option<Element<'a, M>>,
+    content: impl Into<Element<'a, M>>,
+    bg: Color,
+) -> Element<'a, M> {
+    let mut bar = widget::row::with_capacity(3)
+        .push(
+            title(p, title_text)
+                .font(title_font)
+                .size(21)
+                .wrapping(cosmic::iced::widget::text::Wrapping::None),
+        )
+        .push(widget::Space::new().width(Length::Fill))
+        .spacing(8)
+        .align_y(Alignment::Center);
+    if let Some(badge) = badge {
+        bar = bar.push(badge);
+    }
+    let col = widget::column::with_capacity(2)
+        .push(
+            widget::container(bar)
+                .padding([0, 0, 6, 0])
+                .width(Length::Fill),
+        )
+        .push(content)
+        .width(Length::Fill)
+        .height(Length::Fill);
+    widget::container(col)
+        .padding([10, 12, 10, 12])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(Background::Color(bg)),
+                ..Default::default()
+            }
+        }))
+        .into()
+}
+
+/// A horizontal rule in the note: a full-width line in the muted colour.
+pub fn rule_block<'a, M: 'static>(p: &Palette) -> Element<'a, M> {
+    let mute = p.mute;
+    widget::container(
+        widget::container(widget::Space::new().width(Length::Fill).height(2))
+            .width(Length::Fill)
+            .class(theme::Container::custom(move |_| {
+                widget::container::Style {
+                    background: Some(Background::Color(mute)),
+                    border: Border {
+                        radius: 1.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            })),
+    )
+    .padding([10, 10])
+    .width(Length::Fill)
+    .into()
+}
+
+/// One-pixel vertical hairline between panes.
+pub fn vrule<'a, M: 'static>(p: &Palette) -> Element<'a, M> {
+    let border = p.border;
+    widget::container(widget::Space::new().width(1).height(Length::Fill))
+        .width(Length::Fixed(1.0))
+        .height(Length::Fill)
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(Background::Color(border)),
+                ..Default::default()
+            }
+        }))
+        .into()
+}
+
+/// One-pixel horizontal hairline between stacked panes.
+pub fn hrule<'a, M: 'static>(p: &Palette) -> Element<'a, M> {
+    let border = p.border;
+    widget::container(widget::Space::new().width(Length::Fill).height(1))
+        .width(Length::Fill)
+        .height(Length::Fixed(1.0))
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(Background::Color(border)),
+                ..Default::default()
+            }
+        }))
+        .into()
 }
 
 /// [`frame`] with an explicit height (`Length::Shrink` for inline cards).

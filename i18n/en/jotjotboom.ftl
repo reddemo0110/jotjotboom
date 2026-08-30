@@ -39,6 +39,8 @@ store-error = Couldn't open the notes folder: { $error }
 # Retro frames
 frame-views = views
 frame-tags = tags
+tag-rename = rename…
+tag-rename-placeholder = new name
 frame-notes = notes
 no-tags-yet = no tags yet
 notes-of = { $shown } of { $total }
@@ -64,6 +66,28 @@ folder-name-placeholder = folder name
 
 # Themes
 theme-colours = Theme colours
+appearance = Appearance
+section-colour = Colour
+font-pairings-hint = Designer pairings set the pane titles, the sidebar and list, and the note together.
+font-restore = Restore default fonts
+font-editor-only = Editor font only
+pairing-sample-ui = views · tags · notes · 12:50
+pairing-sample-body = The quick brown fox jumps over the lazy dog.
+section-font = Font
+section-size = Size
+dock-size = Dock size
+size-sidebar = Sidebar
+size-list = Notes list
+size-editor = Editor
+size-sample-sidebar = # travels / japan · 5
+size-sample-list = Kyoto convenience store — walking past the shop on a cold night
+size-sample-editor = The quick brown fox jumps over the lazy dog.
+text-width = Text width
+text-width-hint = How wide the note gets before it centres with margins. A narrower window always wraps to fit.
+section-tasks = Tasks
+task-marker-hint = What a finished task shows inside its brackets. It is written into the file, so other markdown apps only recognise the x as "done".
+task-sample-open = - [ ] pick up milk
+task-sample-done = - [{ $mark }] walk the duck
 show-markers = Show markdown syntax
 theme-picker-hint = Retro palettes, a plain white, five from COLOURlovers, and one that follows your desktop. Click to apply.
 

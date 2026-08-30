@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 pub struct Db {
     conn: Connection,

@@ -167,6 +167,53 @@ impl Store {
         self.write_folders()
     }
 
+    /// Rename a tag — and every sub-tag beneath it — in all notes (trash
+    /// included) and in the folder list. Returns how many notes changed.
+    /// The caller must flush the open note first; files are rewritten here.
+    pub fn rename_tag(&mut self, old: &str, new: &str) -> Result<usize> {
+        let Some(new) = note::normalize_tag(new) else {
+            anyhow::bail!("not a valid tag name");
+        };
+        if new == old {
+            return Ok(0);
+        }
+        let mut changed = 0;
+        for entry in self.dir.scan()? {
+            let text = self.dir.read(&entry.path)?;
+            let (_, body) = note::parse_document(&text);
+            let Some(new_body) = note::rename_tag(body, old, &new) else {
+                continue;
+            };
+            if text.ends_with(body) {
+                let head = &text[..text.len() - body.len()];
+                self.dir
+                    .write_atomic(&entry.path, &format!("{head}{new_body}"))?;
+                let modified = std::fs::metadata(&entry.path)
+                    .and_then(|m| m.modified())
+                    .unwrap_or(entry.modified);
+                self.index_file(&entry.path, entry.trashed, modified)?;
+            } else {
+                let mut n = self.index_file(&entry.path, entry.trashed, entry.modified)?;
+                n.body = new_body;
+                self.write(&mut n)?;
+            }
+            changed += 1;
+        }
+        let mut folders_changed = false;
+        for f in &mut self.folders {
+            if *f == old || (f.starts_with(old) && f[old.len()..].starts_with('/')) {
+                *f = format!("{new}{}", &f[old.len()..]);
+                folders_changed = true;
+            }
+        }
+        if folders_changed {
+            self.folders.sort();
+            self.folders.dedup();
+            self.write_folders()?;
+        }
+        Ok(changed)
+    }
+
     fn write_folders(&self) -> Result<()> {
         let text = self.folders.join("\n") + "\n";
         self.dir
@@ -474,6 +521,29 @@ mod tests {
         store.save(&mut n).unwrap();
         assert_eq!(n.title, note::UNTITLED);
         assert!(store.delete_if_empty(&n.id).unwrap());
+    }
+
+    #[test]
+    fn rename_tag_rewrites_files_and_folders() {
+        let (mut store, _tmp) = temp_store();
+        let mut a = store.create().unwrap();
+        a.body = "Osaka\n\n#travels/japan and #travels\n".into();
+        store.save(&mut a).unwrap();
+        let mut b = store.create().unwrap();
+        b.body = "Other\n\n#travelsx stays\n".into();
+        store.save(&mut b).unwrap();
+        store.add_folder("travels/food").unwrap();
+
+        assert_eq!(store.rename_tag("travels", "journeys").unwrap(), 1);
+        let a2 = store.load(&a.id).unwrap().unwrap();
+        assert_eq!(a2.body, "Osaka\n\n#journeys/japan and #journeys\n");
+        assert_eq!(store.load(&b.id).unwrap().unwrap().body, b.body);
+        assert!(store.folders().contains(&"journeys/food".to_string()));
+        assert!(!store.folders().iter().any(|f| f.starts_with("travels")));
+        let tags = store.tags().unwrap();
+        assert!(tags.iter().any(|(t, n)| t == "journeys/japan" && *n == 1));
+        assert!(!tags.iter().any(|(t, _)| t == "travels"));
+        assert!(store.rename_tag("journeys", "!!!").is_err());
     }
 
     #[test]
