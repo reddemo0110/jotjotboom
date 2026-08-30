@@ -1,6 +1,6 @@
 # Rich editor — build step 3 plan
 
-Status: planned 2026-08-30; phase 0 spike passed the same day; phase 1 (core widget) and **phase 2 (rich rendering) landed 2026-08-30** behind the `rich_editor` flag — see the results at the end. Read `DECISIONS.md` for how the app
+Status: planned 2026-08-30; phase 0 spike passed the same day; phases 1–3 (core widget, rich rendering, interactions) **landed 2026-08-30** behind the `rich_editor` flag — see the results at the end. Read `DECISIONS.md` for how the app
 got here; this document is the plan for the piece the handover called "the
 long pole".
 
@@ -232,3 +232,18 @@ Known nit: a decoration span includes leading spaces, so a strike on
   draw a line), click-to-toggle on the *drawn* box is inherited from the
   caret-column logic (works because the glyphs keep their width), Ctrl+click
   on links (phase 3), IME (phase 4).
+
+## Phase 3 result (2026-08-30) — interactions
+
+- `RichContent::overlays().hotspots`: one per contiguous run of link or
+  tag glyphs (target text taken from the line's bytes; a wiki link's alias
+  is dropped) and one per drawn task box (rect padded by 3 px).
+- Widget: `ModifiersChanged` is tracked; Ctrl+click on a link/tag publishes
+  `on_link(Link::Note | Link::Tag)` instead of moving the caret; the
+  pointer becomes a hand over a box always and over links/tags while Ctrl
+  is held, and the hovered link is underlined in accent2.
+- App: `FollowLink` opens the note by title (`Store::find_by_title`) or
+  selects the tag view. Script step `follow:<title>`.
+- `toggle_task_at_cursor` now accepts a click anywhere from the list marker
+  to the closing bracket, since the rich editor draws the box over the
+  marker's space. Both editors benefit.

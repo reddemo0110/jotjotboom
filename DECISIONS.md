@@ -455,3 +455,10 @@ Copy of Big Fish in Little China with the tangerine accent muted
   quote bars, code backgrounds, strike-throughs. Files are unchanged. The
   two hiding modes (collapsed vs transparent-at-width) and the overlay
   order are recorded in `RICH-EDITOR-PLAN.md`.
+
+## 2026-08-30 — Rich editor phase 3: Ctrl+click and hover
+- Ctrl+click on a `[[wiki link]]` opens that note (by title), on a `#tag`
+  selects that tag; plain click keeps placing the caret so editing a link
+  never fights with following it. Hover shows a hand over task boxes, and
+  over links/tags with Ctrl held (plus an underline). Task clicks count
+  from the list marker onwards, matching where the box is drawn.

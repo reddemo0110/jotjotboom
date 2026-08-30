@@ -6,7 +6,7 @@
 //! libcosmic `c003a58`). Phase 1 renders exactly what the stock editor did;
 //! phase 2 layers the rich attributes and overlays on top.
 
-use super::content::{Highlight, RichContent};
+use super::content::{Highlight, HotKind, RichContent};
 use crate::markdown;
 use crate::retro::Palette;
 use cosmic::iced::advanced::clipboard::{self, Clipboard};
@@ -26,6 +26,13 @@ use cosmic::widget::text_editor::{Action, Edit, Motion};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Something the user asked to follow with Ctrl+click.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Link {
+    Note(String),
+    Tag(String),
+}
+
 pub struct RichEditor<'a, Message> {
     content: &'a RichContent,
     id: Option<widget::Id>,
@@ -38,6 +45,7 @@ pub struct RichEditor<'a, Message> {
     settings: markdown::Settings,
     palette: Palette,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
+    on_link: Option<Box<dyn Fn(Link) -> Message + 'a>>,
 }
 
 impl<'a, Message> RichEditor<'a, Message> {
@@ -54,7 +62,24 @@ impl<'a, Message> RichEditor<'a, Message> {
             palette: settings.palette,
             settings,
             on_action: None,
+            on_link: None,
         }
+    }
+
+    pub fn on_link(mut self, f: impl Fn(Link) -> Message + 'a) -> Self {
+        self.on_link = Some(Box::new(f));
+        self
+    }
+
+    /// The hotspot under `point` (widget-local), if any.
+    fn hotspot_at(&self, point: Point) -> Option<HotKind> {
+        let p = point - Vector::new(self.padding.left, self.padding.top);
+        self.content
+            .overlays()
+            .hotspots
+            .into_iter()
+            .find(|h| h.rect.contains(p))
+            .map(|h| h.kind)
     }
 
     pub fn id(mut self, id: widget::Id) -> Self {
@@ -92,6 +117,7 @@ impl<'a, Message> RichEditor<'a, Message> {
 #[derive(Debug)]
 pub struct State {
     focus: Option<Focus>,
+    modifiers: keyboard::Modifiers,
     last_click: Option<mouse::Click>,
     drag_click: Option<mouse::click::Kind>,
     /// Emitted on the next event once focus was lost by a click elsewhere.
@@ -151,6 +177,7 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
     fn state(&self) -> tree::State {
         tree::State::new(State {
             focus: None,
+            modifiers: keyboard::Modifiers::default(),
             last_click: None,
             drag_click: None,
             pending: None,
@@ -218,6 +245,7 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
         };
 
         match event {
+            Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => state.modifiers = *m,
             Event::Window(window::Event::Unfocused) => {
                 if let Some(f) = &mut state.focus {
                     f.window_focused = false;
@@ -247,6 +275,22 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(p) = cursor.position_in(bounds) {
+                    // Ctrl+click on a link or tag follows it instead of placing the caret.
+                    if state.modifiers.command()
+                        && let Some(on_link) = &self.on_link
+                        && let Some(kind) = self.hotspot_at(p)
+                    {
+                        let link = match kind {
+                            HotKind::Link(t) => Some(Link::Note(t)),
+                            HotKind::Tag(t) => Some(Link::Tag(t)),
+                            HotKind::Task => None,
+                        };
+                        if let Some(link) = link {
+                            shell.publish(on_link(link));
+                            shell.capture_event();
+                            return;
+                        }
+                    }
                     let p = p - text_origin;
                     let click = mouse::Click::new(p, mouse::Button::Left, state.last_click);
                     let action = match click.kind() {
@@ -504,6 +548,32 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
             );
         }
 
+        // Ctrl held over a link or tag: underline it.
+        if state.modifiers.command()
+            && let Some(pos) = _cursor.position_in(bounds)
+        {
+            let local = pos - origin;
+            if let Some(h) = overlays
+                .hotspots
+                .iter()
+                .find(|h| h.rect.contains(local) && !matches!(h.kind, HotKind::Task))
+            {
+                let r = at(&h.rect);
+                renderer.fill_quad(
+                    Quad {
+                        bounds: Rectangle {
+                            x: r.x,
+                            y: r.y + r.height - 3.0,
+                            width: r.width,
+                            height: 1.5,
+                        },
+                        ..Quad::default()
+                    },
+                    Background::Color(p.accent2),
+                );
+            }
+        }
+
         if let (Some(f), Highlight::Caret(at)) = (&state.focus, &highlight)
             && f.caret_visible()
         {
@@ -529,20 +599,23 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
 
     fn mouse_interaction(
         &self,
-        _tree: &Tree,
+        tree: &Tree,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _viewport: &Rectangle,
         _renderer: &cosmic::Renderer,
     ) -> mouse::Interaction {
-        if cursor.is_over(layout.bounds()) {
-            if self.on_action.is_some() {
-                mouse::Interaction::Text
-            } else {
-                mouse::Interaction::NotAllowed
-            }
-        } else {
-            mouse::Interaction::default()
+        let Some(p) = cursor.position_in(layout.bounds()) else {
+            return mouse::Interaction::default();
+        };
+        if self.on_action.is_none() {
+            return mouse::Interaction::NotAllowed;
+        }
+        let state = tree.state.downcast_ref::<State>();
+        match self.hotspot_at(p) {
+            Some(HotKind::Task) => mouse::Interaction::Pointer,
+            Some(_) if state.modifiers.command() => mouse::Interaction::Pointer,
+            _ => mouse::Interaction::Text,
         }
     }
 

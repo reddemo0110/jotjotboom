@@ -141,6 +141,8 @@ pub enum Message {
     SetPairing(String),
     /// Switch the experimental cosmic-text editor on or off.
     ToggleRichEditor(bool),
+    /// Ctrl+click on a `[[link]]` or `#tag` in the rich editor.
+    FollowLink(crate::editor::widget::Link),
     RestoreFonts,
     /// Grow (+) or shrink (−) one pane's text, in px.
     SizeStep(Pane, i16),
@@ -816,6 +818,24 @@ impl AppModel {
                     tracing::warn!(%why, "saving editor font");
                 }
             }
+
+            Message::FollowLink(link) => match link {
+                crate::editor::widget::Link::Note(title) => {
+                    let found = self
+                        .store
+                        .as_ref()
+                        .and_then(|s| s.find_by_title(&title).ok().flatten());
+                    if let Some(id) = found {
+                        return self.update(Message::Select(id));
+                    }
+                    tracing::info!(title, "no note with that title");
+                }
+                crate::editor::widget::Link::Tag(tag) => {
+                    if let Some(tag) = note::normalize_tag(tag.trim_start_matches('#')) {
+                        return self.update(Message::SetView(View::Tag(tag)));
+                    }
+                }
+            },
 
             Message::ToggleRichEditor(on) => {
                 crate::editor::set_rich(on);
@@ -2893,7 +2913,9 @@ impl AppModel {
                     editor = editor.min_height(220.0);
                 }
                 if !trashed {
-                    editor = editor.on_action(move |a| Message::Editor(block, a));
+                    editor = editor
+                        .on_action(move |a| Message::Editor(block, a))
+                        .on_link(Message::FollowLink);
                 }
                 return editor.into();
             }
@@ -3685,6 +3707,9 @@ impl AppModel {
             })),
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
             Step::Measure(key) => self.update(Message::SetMeasure(retro::Measure::from_key(&key))),
+            Step::Follow(title) => self.update(Message::FollowLink(
+                crate::editor::widget::Link::Note(title),
+            )),
             Step::Rich(on) => {
                 crate::editor::set_rich(on);
                 if let Some(handler) = &self.config_handler

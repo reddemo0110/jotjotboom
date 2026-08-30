@@ -23,6 +23,9 @@ pub const META_BULLET: usize = 5;
 pub const META_QUOTE: usize = 6;
 /// The `- ` before a task box: invisible, part of the box's footprint.
 pub const META_TASK_PREFIX: usize = 7;
+/// Clickable spans: a `[[wiki link]]` target and a `#tag`.
+pub const META_LINK: usize = 8;
+pub const META_TAG: usize = 9;
 
 /// Heading level from the line's leading hashes (0 = not a heading).
 pub fn heading_level(line: &str) -> usize {
@@ -150,6 +153,8 @@ pub fn span_attrs(
             .strikethrough()
             .strikethrough_color(color(p.fg.scale_alpha(0.8))),
         Kind::Heading => styled().weight(Weight::BOLD),
-        Kind::Bold | Kind::Italic | Kind::BoldItalic | Kind::Tag | Kind::Link => styled(),
+        Kind::Link => styled().metadata(META_LINK),
+        Kind::Tag => styled().metadata(META_TAG),
+        Kind::Bold | Kind::Italic | Kind::BoldItalic => styled(),
     }
 }

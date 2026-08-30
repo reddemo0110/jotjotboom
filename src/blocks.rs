@@ -370,9 +370,11 @@ pub fn toggle_task_at_cursor(content: &mut Content, marker: &str) -> bool {
     let close = text[box_start..].find(']').unwrap_or(0) + 1;
     let box_chars = text[box_start..box_start + close].chars().count();
     let start_col = text[..box_start].chars().count();
-    // Only a click on the box itself (or just after it) counts.
+    // A click anywhere from the list marker through the box counts (the
+    // rich editor draws the box where the marker is).
     let col = cursor.position.column;
-    if col < start_col || col > start_col + box_chars {
+    let marker_col = text[..indent].chars().count();
+    if col < marker_col || col > start_col + box_chars {
         return false;
     }
     let flipped = if done {

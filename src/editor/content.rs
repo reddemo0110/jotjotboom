@@ -104,8 +104,25 @@ pub struct TaskBox {
     pub done: bool,
 }
 
+/// Something the pointer can act on.
+pub struct Hotspot {
+    pub rect: Rectangle,
+    pub kind: HotKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HotKind {
+    /// A `[[wiki link]]` target (alias stripped).
+    Link(String),
+    /// A `#tag` (with its hash).
+    Tag(String),
+    /// A drawn task box; clicking toggles it.
+    Task,
+}
+
 #[derive(Default)]
 pub struct Overlays {
+    pub hotspots: Vec<Hotspot>,
     pub code_bgs: Vec<Rectangle>,
     pub code_block_rows: Vec<Rectangle>,
     pub boxes: Vec<TaskBox>,
@@ -494,13 +511,18 @@ impl RichContent {
                         } else {
                             (side, side)
                         };
+                        let rect = Rectangle {
+                            x: left,
+                            y: r.y + (r.height - h) / 2.0,
+                            width: w,
+                            height: h,
+                        };
+                        o.hotspots.push(Hotspot {
+                            rect: rect.expand(3.0),
+                            kind: HotKind::Task,
+                        });
                         o.boxes.push(TaskBox {
-                            rect: Rectangle {
-                                x: left,
-                                y: r.y + (r.height - h) / 2.0,
-                                width: w,
-                                height: h,
-                            },
+                            rect,
                             mark: if emoji { String::new() } else { mark },
                             done,
                         });
@@ -509,6 +531,44 @@ impl RichContent {
                 if let Some((r, _, _)) = span_rect(META_BULLET) {
                     o.bullets.push(r);
                 }
+                // Links and tags: one hotspot per contiguous run of glyphs.
+                let mut cur: Option<(usize, f32, f32, usize, usize)> = None;
+                let flush = |cur: &mut Option<(usize, f32, f32, usize, usize)>,
+                             o: &mut Overlays| {
+                    if let Some((meta, x0, x1, s0, e0)) = cur.take() {
+                        let text = line_text.get(s0..e0).unwrap_or("").trim();
+                        let kind = if meta == META_LINK {
+                            HotKind::Link(text.split('|').next().unwrap_or("").trim().to_owned())
+                        } else {
+                            HotKind::Tag(text.to_owned())
+                        };
+                        o.hotspots.push(Hotspot {
+                            rect: Rectangle {
+                                x: x0,
+                                y: run.line_top,
+                                width: x1 - x0,
+                                height: run.line_height,
+                            },
+                            kind,
+                        });
+                    }
+                };
+                for g in run.glyphs {
+                    match (&mut cur, g.metadata) {
+                        (Some(c), m) if c.0 == m => {
+                            c.1 = c.1.min(g.x);
+                            c.2 = c.2.max(g.x + g.w);
+                            c.3 = c.3.min(g.start);
+                            c.4 = c.4.max(g.end);
+                        }
+                        (_, m) if m == META_LINK || m == META_TAG => {
+                            flush(&mut cur, &mut o);
+                            cur = Some((m, g.x, g.x + g.w, g.start, g.end));
+                        }
+                        _ => flush(&mut cur, &mut o),
+                    }
+                }
+                flush(&mut cur, &mut o);
                 if let Some((r, _, _)) = span_rect(META_QUOTE) {
                     o.quote_bars.push(Rectangle {
                         x: r.x + 2.0,
@@ -707,5 +767,24 @@ mod tests {
         }
         assert!(!c.is_empty());
         assert!(RichContent::with_text("").is_empty());
+    }
+
+    #[test]
+    fn hotspots_for_links_tags_and_boxes() {
+        let c = RichContent::with_text("See [[Kyoto!|the trip]] and #travels/japan\n- [x] done");
+        let settings = markdown::Settings {
+            palette: crate::retro::Theme::Phosphor.palette(&cosmic::Theme::default()),
+            show_markers: false,
+            font: cosmic::font::mono(),
+        };
+        c.update(600.0, cosmic::font::mono(), 15.0, 22.5, &settings, None);
+        let o = c.overlays();
+        let kinds: Vec<&HotKind> = o.hotspots.iter().map(|h| &h.kind).collect();
+        assert!(kinds.contains(&&HotKind::Link("Kyoto!".into())));
+        assert!(kinds.contains(&&HotKind::Tag("#travels/japan".into())));
+        assert!(kinds.contains(&&HotKind::Task));
+        assert_eq!(o.boxes.len(), 1);
+        assert_eq!(o.boxes[0].mark, "✓");
+        assert!(o.boxes[0].rect.y > 20.0, "box on the second line");
     }
 }
