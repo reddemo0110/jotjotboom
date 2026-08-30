@@ -494,8 +494,10 @@ Copy of Big Fish in Little China with the tangerine accent muted
   at 824/1024 of the canvas with clear margin, a continuous-curve
   squircle, no outline; the marks sit on the golden ratio (boom/hash
   height = jot × φ², jot→jot × φ = jot→hash). `src/icon.rs` bakes the
-  geometry and fills the colours from a palette: accent gradient tile,
-  white marks (or the theme's ground when the accent is pale).
+  geometry and fills the colours from a palette: the tile is the theme's
+  background (lifted 10 % toward the text colour at the top), the marks
+  are the note-writing colour — the icon is the note pane in miniature.
+  (First cut used the accent as the tile; the user wanted bg + text.)
 - The launcher icon is chosen in Appearance → Icon: any theme's colours,
   or "follow the colour theme" (default). The app writes the SVG to
   `~/.local/share/icons/hicolor/scalable/apps/<app id>.svg` and refreshes

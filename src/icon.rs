@@ -29,24 +29,15 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
     )
 }
 
-fn luma(c: Color) -> f32 {
-    0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
-}
-
-/// The icon for a palette: a tile in the theme's accent (lighter at the
-/// top), with the marks in white — or in the theme's ground when the
-/// accent is pale enough that white would vanish.
+/// The icon for a palette: the tile is the theme's background (a touch
+/// lighter at the top so it reads as a tile, not a hole) and the marks are
+/// the note-writing colour — the icon looks like the note pane it opens.
 pub fn svg(p: &Palette) -> String {
-    let top = mix(p.accent, Color::WHITE, 0.28);
-    let mark = if luma(p.accent) > 0.62 {
-        p.bg
-    } else {
-        Color::WHITE
-    };
+    let top = mix(p.bg, p.fg, 0.10);
     TEMPLATE
         .replace("TOP", &hex(top))
-        .replace("BOTTOM", &hex(p.accent))
-        .replace("MARK", &hex(mark))
+        .replace("BOTTOM", &hex(p.bg))
+        .replace("MARK", &hex(p.fg))
 }
 
 /// Where the launcher looks for our icon (per-user hicolor theme).
