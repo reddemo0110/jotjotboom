@@ -139,6 +139,8 @@ pub enum Message {
     SetFont(retro::EditorFont),
     /// Apply a designer pairing (titles, chrome, note) by key.
     SetPairing(String),
+    /// Switch the experimental cosmic-text editor on or off.
+    ToggleRichEditor(bool),
     RestoreFonts,
     /// Grow (+) or shrink (−) one pane's text, in px.
     SizeStep(Pane, i16),
@@ -289,6 +291,7 @@ impl cosmic::Application for AppModel {
         let dock_size = retro::DockSize::from_key(&config.dock_size);
         let task_marker = task_marker_from_config(&config.task_marker);
         let measure = retro::Measure::from_key(&config.text_width);
+        crate::editor::set_rich(config.rich_editor);
         let collapsed: HashSet<String> = config.collapsed_tags.iter().cloned().collect();
         let mut app = AppModel {
             core,
@@ -812,6 +815,17 @@ impl AppModel {
                 {
                     tracing::warn!(%why, "saving editor font");
                 }
+            }
+
+            Message::ToggleRichEditor(on) => {
+                crate::editor::set_rich(on);
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_rich_editor(handler, on)
+                {
+                    tracing::warn!(%why, "saving rich editor flag");
+                }
+                self.reopen_blocks();
+                return self.focus_editor();
             }
 
             Message::SetPairing(key) => {
@@ -1547,6 +1561,10 @@ impl AppModel {
                 self.dock_size = retro::DockSize::from_key(&config.dock_size);
                 self.task_marker = task_marker_from_config(&config.task_marker);
                 self.measure = retro::Measure::from_key(&config.text_width);
+                if crate::editor::rich_enabled() != config.rich_editor {
+                    crate::editor::set_rich(config.rich_editor);
+                    self.reopen_blocks();
+                }
                 self.config = config;
             }
 
@@ -1600,6 +1618,15 @@ impl AppModel {
                 tracing::warn!(%why, "saving font pairing");
             }
         }
+    }
+
+    /// Rebuild the open note's blocks (e.g. after the editor flag flipped),
+    /// keeping focus and caret.
+    fn reopen_blocks(&mut self) {
+        let body = self.blocks.body();
+        let focus = self.blocks.focused;
+        let cursor = self.blocks.text(focus).map(|c| c.cursor());
+        self.blocks.rebuild(&body, focus, cursor);
     }
 
     fn palette(&self) -> Palette {
@@ -2154,6 +2181,15 @@ impl AppModel {
             widget::container(header(fl!("section-font"), Section::Font)).padding([8, 0, 0, 0]),
         );
         if self.appearance_open[Section::Font as usize] {
+            col = col.push(
+                widget::container(
+                    widget::toggler(crate::editor::rich_enabled())
+                        .label(fl!("rich-editor-toggle"))
+                        .on_toggle(Message::ToggleRichEditor),
+                )
+                .padding([4, 0, 8, 0]),
+            );
+            col = col.push(widget::text::caption(fl!("rich-editor-hint")));
             col = col.push(widget::text::caption(fl!("font-pairings-hint")));
             let current = retro::PAIRINGS.iter().find(|pr| {
                 pr.title == self.title_font && pr.ui == self.ui_font && pr.body == self.editor_font
@@ -2393,8 +2429,8 @@ impl AppModel {
         let Some(editor) = self.blocks.focused_text() else {
             return;
         };
-        let perform = |editor: &mut text_editor::Content, action: Action| editor.perform(action);
-        let insert_str = |editor: &mut text_editor::Content, s: &str| {
+        let perform = |editor: &mut crate::editor::Content, action: Action| editor.perform(action);
+        let insert_str = |editor: &mut crate::editor::Content, s: &str| {
             for c in s.chars() {
                 editor.perform(Action::Edit(if c == '\n' {
                     Edit::Enter
@@ -2717,7 +2753,7 @@ impl AppModel {
         let drag = self.dragging.filter(|d| d.active);
         let offsets = self.blocks.line_offsets();
         let target = drag.and_then(|d| d.target);
-        let text_el = |i: usize, content: &'a text_editor::Content, id: widget::Id| {
+        let text_el = |i: usize, content: &'a crate::editor::Content, id: widget::Id| {
             if drag.is_some() {
                 self.drag_lines(p, content, offsets[i], target, i == last_text)
             } else {
@@ -2831,7 +2867,7 @@ impl AppModel {
         &'a self,
         p: &Palette,
         block: usize,
-        content: &'a text_editor::Content,
+        content: &'a crate::editor::Content,
         id: widget::Id,
         trashed: bool,
         is_last: bool,
@@ -2840,6 +2876,27 @@ impl AppModel {
             palette: *p,
             show_markers: self.show_markers,
             font: self.editor_font.font(),
+        };
+        let content = match content {
+            crate::editor::Content::Iced(c) => c,
+            crate::editor::Content::Rich(rich) => {
+                let mut editor = crate::editor::RichEditor::new(rich, settings)
+                    .id(id)
+                    .placeholder(if block == 0 {
+                        fl!("untitled")
+                    } else {
+                        String::new()
+                    })
+                    .size(f32::from(self.font_size))
+                    .padding([6, 10]);
+                if is_last {
+                    editor = editor.min_height(220.0);
+                }
+                if !trashed {
+                    editor = editor.on_action(move |a| Message::Editor(block, a));
+                }
+                return editor.into();
+            }
         };
         let mut editor = cosmic::iced::widget::text_editor(content)
             .id(id)
@@ -3045,7 +3102,7 @@ impl AppModel {
     fn drag_lines<'a>(
         &'a self,
         p: &Palette,
-        content: &'a text_editor::Content,
+        content: &'a crate::editor::Content,
         offset: usize,
         target: Option<usize>,
         is_last: bool,
@@ -3628,6 +3685,16 @@ impl AppModel {
             })),
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
             Step::Measure(key) => self.update(Message::SetMeasure(retro::Measure::from_key(&key))),
+            Step::Rich(on) => {
+                crate::editor::set_rich(on);
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_rich_editor(handler, on)
+                {
+                    tracing::warn!(%why, "saving rich editor flag");
+                }
+                self.reopen_blocks();
+                self.focus_editor()
+            }
             Step::Size(pane, delta) => {
                 let pane = match pane.as_str() {
                     "sidebar" => Pane::Sidebar,

@@ -78,6 +78,8 @@ pub enum Step {
     Marker(String),
     /// Set the text column width: `measure:narrow|medium|wide|full`.
     Measure(String),
+    /// Switch the rich editor on/off: `rich:on` / `rich:off`.
+    Rich(bool),
     /// Walk the notes list like ↑/↓: `nav:+1` / `nav:-1`.
     Nav(i32),
     /// Toggle the task box at line:column of the focused block: `togglebox:2:3`.
@@ -162,6 +164,7 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "nav" => Step::Nav(arg.trim().trim_start_matches('+').parse().ok()?),
                 "marker" => Step::Marker(arg.trim().to_owned()),
                 "measure" => Step::Measure(arg.trim().to_owned()),
+                "rich" => Step::Rich(matches!(arg.trim(), "on" | "1" | "true")),
                 "togglebox" => {
                     let (l, c) = arg.trim().split_once(':')?;
                     Step::ToggleBox(l.parse().ok()?, c.parse().ok()?)

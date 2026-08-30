@@ -1,6 +1,6 @@
 # Rich editor — build step 3 plan
 
-Status: planned 2026-08-30; **phase 0 spike passed the same day** (see "Phase 0 result" at the end). Read `DECISIONS.md` for how the app
+Status: planned 2026-08-30; phase 0 spike passed the same day; **phase 1 (core widget) landed 2026-08-30** behind the `rich_editor` flag — see the results at the end. Read `DECISIONS.md` for how the app
 got here; this document is the plan for the piece the handover called "the
 long pole".
 
@@ -180,3 +180,29 @@ API notes for phase 1 (the fork's iced 0.14 / cosmic-text 0.19):
 
 Known nit: a decoration span includes leading spaces, so a strike on
 " walk the duck" starts a few px early; trim at render time.
+
+## Phase 1 result (2026-08-30) — core widget behind the flag
+
+- `src/editor/content.rs`: `Content` is now an enum `{ Iced, Rich }` with
+  the app's whole editor API (`perform`, `move_to`, `cursor`, `line`,
+  `line_count`, `text`, `selection`). `blocks.rs` and `app.rs` needed only
+  a type swap. `RichContent` holds a `cosmic_text::Editor` over
+  `BufferRef::Arc`; actions map exactly as iced's graphics editor maps
+  them; `update()` (from layout) sets width/metrics and applies per-span
+  colour/font from `markdown::scan_line` + `style_for`, so phase 1 looks
+  identical to the stock editor. Unit-tested against the same edit
+  sequences iced's content produces.
+- `src/editor/widget.rs`: `RichEditor` — focus (incl. the `focus(id)`
+  operation the app uses), click / double / triple, drag-select, key table
+  (copy/cut/paste, motions with Ctrl jump, Tab indent, Esc unfocus; Ctrl+
+  letter left to the app), blinking caret, selection quads, placeholder,
+  `Length::Shrink` height with `min_height`. No internal scrolling: the
+  note's scrollable does that. IME preedit is phase 4.
+- Flag: `rich_editor` (config), toggle in Appearance → Font ("Rich editor
+  (experimental)"), script step `rich:on|off`. Flipping rebuilds the open
+  note's blocks keeping caret and focus.
+- Verified with the xshot harness: a note typed through the widget renders
+  and saves byte-identically; 38 tests pass.
+- Not yet: rich attributes/overlays (phase 2), IME, scroll-into-view of the
+  caret inside the outer scrollable (the stock editor did not do this
+  either across blocks).

@@ -3,12 +3,13 @@
 //! The note body as editable blocks: runs of text (each its own text editor)
 //! with images sitting between them exactly where their `![…]` line is.
 
+use crate::editor::Content;
 use crate::images::{self, ImageRef, Segment};
 use cosmic::widget::{self, text_editor};
 
 pub enum Block {
     Text {
-        content: text_editor::Content,
+        content: Content,
         id: widget::Id,
     },
     Image(ImageRef),
@@ -34,7 +35,7 @@ impl Blocks {
             .into_iter()
             .map(|seg| match seg {
                 Segment::Text(t) => Block::Text {
-                    content: text_editor::Content::with_text(&t),
+                    content: Content::with_text(&t),
                     id: widget::Id::unique(),
                 },
                 Segment::Image(r) => Block::Image(r),
@@ -88,21 +89,21 @@ impl Blocks {
         }
     }
 
-    pub fn text_mut(&mut self, block: usize) -> Option<&mut text_editor::Content> {
+    pub fn text_mut(&mut self, block: usize) -> Option<&mut Content> {
         match self.items.get_mut(block) {
             Some(Block::Text { content, .. }) => Some(content),
             _ => None,
         }
     }
 
-    pub fn text(&self, block: usize) -> Option<&text_editor::Content> {
+    pub fn text(&self, block: usize) -> Option<&Content> {
         match self.items.get(block) {
             Some(Block::Text { content, .. }) => Some(content),
             _ => None,
         }
     }
 
-    pub fn focused_text(&mut self) -> Option<&mut text_editor::Content> {
+    pub fn focused_text(&mut self) -> Option<&mut Content> {
         self.text_mut(self.focused)
     }
 
@@ -350,7 +351,7 @@ impl Blocks {
 
 /// If the cursor sits on a task box (`- [ ] ` / `- [x] `), flip it, marking
 /// a finished task with `marker`. Returns whether anything changed.
-pub fn toggle_task_at_cursor(content: &mut text_editor::Content, marker: &str) -> bool {
+pub fn toggle_task_at_cursor(content: &mut Content, marker: &str) -> bool {
     use crate::note::{list_marker, task_box};
     use text_editor::{Action, Cursor, Edit, Motion, Position};
     let cursor = content.cursor();
@@ -396,7 +397,7 @@ pub fn toggle_task_at_cursor(content: &mut text_editor::Content, marker: &str) -
 
 /// Typing `[]` at the start of a line (after an optional `- `) turns it
 /// into a task: `- [ ] `. Call right after a `]` was inserted.
-pub fn expand_task_shorthand(content: &mut text_editor::Content) -> bool {
+pub fn expand_task_shorthand(content: &mut Content) -> bool {
     use crate::note::list_marker;
     use text_editor::{Action, Cursor, Edit, Motion, Position};
     let cursor = content.cursor();
@@ -429,7 +430,7 @@ pub fn expand_task_shorthand(content: &mut text_editor::Content) -> bool {
 }
 
 /// `Content::text()` appends a trailing newline; drop it so joins stay exact.
-fn content_text(content: &text_editor::Content) -> String {
+fn content_text(content: &Content) -> String {
     let mut t = content.text();
     if t.ends_with('\n') {
         t.pop();

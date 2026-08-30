@@ -346,8 +346,16 @@ pub struct MarkdownHighlighter {
 
 impl MarkdownHighlighter {
     fn highlight_for(&self, kind: Kind) -> Highlight {
-        let p = &self.settings.palette;
-        let base = self.settings.font;
+        style_for(kind, &self.settings)
+    }
+}
+
+/// Colour and font for a span kind under `settings` — shared by iced's
+/// highlighter path and the rich editor.
+pub fn style_for(kind: Kind, settings: &Settings) -> Highlight {
+    {
+        let p = &settings.palette;
+        let base = settings.font;
         let bold = Font {
             weight: Weight::Bold,
             ..base
@@ -361,7 +369,7 @@ impl MarkdownHighlighter {
             style: Style::Italic,
             ..base
         };
-        let ghost = if self.settings.show_markers {
+        let ghost = if settings.show_markers {
             p.dim
         } else {
             p.mute.scale_alpha(0.45)

@@ -437,3 +437,13 @@ Copy of Big Fish in Little China with the tangerine accent muted
   `RICH-EDITOR-PLAN.md`. `cosmic-text = "0.19"` is now a direct dependency
   (same version iced uses). Next: phase 1, the real widget behind a
   `rich_editor` config flag.
+
+## 2026-08-30 — Rich editor phase 1: the widget, behind a flag
+- `Content` became an enum over iced's content and the new `RichContent`
+  so the two editors coexist; new blocks pick the variant from the
+  `rich_editor` flag (config, Appearance → Font toggle, `rich:on|off`).
+  Default off until phase 2 renders more than the stock editor did.
+- The widget copies iced's `text_editor` behaviour (click kinds, key
+  table, focus operation, caret blink) but draws the shared buffer with
+  `fill_raw`, which is what lets phase 2 add sizes, collapsed markers and
+  overlays. Details in `RICH-EDITOR-PLAN.md`.
