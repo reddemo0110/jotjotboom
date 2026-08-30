@@ -629,9 +629,10 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
         // Folder icons over the hash of tags that wear one.
         for (r, icon) in &overlays.tag_icons {
             let rect = at(r);
-            let side = self.size * 1.05;
+            // Centred on the hash; the small overhang lands in the side bearings.
+            let side = self.size * 0.95;
             let bounds = Rectangle {
-                x: rect.x + rect.width - side + 1.0,
+                x: rect.center_x() - side / 2.0,
                 y: rect.center_y() - side / 2.0,
                 width: side,
                 height: side,
