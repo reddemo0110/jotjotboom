@@ -552,3 +552,12 @@ Copy of Big Fish in Little China with the tangerine accent muted
   the cache, so the dock and app library follow; the running window's own
   icon updates on next launch. `resources/…/icon.svg` ships the Phosphor
   version for fresh installs. Script step `icon:<theme|follow>`.
+
+## 2026-08-30 — Example notes and the brochure
+- `examples/notes/`: eight sample notes (letter, journals, packing list,
+  recipe, coffee log, index) with fourteen Unsplash photographs, credited in
+  `examples/README.md`; `just install-examples` copies them into the notes
+  folder without overwriting. They double as the fixtures for screenshots.
+- `docs/brochure.html`: a single-file page (images embedded) telling the
+  app's story and features, shot from the examples in the phosphor theme.
+  Also published as an artifact for sharing.

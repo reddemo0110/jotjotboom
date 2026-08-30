@@ -112,3 +112,10 @@ tag version:
     git commit --amend
     git tag -a {{version}} -m ''
 
+
+# Copy the example notes (and their photos) into the notes folder; never overwrites.
+install-examples notes_dir=(env('HOME') / 'Documents' / 'JotJotBoom'):
+    mkdir -p '{{notes_dir}}/assets'
+    cp -n examples/notes/*.md '{{notes_dir}}/'
+    cp -n examples/notes/assets/*.jpg '{{notes_dir}}/assets/'
+    @echo "Examples installed into {{notes_dir}} — open JotJotBoom and look for #examples."
