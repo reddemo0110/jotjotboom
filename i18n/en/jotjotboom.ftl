@@ -59,6 +59,7 @@ dock-todo = To-do
 dock-link = Wiki link
 dock-tag = Tag
 dock-rule = Divider
+dock-quote = Quote
 dock-plus = New note or folder
 dock-new-note = note
 dock-new-folder = folder

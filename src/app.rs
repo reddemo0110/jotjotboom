@@ -2442,11 +2442,12 @@ impl AppModel {
                     }
                 }
             }
-            Format::H1 | Format::H2 | Format::Bullet | Format::Todo => {
+            Format::H1 | Format::H2 | Format::Bullet | Format::Todo | Format::Quote => {
                 let prefix = match format {
                     Format::H1 => "# ",
                     Format::H2 => "## ",
                     Format::Bullet => "- ",
+                    Format::Quote => "> ",
                     _ => "- [ ] ",
                 };
                 // Every line the selection touches (or just the cursor's).
@@ -3824,6 +3825,9 @@ fn line_prefix(line: &str) -> Option<(usize, Format)> {
     if line.starts_with("# ") {
         return Some((2, Format::H1));
     }
+    if line.starts_with("> ") {
+        return Some((2, Format::Quote));
+    }
     let lm = note::list_marker(line)?;
     match note::task_box(&line[lm..]) {
         Some((len, _)) => Some((lm + len, Format::Todo)),
@@ -3888,6 +3892,7 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     bind(&[Ctrl], "k", MenuAction::Format(Format::Link));
     bind(&[Ctrl, Shift], "3", MenuAction::Format(Format::Tag));
     bind(&[Ctrl], "r", MenuAction::Format(Format::Rule));
+    bind(&[Ctrl, Shift], "q", MenuAction::Format(Format::Quote));
     // View
     bind(&[Ctrl, Shift], "1", MenuAction::ToggleNav);
     bind(&[Ctrl, Shift], "2", MenuAction::ToggleList);
@@ -3955,10 +3960,11 @@ pub enum Format {
     Link,
     Tag,
     Rule,
+    Quote,
 }
 
 impl Format {
-    pub const ALL: [Format; 10] = [
+    pub const ALL: [Format; 11] = [
         Format::Bold,
         Format::Italic,
         Format::Code,
@@ -3966,6 +3972,7 @@ impl Format {
         Format::H2,
         Format::Bullet,
         Format::Todo,
+        Format::Quote,
         Format::Link,
         Format::Tag,
         Format::Rule,
@@ -3983,6 +3990,7 @@ impl Format {
             Format::Link => "link",
             Format::Tag => "tag",
             Format::Rule => "rule",
+            Format::Quote => "quote",
         }
     }
 
@@ -3998,6 +4006,7 @@ impl Format {
             Format::Link => "[[ ]]",
             Format::Tag => "#",
             Format::Rule => "—",
+            Format::Quote => "❝",
         }
     }
 
@@ -4013,6 +4022,7 @@ impl Format {
             Format::Link => fl!("dock-link"),
             Format::Tag => fl!("dock-tag"),
             Format::Rule => fl!("dock-rule"),
+            Format::Quote => fl!("dock-quote"),
         }
     }
 }

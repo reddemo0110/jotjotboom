@@ -463,6 +463,10 @@ Copy of Big Fish in Little China with the tangerine accent muted
   over links/tags with Ctrl held (plus an underline). Task clicks count
   from the list marker onwards, matching where the box is drawn.
 
+## 2026-08-30 — Quote in the dock
+- `> ` lines (the bar with italic text) get a dock button ❝, a Format-menu
+  entry and Ctrl+Shift+Q, toggling like the other line prefixes.
+
 ## 2026-08-30 — Rich editor: raw markdown on double-click only
 - Single click places the caret and keeps the line rendered; the line's
   markdown is revealed by double-click, by typing a marker character
