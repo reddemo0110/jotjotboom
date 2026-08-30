@@ -607,3 +607,33 @@ Copy of Big Fish in Little China with the tangerine accent muted
   and were left out. Ten new faces bundled (all OFL; Roboto is OFL since its
   2023 re-release); Abril Fatface and Oswald ship without italics, Abril
   without a bold, so titles in it use its one weight. Fonts are now ~19 MB.
+
+## 2026-08-30 — Link cards and attached files (Craft style)
+- A web address alone on a line, or `[title](url)`, is a **web card**:
+  picture, title, description, `⌁ domain/path`. The line in the file is the
+  markdown link, nothing more. The preview comes from the page's Open Graph
+  / Twitter / `<title>` tags (scanned, no HTML parser; `ureq`, 1.5 MB page
+  cap, 8 MB picture cap) on a blocking thread, and is cached as
+  `assets/.links/<hash>.txt` + `.png` — derived data, safe to delete.
+- Once a bare address knows its title it is rewritten as `[title](url)` so
+  the note itself carries the title and the cache is only a speed-up. That
+  edit sets the note dirty but adds no undo step.
+- Only whole-line links become cards; a link inside a sentence stays an
+  inline link. Cards appear when the line is finished (Enter / paste), so
+  typing an address is not interrupted.
+- Any other file dropped on the note, or chosen via File → Attach file
+  (Ctrl+Shift+A, the image picker listing every file), is copied into
+  `assets/` like a picture and written as `[name.ext](assets/name.ext)`: a
+  **file card** with a kind badge (PDF, ZIP…), a kind label and the size.
+  Click opens it in the system viewer. No PDF page thumbnails yet — that
+  needs a renderer and was deferred.
+- ⋯ on a card: open, copy link, refresh preview, remove. Backspace at the
+  start of the next line removes a card like it does a picture. Cards move
+  with the drag-to-line mechanism already used by images
+  (`Blocks::move_image` now moves any non-text block).
+- Options → Links → "Fetch link previews" (config `link_previews_off`,
+  default on): switched off, cards show only the address and the cache is
+  still honoured. The hint says fetching tells the site you saved its link.
+- Harness: `JJB_LINK_FIXTURE=/path/page.html` serves that file for every
+  address (an `og:image` there may be a path next to it); `attach:<path>`
+  script step.

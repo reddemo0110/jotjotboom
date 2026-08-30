@@ -147,3 +147,16 @@ new-folder = New folder
 search-notes = Search notes
 shortcuts = Keyboard shortcuts
 shortcuts-hint = Every shortcut in one place. Esc or × to close.
+
+# Link cards
+section-links = Links
+link-previews = Fetch link previews
+link-previews-hint = A web address on a line of its own becomes a card with the page's title, description and picture. Fetching one tells that site you saved its link; switch it off to keep cards to the address alone.
+dock-attach = Attach file
+attach-hint = Any file dropped on the note (or picked here) is copied into assets and shown as a card.
+link-open = open
+link-copy = copy link
+link-refresh = refresh preview
+link-fetching = fetching…
+link-offline = no preview
+file-missing = file not found

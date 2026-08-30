@@ -5,6 +5,7 @@
 
 use crate::editor::Content;
 use crate::images::{self, ImageRef, Segment};
+use crate::links::LinkRef;
 use cosmic::widget::{self, text_editor};
 
 pub enum Block {
@@ -15,6 +16,8 @@ pub enum Block {
     Image(ImageRef),
     /// A horizontal rule, drawn full-width; the markdown is kept verbatim.
     Rule(String),
+    /// A link card: a web address or an attached file on its own line.
+    Link(LinkRef),
 }
 
 pub struct Blocks {
@@ -40,6 +43,7 @@ impl Blocks {
                 },
                 Segment::Image(r) => Block::Image(r),
                 Segment::Rule(t) => Block::Rule(t),
+                Segment::Link(l) => Block::Link(l),
             })
             .collect();
         Self { items, focused: 0 }
@@ -54,6 +58,7 @@ impl Blocks {
                 Block::Text { content, .. } => Segment::Text(content_text(content)),
                 Block::Image(r) => Segment::Image(r.clone()),
                 Block::Rule(t) => Segment::Rule(t.clone()),
+                Block::Link(l) => Segment::Link(l.clone()),
             })
             .collect();
         images::join(&segments)
@@ -66,6 +71,7 @@ impl Blocks {
                 Block::Text { content, .. } => Segment::Text(content_text(content)),
                 Block::Image(r) => Segment::Image(r.clone()),
                 Block::Rule(t) => Segment::Rule(t.clone()),
+                Block::Link(l) => Segment::Link(l.clone()),
             })
             .collect()
     }
@@ -77,6 +83,18 @@ impl Blocks {
             .enumerate()
             .filter_map(|(i, b)| match b {
                 Block::Image(r) => Some((i, r)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Link cards with their block index.
+    pub fn links(&self) -> Vec<(usize, &LinkRef)> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| match b {
+                Block::Link(l) => Some((i, l)),
                 _ => None,
             })
             .collect()
@@ -154,6 +172,15 @@ impl Blocks {
     /// Insert an image after the cursor line of the focused block. Returns
     /// the index of the text block that follows it.
     pub fn insert_image(&mut self, r: ImageRef) -> usize {
+        self.insert_segment(Segment::Image(r))
+    }
+
+    /// Insert a link card the same way.
+    pub fn insert_link(&mut self, l: LinkRef) -> usize {
+        self.insert_segment(Segment::Link(l))
+    }
+
+    fn insert_segment(&mut self, seg: Segment) -> usize {
         let focused = self.focused;
         let Some(content) = self.text(focused) else {
             return focused;
@@ -171,11 +198,7 @@ impl Blocks {
         let mut segs = self.segments();
         segs.splice(
             focused..=focused,
-            [
-                Segment::Text(before),
-                Segment::Image(r),
-                Segment::Text(after),
-            ],
+            [Segment::Text(before), seg, Segment::Text(after)],
         );
         let body = images::join(&segs);
         self.rebuild(
@@ -194,11 +217,11 @@ impl Blocks {
         self.remove_block(block);
     }
 
-    /// Remove a non-text block (image or rule), merging the text around it.
+    /// Remove a non-text block (image, rule or link), merging the text around it.
     pub fn remove_block(&mut self, block: usize) {
         if !matches!(
             self.items.get(block),
-            Some(Block::Image(_) | Block::Rule(_))
+            Some(Block::Image(_) | Block::Rule(_) | Block::Link(_))
         ) {
             return;
         }
@@ -242,7 +265,7 @@ impl Blocks {
                         t.split('\n').count()
                     }
                 }
-                Block::Image(_) | Block::Rule(_) => 1,
+                Block::Image(_) | Block::Rule(_) | Block::Link(_) => 1,
             };
         }
         out.push(line);
@@ -307,9 +330,11 @@ impl Blocks {
     /// Whether the focused block holds a line that should be its own block.
     pub fn needs_resplit(&self) -> bool {
         self.text(self.focused).is_some_and(|c| {
-            content_text(c)
-                .split('\n')
-                .any(|l| images::is_rule_line(l) || images::parse_line(l).is_some())
+            content_text(c).split('\n').any(|l| {
+                images::is_rule_line(l)
+                    || images::parse_line(l).is_some()
+                    || crate::links::parse_line(l).is_some()
+            })
         })
     }
 
@@ -317,7 +342,7 @@ impl Blocks {
     /// `target` (`target == line count` puts it last). Returns the image's
     /// new block index, or `None` when nothing changed.
     pub fn move_image(&mut self, block: usize, target: usize) -> Option<usize> {
-        if !matches!(self.items.get(block), Some(Block::Image(_))) {
+        if matches!(self.items.get(block), Some(Block::Text { .. }) | None) {
             return None;
         }
         let offsets = self.line_offsets();
@@ -332,15 +357,14 @@ impl Blocks {
         let md = lines.remove(from);
         let at = if target > from { target - 1 } else { target };
         lines.insert(at, md);
-        let ordinal = lines[..at]
-            .iter()
-            .filter(|l| images::parse_line(l).is_some())
-            .count();
         let mut new_body = lines.join("\n");
         new_body.push('\n');
-        // Focus the text that now follows the picture.
+        // Focus the text that now follows the moved block (the non-text
+        // block that owns line `at`).
         let fresh = Blocks::from_body(&new_body);
-        let new_block = fresh.images().get(ordinal).map(|(b, _)| *b)?;
+        let fresh_offsets = fresh.line_offsets();
+        let new_block = (0..fresh.items.len())
+            .find(|&i| !matches!(fresh.items[i], Block::Text { .. }) && fresh_offsets[i] == at)?;
         let focus = fresh
             .text_after(new_block)
             .unwrap_or_else(|| fresh.last_text());

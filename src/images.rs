@@ -249,6 +249,8 @@ pub fn replace_line(body: &str, line: usize, new_line: &str) -> String {
 pub enum Segment {
     Text(String),
     Image(ImageRef),
+    /// A web address or attached file on a line of its own (a card).
+    Link(crate::links::LinkRef),
     /// A thematic break (`---`, `***`, `___`), kept verbatim.
     Rule(String),
 }
@@ -281,6 +283,10 @@ pub fn split(body: &str) -> Vec<Segment> {
             out.push(Segment::Text(text.join("\n")));
             text.clear();
             out.push(Segment::Rule(line.to_owned()));
+        } else if !in_fence && let Some(l) = crate::links::parse_line(line) {
+            out.push(Segment::Text(text.join("\n")));
+            text.clear();
+            out.push(Segment::Link(l));
         } else {
             text.push(line);
         }
@@ -299,6 +305,7 @@ pub fn join(segments: &[Segment]) -> String {
             Segment::Text(t) => parts.push(t.clone()),
             Segment::Image(r) => parts.push(r.to_markdown()),
             Segment::Rule(t) => parts.push(t.clone()),
+            Segment::Link(l) => parts.push(l.to_markdown()),
         }
     }
     let mut body = parts.join("\n");
@@ -371,7 +378,8 @@ pub struct PickerEntry {
     pub is_dir: bool,
 }
 
-pub fn list_dir(dir: &Path) -> Vec<PickerEntry> {
+/// Folders and pictures, or every ordinary file when `any_file` (attaching).
+pub fn list_dir_filtered(dir: &Path, any_file: bool) -> Vec<PickerEntry> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -384,7 +392,11 @@ pub fn list_dir(dir: &Path) -> Vec<PickerEntry> {
                 return None;
             }
             let is_dir = path.is_dir();
-            (is_dir || is_image_file(&path)).then_some(PickerEntry { path, name, is_dir })
+            (is_dir || any_file || is_image_file(&path)).then_some(PickerEntry {
+                path,
+                name,
+                is_dir,
+            })
         })
         .collect();
     entries.sort_by(|a, b| {

@@ -74,6 +74,8 @@ pub enum Step {
     DockSize(String),
     /// Fold / unfold an Appearance section: `section:colour|font|size`.
     Section(String),
+    /// Attach a file as a card: `attach:/path/to/file.pdf`.
+    Attach(String),
     /// Open the right-click menu of a tag: `tagmenu:travels`.
     TagMenu(String),
     /// Set the finished-task mark: `marker:🦆`.
@@ -171,6 +173,7 @@ pub fn parse(script: &str) -> Vec<Step> {
                 }
                 "docksize" => Step::DockSize(arg.trim().to_owned()),
                 "section" => Step::Section(arg.trim().to_owned()),
+                "attach" => Step::Attach(arg.trim().to_owned()),
                 "tagmenu" => Step::TagMenu(arg.trim().to_owned()),
                 "nav" => Step::Nav(arg.trim().trim_start_matches('+').parse().ok()?),
                 "marker" => Step::Marker(arg.trim().to_owned()),

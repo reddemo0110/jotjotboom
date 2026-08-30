@@ -18,7 +18,7 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
 - Visual check without a human: `tools/xshot.py out.png [--keys ctrl+n --type 'text']`
   runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (steps:
   new, type, search, select, pin, trash, folder, format, selectall, dock,
-  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, iconset, wait, exit; `;` separates steps — write `\;` inside text),
+  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, iconset, attach, wait, exit; `;` separates steps — write `\;` inside text),
   and captures the window with X auto-repeat switched off. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
   hook (iced `window::screenshot`) silently drops editor text and menu labels.
 
@@ -41,6 +41,7 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
   editor API the app uses), `style.rs` (span → attributes, active line vs
   hidden markers), `widget.rs` (drawing, caret, mouse, keys, IME, Ctrl+click).
 - `src/images.rs` — image reference format, assets store, retro pixel treatments.
+- `src/links.rs` — link cards: `[text](url)` / bare address / attached file on a line of its own; Open Graph scrape (`ureq`), preview cache under `assets/.links/` (derived, disposable), `JJB_LINK_FIXTURE=page.html` serves a local page instead of the network.
 - `src/blocks.rs` — the note body as text/image blocks (one editor per text run).
 - `src/glyph.rs` — folder icons a tag can wear instead of `#`: seven styles (Boxicons, Iconoir, Solar, Myna UI, Majesticons, Pixelarticons, Duoicons; bundled as SVG paths from Iconify, Boxicons is the fallback), chosen in Options → Icon. Generated — regenerate rather than hand-edit the bodies.
 - `src/icon.rs` — the launcher icon generated from a palette and written into

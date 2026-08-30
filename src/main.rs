@@ -10,6 +10,7 @@ mod glyph;
 mod i18n;
 mod icon;
 mod images;
+mod links;
 mod markdown;
 mod note;
 mod retro;

@@ -63,7 +63,7 @@ pub struct AppModel {
     /// Launcher icon: a theme's colours, or `None` to follow the theme.
     icon_theme: Option<retro::Theme>,
     /// Which sections of the Appearance drawer are unfolded.
-    appearance_open: [bool; 5],
+    appearance_open: [bool; 6],
     /// Processed images keyed by path|mtime|style|theme.
     image_cache: HashMap<String, ImageState>,
     /// Block index of the image whose ⋯ menu is open.
@@ -91,6 +91,14 @@ pub struct AppModel {
     thumbs: HashMap<PathBuf, ImageState>,
     /// Grid (thumbnails) or list.
     picker_grid: bool,
+    /// The picker is attaching any file, not just pictures.
+    picker_files: bool,
+    /// Web link previews by address (fetched, cached or failed).
+    previews: HashMap<String, PreviewState>,
+    /// Which link card has its ⋯ menu open.
+    link_menu: Option<usize>,
+    /// Fetch title/description/picture for web links.
+    link_previews: bool,
     /// A file drag is hovering the editor, and the body line it would land before.
     drop_hover: bool,
     drop_target: Option<usize>,
@@ -187,6 +195,14 @@ pub enum Message {
     ToggleSolo,
     ImagesDropped(Vec<PathBuf>),
     PickImage,
+    PickFile,
+    PreviewLoaded(String, Result<crate::links::Preview, String>),
+    LinkMenu(Option<usize>),
+    RemoveLink(usize),
+    CopyLink(String),
+    RefreshPreview(String),
+    OpenFile(String),
+    SetLinkPreviews(bool),
     PickerNavigate(PathBuf),
     PickerChoose(PathBuf),
     /// A picker thumbnail finished decoding.
@@ -329,6 +345,7 @@ impl cosmic::Application for AppModel {
         let coffee_unlocked = config.coffee_unlocked;
         let tag_icons = Arc::new(crate::glyph::parse_assignments(&config.tag_icons));
         let icon_set = crate::glyph::IconSet::from_key(&config.icon_set);
+        let link_previews = !config.link_previews_off;
         let collapsed: HashSet<String> = config.collapsed_tags.iter().cloned().collect();
         let mut app = AppModel {
             core,
@@ -351,7 +368,7 @@ impl cosmic::Application for AppModel {
             task_marker,
             measure,
             icon_theme,
-            appearance_open: [false; 5],
+            appearance_open: [false; 6],
             image_cache: HashMap::new(),
             image_menu: None,
             resizing: None,
@@ -369,6 +386,10 @@ impl cosmic::Application for AppModel {
             picker_entries: Vec::new(),
             thumbs: HashMap::new(),
             picker_grid: true,
+            picker_files: false,
+            previews: HashMap::new(),
+            link_menu: None,
+            link_previews,
             drop_hover: false,
             drop_target: None,
             store,
@@ -457,6 +478,7 @@ impl cosmic::Application for AppModel {
                         menu::Item::Button(fl!("new-note"), None, MenuAction::NewNote),
                         menu::Item::Button(fl!("new-folder"), None, MenuAction::NewFolder),
                         menu::Item::Button(fl!("dock-image"), None, MenuAction::AddImage),
+                        menu::Item::Button(fl!("dock-attach"), None, MenuAction::AttachFile),
                         menu::Item::Divider,
                         menu::Item::Button(fl!("search-notes"), None, MenuAction::FocusSearch),
                         menu::Item::Button(fl!("pin-note"), None, MenuAction::Pin),
@@ -784,17 +806,25 @@ impl AppModel {
         match message {
             Message::ImagesDropped(paths) => {
                 let mut task = Task::none();
-                for path in paths.into_iter().filter(|p| images::is_image_file(p)) {
-                    task = self.import_image(&path);
+                for path in paths {
+                    task = if images::is_image_file(&path) {
+                        self.import_image(&path)
+                    } else if path.is_file() {
+                        self.import_file_at(&path, None)
+                    } else {
+                        task
+                    };
                 }
                 return task;
             }
 
-            Message::PickImage => {
+            Message::PickImage | Message::PickFile => {
                 if self.current.as_ref().is_none_or(|n| n.trashed) {
                     return Task::none();
                 }
-                self.picker_entries = images::list_dir(&self.picker_dir);
+                self.picker_files = matches!(message, Message::PickFile);
+                self.picker_entries =
+                    images::list_dir_filtered(&self.picker_dir, self.picker_files);
                 self.context_page = ContextPage::Picker;
                 self.core.window.show_context = true;
                 return self.load_thumbs();
@@ -802,7 +832,8 @@ impl AppModel {
 
             Message::PickerNavigate(dir) => {
                 self.picker_dir = dir;
-                self.picker_entries = images::list_dir(&self.picker_dir);
+                self.picker_entries =
+                    images::list_dir_filtered(&self.picker_dir, self.picker_files);
                 return self.load_thumbs();
             }
 
@@ -820,7 +851,92 @@ impl AppModel {
 
             Message::PickerChoose(path) => {
                 self.core.window.show_context = false;
-                return self.import_image(&path);
+                return if images::is_image_file(&path) {
+                    self.import_image(&path)
+                } else {
+                    self.import_file_at(&path, None)
+                };
+            }
+
+            Message::PreviewLoaded(url, result) => {
+                let state = match result {
+                    Ok(p) => {
+                        let handle = p.image.as_ref().map(widget::image::Handle::from_path);
+                        // A bare address learns its title, so the note itself
+                        // carries it (and the cache is only a speed-up).
+                        if !p.title.is_empty() {
+                            let mut changed = false;
+                            for (_, l) in self.blocks.items.iter_mut().enumerate().filter_map(
+                                |(i, b)| match b {
+                                    Block::Link(l) if l.target == url && l.text.is_empty() => {
+                                        Some((i, l))
+                                    }
+                                    _ => None,
+                                },
+                            ) {
+                                l.text = p.title.replace(['[', ']'], "");
+                                changed = true;
+                            }
+                            if changed {
+                                self.dirty = true;
+                                self.last_edit = Instant::now();
+                            }
+                        }
+                        PreviewState::Ready(p, handle)
+                    }
+                    Err(err) => PreviewState::Failed(err),
+                };
+                self.previews.insert(url, state);
+            }
+
+            Message::LinkMenu(block) => {
+                self.link_menu = block;
+                self.image_menu = None;
+            }
+
+            Message::RemoveLink(block) => {
+                self.link_menu = None;
+                self.record(EditKind::Other);
+                self.blocks.remove_block(block);
+                self.dirty = true;
+                self.last_edit = Instant::now();
+                return self.focus_editor();
+            }
+
+            Message::CopyLink(url) => {
+                self.link_menu = None;
+                return cosmic::iced::clipboard::write(url);
+            }
+
+            Message::RefreshPreview(url) => {
+                self.link_menu = None;
+                if let Some(store) = &self.store {
+                    crate::links::forget(store.notes_dir(), &url);
+                }
+                self.previews.remove(&url);
+                return self.queue_previews();
+            }
+
+            Message::OpenFile(rel) => {
+                self.link_menu = None;
+                if let Some(store) = &self.store {
+                    let path = images::resolve(store.notes_dir(), &rel);
+                    if let Err(err) = open::that_detached(&path) {
+                        tracing::warn!(%err, "opening attached file");
+                    }
+                }
+            }
+
+            Message::SetLinkPreviews(on) => {
+                self.link_previews = on;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_link_previews_off(handler, !on)
+                {
+                    tracing::warn!(%why, "saving link preview setting");
+                }
+                if on {
+                    return self.queue_previews();
+                }
             }
 
             Message::DragEnter => self.drop_hover = true,
@@ -838,8 +954,14 @@ impl AppModel {
                 let target = self.drop_target.take();
                 let mut task = Task::none();
                 if let Some(UriList(paths)) = list {
-                    for path in paths.into_iter().filter(|p| images::is_image_file(p)) {
-                        task = self.import_image_at(&path, target);
+                    for path in paths {
+                        task = if images::is_image_file(&path) {
+                            self.import_image_at(&path, target)
+                        } else if path.is_file() {
+                            self.import_file_at(&path, target)
+                        } else {
+                            task
+                        };
                     }
                 }
                 return task;
@@ -1365,7 +1487,7 @@ impl AppModel {
                             if let Some(prev) = block.checked_sub(1)
                                 && matches!(
                                     self.blocks.items.get(prev),
-                                    Some(Block::Image(_) | Block::Rule(_))
+                                    Some(Block::Image(_) | Block::Rule(_) | Block::Link(_))
                                 )
                             {
                                 self.record(EditKind::Other);
@@ -1422,7 +1544,7 @@ impl AppModel {
                 // A finished `---` line (Enter / paste) becomes a rule block.
                 if finishes_line && editable && self.blocks.needs_resplit() && self.blocks.resplit()
                 {
-                    return self.focus_editor();
+                    return Task::batch([self.queue_previews(), self.focus_editor()]);
                 }
                 // `[]` at the start of a line becomes a task box.
                 if closes_bracket
@@ -1506,7 +1628,7 @@ impl AppModel {
                 }
                 self.close_current();
                 self.open_note(&id);
-                return self.update_title();
+                return Task::batch([self.queue_previews(), self.update_title()]);
             }
 
             Message::NewNote => {
@@ -2806,6 +2928,20 @@ impl AppModel {
             }
             col = col.push(sets);
         }
+
+        // Links: whether web addresses fetch a preview.
+        col = col.push(
+            widget::container(header(fl!("section-links"), Section::Links)).padding([8, 0, 0, 0]),
+        );
+        if self.appearance_open[Section::Links as usize] {
+            col = col.push(
+                widget::toggler(self.link_previews)
+                    .label(fl!("link-previews"))
+                    .on_toggle(Message::SetLinkPreviews),
+            );
+            col = col.push(widget::text::caption(fl!("link-previews-hint")));
+            col = col.push(widget::text::caption(fl!("attach-hint")));
+        }
         widget::scrollable(col).into()
     }
 
@@ -3000,7 +3136,16 @@ impl AppModel {
             }
             let mut tiles: Vec<Element<'_, Message>> = Vec::new();
             for entry in self.picker_entries.iter().filter(|e| !e.is_dir) {
+                let kind = crate::links::file_info(&entry.path).kind;
                 let picture: Element<'_, Message> = match self.thumbs.get(&entry.path) {
+                    None if !images::is_image_file(&entry.path) => {
+                        widget::container(widget::text::heading(kind))
+                            .width(Length::Fixed(104.0))
+                            .height(Length::Fixed(78.0))
+                            .align_x(Alignment::Center)
+                            .align_y(Alignment::Center)
+                            .into()
+                    }
                     Some(ImageState::Ready(handle, _, _)) => widget::image(handle.clone())
                         .width(Length::Fixed(104.0))
                         .height(Length::Fixed(78.0))
@@ -3063,8 +3208,10 @@ impl AppModel {
         for entry in &self.picker_entries {
             let icon_name = if entry.is_dir {
                 "folder-symbolic"
-            } else {
+            } else if images::is_image_file(&entry.path) {
                 "image-x-generic-symbolic"
+            } else {
+                "text-x-generic-symbolic"
             };
             let msg = if entry.is_dir {
                 Message::PickerNavigate(entry.path.clone())
@@ -3121,6 +3268,7 @@ impl AppModel {
                     (fl!("new-note"), MenuAction::NewNote),
                     (fl!("new-folder"), MenuAction::NewFolder),
                     (fl!("dock-image"), MenuAction::AddImage),
+                    (fl!("dock-attach"), MenuAction::AttachFile),
                     (fl!("search-notes"), MenuAction::FocusSearch),
                     (fl!("pin-note"), MenuAction::Pin),
                     (fl!("trash-note"), MenuAction::TrashNote),
@@ -3290,6 +3438,34 @@ impl AppModel {
                         );
                     } else {
                         col = col.push(rule);
+                    }
+                    i += 1;
+                }
+                Block::Link(l) => {
+                    if drag.is_some() && target == Some(offsets[i]) {
+                        col = col.push(retro::drop_line(p, fl!("drop-here")));
+                    }
+                    let card = self.link_card(p, l, i);
+                    if drag.is_some() {
+                        let slot = |line: usize| {
+                            widget::mouse_area(
+                                widget::Space::new()
+                                    .width(Length::Fill)
+                                    .height(Length::Fill),
+                            )
+                            .on_move(move |_| Message::DragOver(line))
+                            .interaction(mouse::Interaction::Grabbing)
+                        };
+                        let halves = widget::column::with_capacity(2)
+                            .push(slot(offsets[i]))
+                            .push(slot(offsets[i] + 1))
+                            .width(Length::Fill)
+                            .height(Length::Fill);
+                        col = col.push(
+                            cosmic::iced::widget::stack([card, halves.into()]).width(Length::Fill),
+                        );
+                    } else {
+                        col = col.push(card);
                     }
                     i += 1;
                 }
@@ -3472,7 +3648,11 @@ impl AppModel {
     /// Decode thumbnails for the picker's images that are not cached yet.
     fn load_thumbs(&mut self) -> Task<cosmic::Action<Message>> {
         let mut tasks = Vec::new();
-        for entry in self.picker_entries.iter().filter(|e| !e.is_dir) {
+        for entry in self
+            .picker_entries
+            .iter()
+            .filter(|e| !e.is_dir && images::is_image_file(&e.path))
+        {
             if self.thumbs.contains_key(&entry.path) {
                 continue;
             }
@@ -3567,6 +3747,272 @@ impl AppModel {
         self.dirty = true;
         self.last_edit = Instant::now();
         self.focus_editor()
+    }
+
+    /// Attach any file: copy it into `assets/` and drop a link card before
+    /// body line `target` (or at the caret).
+    fn import_file_at(
+        &mut self,
+        path: &std::path::Path,
+        target: Option<usize>,
+    ) -> Task<cosmic::Action<Message>> {
+        if self.current.as_ref().is_none_or(|n| n.trashed) {
+            return Task::none();
+        }
+        let Some(store) = &self.store else {
+            return Task::none();
+        };
+        let rel = match images::import_asset(store.notes_dir(), path) {
+            Ok(rel) => rel,
+            Err(err) => {
+                tracing::error!(%err, "attaching file");
+                return Task::none();
+            }
+        };
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file")
+            .replace(['[', ']'], "");
+        let l = crate::links::LinkRef {
+            text: name,
+            target: rel,
+        };
+        self.record(EditKind::Other);
+        let next = self.blocks.insert_link(l);
+        if let Some(target) = target
+            && let Some(block) = next.checked_sub(1)
+        {
+            let line = self.blocks.line_offsets()[block];
+            let target = if line < target { target + 1 } else { target };
+            self.blocks.move_image(block, target);
+        }
+        self.dirty = true;
+        self.last_edit = Instant::now();
+        self.focus_editor()
+    }
+
+    /// Start fetching previews for web links that have none yet (cached
+    /// ones load at once). No-op when previews are switched off.
+    fn queue_previews(&mut self) -> Task<cosmic::Action<Message>> {
+        let Some(store) = &self.store else {
+            return Task::none();
+        };
+        let notes_dir = store.notes_dir().to_path_buf();
+        let mut tasks = Vec::new();
+        let urls: Vec<String> = self
+            .blocks
+            .links()
+            .into_iter()
+            .filter(|(_, l)| l.is_web())
+            .map(|(_, l)| l.target.clone())
+            .collect();
+        for url in urls {
+            if self.previews.contains_key(&url) {
+                continue;
+            }
+            if let Some(p) = crate::links::load_cached(&notes_dir, &url) {
+                let handle = p.image.as_ref().map(widget::image::Handle::from_path);
+                self.previews.insert(url, PreviewState::Ready(p, handle));
+                continue;
+            }
+            if !self.link_previews {
+                continue;
+            }
+            self.previews.insert(url.clone(), PreviewState::Loading);
+            let dir = notes_dir.clone();
+            let key = url.clone();
+            tasks.push(Task::perform(
+                async move {
+                    let u = url.clone();
+                    tokio::task::spawn_blocking(move || crate::links::fetch(&dir, &u))
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r.map_err(|e| e.to_string()))
+                },
+                move |result| cosmic::Action::App(Message::PreviewLoaded(key.clone(), result)),
+            ));
+        }
+        Task::batch(tasks)
+    }
+
+    /// A link card: web page (picture, title, description, address) or
+    /// attached file (kind, name, size). Click to open, ⋯ for the menu.
+    fn link_card<'a>(
+        &'a self,
+        p: &Palette,
+        l: &'a crate::links::LinkRef,
+        block: usize,
+    ) -> Element<'a, Message> {
+        let font = self.editor_font.font();
+        let size = f32::from(self.font_size);
+        let menu_open = self.link_menu == Some(block);
+        let editable = self.current.as_ref().is_some_and(|n| !n.trashed);
+
+        let body: Element<'a, Message> = if l.is_web() {
+            let state = self.previews.get(&l.target);
+            let (title, desc, handle) = match state {
+                Some(PreviewState::Ready(pv, handle)) => (
+                    if pv.title.is_empty() {
+                        l.label()
+                    } else {
+                        pv.title.clone()
+                    },
+                    pv.description.clone(),
+                    handle.clone(),
+                ),
+                Some(PreviewState::Loading) => (l.label(), fl!("link-fetching"), None),
+                Some(PreviewState::Failed(err)) => (
+                    l.label(),
+                    format!(
+                        "{} — {}",
+                        fl!("link-offline"),
+                        crate::links::truncate(err, 70)
+                    ),
+                    None,
+                ),
+                None => (l.label(), String::new(), None),
+            };
+            let mut text = widget::column::with_capacity(3)
+                .spacing(3)
+                .width(Length::Fill);
+            text = text.push(
+                retro::text(p, crate::links::truncate(&title, 90))
+                    .font(font)
+                    .size(size)
+                    .wrapping(cosmic::iced::widget::text::Wrapping::Word),
+            );
+            if !desc.is_empty() {
+                text = text.push(
+                    retro::dim(p, crate::links::truncate(&desc, 140))
+                        .font(font)
+                        .size(size * 0.86),
+                );
+            }
+            text = text.push(retro::accent2(p, format!("⌁ {}", l.short())).size(size * 0.8));
+            let mut row = widget::row::with_capacity(2)
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .width(Length::Fill);
+            if let Some(h) = handle {
+                row = row.push(
+                    widget::image(h)
+                        .width(Length::Fixed(112.0))
+                        .height(Length::Fixed(80.0))
+                        .content_fit(cosmic::iced::ContentFit::Cover),
+                );
+            }
+            row.push(text).into()
+        } else {
+            let path = self
+                .store
+                .as_ref()
+                .map(|s| images::resolve(s.notes_dir(), &l.target))
+                .unwrap_or_else(|| std::path::PathBuf::from(&l.target));
+            let info = crate::links::file_info(&path);
+            let badge = widget::container(retro::accent(p, info.kind.clone()).size(size * 0.8))
+                .padding([10, 6])
+                .width(Length::Fixed(56.0))
+                .height(Length::Fixed(64.0))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .class(retro::dock_class(p));
+            let mut text = widget::column::with_capacity(3)
+                .spacing(3)
+                .width(Length::Fill);
+            text = text.push(retro::text(p, l.label()).font(font).size(size));
+            text = text.push(
+                retro::dim(p, crate::links::kind_label(&info.kind))
+                    .font(font)
+                    .size(size * 0.86),
+            );
+            text = text.push(
+                retro::accent2(
+                    p,
+                    if info.exists {
+                        info.size.clone()
+                    } else {
+                        fl!("file-missing")
+                    },
+                )
+                .size(size * 0.8),
+            );
+            widget::row::with_capacity(2)
+                .push(badge)
+                .push(text)
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .into()
+        };
+        let open_msg = if l.is_web() {
+            Message::LaunchUrl(l.target.clone())
+        } else {
+            Message::OpenFile(l.target.clone())
+        };
+        let clickable =
+            widget::mouse_area(widget::container(body).padding([8, 12]).width(Length::Fill))
+                .on_press(open_msg)
+                .interaction(mouse::Interaction::Pointer);
+        let dots = widget::container(
+            widget::button::custom(retro::accent(p, "⋯").size(14))
+                .padding([0, 6])
+                .class(retro::row_class(p, menu_open))
+                .on_press_maybe(editable.then_some(Message::LinkMenu(Some(block)))),
+        )
+        .width(Length::Fill)
+        .align_x(Alignment::End)
+        .padding([4, 4, 0, 0]);
+        let stacked =
+            cosmic::iced::widget::stack([clickable.into(), dots.into()]).width(Length::Fill);
+        let card = widget::container(retro::lifted(p, stacked.into()))
+            .width(Length::Fill)
+            .padding([2, 10]);
+        if menu_open {
+            widget::popover(card)
+                .popup(self.link_menu_view(p, l, block))
+                .position(widget::popover::Position::Bottom)
+                .on_close(Message::LinkMenu(None))
+                .into()
+        } else {
+            card.into()
+        }
+    }
+
+    /// The ⋯ menu of a link card: open, copy, refresh, remove.
+    fn link_menu_view<'a>(
+        &'a self,
+        p: &Palette,
+        l: &'a crate::links::LinkRef,
+        block: usize,
+    ) -> Element<'a, Message> {
+        let item = |label: String, msg: Message| {
+            widget::button::custom(retro::text(p, label))
+                .padding([2, 8])
+                .width(Length::Fill)
+                .class(retro::row_class(p, false))
+                .on_press(msg)
+        };
+        let mut col = widget::column::with_capacity(5)
+            .spacing(1)
+            .width(Length::Fixed(180.0));
+        if l.is_web() {
+            col = col.push(item(fl!("link-open"), Message::LaunchUrl(l.target.clone())));
+            col = col.push(item(fl!("link-copy"), Message::CopyLink(l.target.clone())));
+            if self.link_previews {
+                col = col.push(item(
+                    fl!("link-refresh"),
+                    Message::RefreshPreview(l.target.clone()),
+                ));
+            }
+        } else {
+            col = col.push(item(fl!("link-open"), Message::OpenFile(l.target.clone())));
+        }
+        col = col.push(item(fl!("menu-remove"), Message::RemoveLink(block)));
+        widget::container(col)
+            .padding([6, 4])
+            .class(retro::dock_class(p))
+            .into()
     }
 
     /// Change one image's attributes in place.
@@ -4156,6 +4602,7 @@ impl AppModel {
             Step::Solo => self.update(Message::ToggleSolo),
             Step::Image(path) => self.update(Message::ImagesDropped(vec![PathBuf::from(path)])),
             Step::Pick => self.update(Message::PickImage),
+            Step::Attach(path) => self.import_file_at(std::path::Path::new(&path), None),
             Step::PickDir(dir) => self.update(Message::PickerNavigate(PathBuf::from(dir))),
             Step::ImgFrame(n, key) => match (self.nth_image_block(n), FrameStyle::from_key(&key)) {
                 (Some(b), Some(f)) => self.update(Message::SetFrame(b, f)),
@@ -4227,6 +4674,7 @@ impl AppModel {
                 "font" => Section::Font,
                 "tasks" => Section::Tasks,
                 "icon" => Section::Icon,
+                "links" => Section::Links,
                 _ => Section::Size,
             })),
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
@@ -4403,6 +4851,7 @@ pub enum Section {
     Size = 2,
     Tasks = 3,
     Icon = 4,
+    Links = 5,
 }
 
 fn title_font_from_config(s: &str) -> retro::EditorFont {
@@ -4479,6 +4928,7 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     bind(&[Ctrl], "n", MenuAction::NewNote);
     bind(&[Ctrl, Shift], "n", MenuAction::NewFolder);
     bind(&[Ctrl, Shift], "i", MenuAction::AddImage);
+    bind(&[Ctrl, Shift], "a", MenuAction::AttachFile);
     bind(&[Ctrl], "f", MenuAction::FocusSearch);
     bind(&[Ctrl, Shift], "p", MenuAction::Pin);
     bind(&[Ctrl, Shift], "d", MenuAction::TrashNote);
@@ -4541,6 +4991,14 @@ pub struct Resize {
     block: usize,
     start_x: f32,
     start_w: u32,
+}
+
+/// A web link's preview: being fetched, ready (with its picture), or not available.
+#[derive(Debug, Clone)]
+pub enum PreviewState {
+    Loading,
+    Ready(crate::links::Preview, Option<widget::image::Handle>),
+    Failed(String),
 }
 
 /// A processed image ready for display (or on its way).
@@ -4650,6 +5108,7 @@ pub enum MenuAction {
     Redo,
     NewFolder,
     AddImage,
+    AttachFile,
     Pin,
     Format(Format),
     Shortcuts,
@@ -4671,6 +5130,7 @@ impl menu::action::MenuAction for MenuAction {
             MenuAction::Redo => Message::Redo,
             MenuAction::NewFolder => Message::ToggleDock,
             MenuAction::AddImage => Message::PickImage,
+            MenuAction::AttachFile => Message::PickFile,
             MenuAction::Pin => Message::TogglePin,
             MenuAction::Format(f) => Message::Format(*f),
             MenuAction::Shortcuts => Message::ToggleShortcuts,

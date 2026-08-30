@@ -45,6 +45,9 @@ pub struct Config {
     pub tag_icons: Vec<String>,
     /// Folder icon style: boxicons (solid) or iconoir (outline).
     pub icon_set: String,
+    /// Do not fetch title/description/picture for web links. (Inverted so
+    /// the default is on.)
+    pub link_previews_off: bool,
 }
 
 impl Config {
