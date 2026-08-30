@@ -597,3 +597,13 @@ Copy of Big Fish in Little China with the tangerine accent muted
 - Added as a nineteenth editor face (OFL, Regular/Bold/Italic/BoldItalic
   static instances fetched from Google Fonts' TTF endpoint; full Latin,
   Cyrillic and Greek coverage, ~100 KB each).
+
+## 2026-08-30 — typ.io Open Sans pairings
+- Nine pairings drawn from typ.io/fonts/open_sans, each with Open Sans in
+  at least one role: Open Sans alone, Montserrat, Playfair, Lora (Montserrat
+  / Open Sans / Lora), Bitter (Bitter / Source Sans 3 / Open Sans), Oswald,
+  Raleway, Roboto and Old Standard (Abril Fatface / Open Sans / Old Standard
+  TT). Brandon Grotesque, Manus and Arial from the same page are not free
+  and were left out. Ten new faces bundled (all OFL; Roboto is OFL since its
+  2023 re-release); Abril Fatface and Oswald ship without italics, Abril
+  without a bold, so titles in it use its one weight. Fonts are now ~19 MB.

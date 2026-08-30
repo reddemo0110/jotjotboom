@@ -423,6 +423,16 @@ pub enum EditorFont {
     Spectral,
     DmSerif,
     SpecialElite,
+    Montserrat,
+    Lora,
+    Bitter,
+    SourceSans,
+    Oswald,
+    Raleway,
+    Roboto,
+    OldStandard,
+    Abril,
+    Playfair,
 }
 
 macro_rules! font_files {
@@ -430,7 +440,7 @@ macro_rules! font_files {
 }
 
 impl EditorFont {
-    pub const ALL: [EditorFont; 19] = [
+    pub const ALL: [EditorFont; 29] = [
         EditorFont::System,
         EditorFont::Plex,
         EditorFont::Fira,
@@ -450,6 +460,16 @@ impl EditorFont {
         EditorFont::Spectral,
         EditorFont::DmSerif,
         EditorFont::SpecialElite,
+        EditorFont::Montserrat,
+        EditorFont::Lora,
+        EditorFont::Bitter,
+        EditorFont::SourceSans,
+        EditorFont::Oswald,
+        EditorFont::Raleway,
+        EditorFont::Roboto,
+        EditorFont::OldStandard,
+        EditorFont::Abril,
+        EditorFont::Playfair,
     ];
 
     pub fn key(self) -> &'static str {
@@ -473,6 +493,16 @@ impl EditorFont {
             EditorFont::Spectral => "spectral",
             EditorFont::DmSerif => "dmserif",
             EditorFont::SpecialElite => "specialelite",
+            EditorFont::Montserrat => "montserrat",
+            EditorFont::Lora => "lora",
+            EditorFont::Bitter => "bitter",
+            EditorFont::SourceSans => "sourcesans",
+            EditorFont::Oswald => "oswald",
+            EditorFont::Raleway => "raleway",
+            EditorFont::Roboto => "roboto",
+            EditorFont::OldStandard => "oldstandard",
+            EditorFont::Abril => "abril",
+            EditorFont::Playfair => "playfair",
         }
     }
 
@@ -504,6 +534,16 @@ impl EditorFont {
             EditorFont::Spectral => "Spectral",
             EditorFont::DmSerif => "DM Serif Display",
             EditorFont::SpecialElite => "Special Elite",
+            EditorFont::Montserrat => "Montserrat",
+            EditorFont::Lora => "Lora",
+            EditorFont::Bitter => "Bitter",
+            EditorFont::SourceSans => "Source Sans 3",
+            EditorFont::Oswald => "Oswald",
+            EditorFont::Raleway => "Raleway",
+            EditorFont::Roboto => "Roboto",
+            EditorFont::OldStandard => "Old Standard TT",
+            EditorFont::Abril => "Abril Fatface",
+            EditorFont::Playfair => "Playfair Display",
         }
     }
 
@@ -528,6 +568,16 @@ impl EditorFont {
             EditorFont::Spectral => "a serif drawn for reading on screens",
             EditorFont::DmSerif => "high-contrast display serif",
             EditorFont::SpecialElite => "a well-used typewriter",
+            EditorFont::Montserrat => "geometric, wide, Buenos Aires signage",
+            EditorFont::Lora => "a calligraphic serif for long reads",
+            EditorFont::Bitter => "a slab serif that holds up on screens",
+            EditorFont::SourceSans => "Adobe's first open font, quiet and clear",
+            EditorFont::Oswald => "condensed gothic, loud in headlines",
+            EditorFont::Raleway => "elegant thin-to-bold display sans",
+            EditorFont::Roboto => "Android's workhorse sans",
+            EditorFont::OldStandard => "a 19th-century book face, scholarly",
+            EditorFont::Abril => "fat-face display, poster loud",
+            EditorFont::Playfair => "high-contrast transitional display serif",
         }
     }
 
@@ -536,7 +586,7 @@ impl EditorFont {
     pub fn has_bold(self) -> bool {
         !matches!(
             self,
-            EditorFont::Vt323 | EditorFont::DmSerif | EditorFont::SpecialElite
+            EditorFont::Vt323 | EditorFont::DmSerif | EditorFont::SpecialElite | EditorFont::Abril
         )
     }
 
@@ -617,6 +667,40 @@ pub const EDITOR_FONT_FILES: &[&[u8]] = font_files![
     "ofl/dmserifdisplay/DMSerifDisplay-Regular.ttf",
     "ofl/dmserifdisplay/DMSerifDisplay-Italic.ttf",
     "apache/specialelite/SpecialElite-Regular.ttf",
+    "ofl/montserrat/Montserrat-Regular.ttf",
+    "ofl/montserrat/Montserrat-Bold.ttf",
+    "ofl/montserrat/Montserrat-Italic.ttf",
+    "ofl/montserrat/Montserrat-BoldItalic.ttf",
+    "ofl/lora/Lora-Regular.ttf",
+    "ofl/lora/Lora-Bold.ttf",
+    "ofl/lora/Lora-Italic.ttf",
+    "ofl/lora/Lora-BoldItalic.ttf",
+    "ofl/bitter/Bitter-Regular.ttf",
+    "ofl/bitter/Bitter-Bold.ttf",
+    "ofl/bitter/Bitter-Italic.ttf",
+    "ofl/bitter/Bitter-BoldItalic.ttf",
+    "ofl/sourcesans3/SourceSans3-Regular.ttf",
+    "ofl/sourcesans3/SourceSans3-Bold.ttf",
+    "ofl/sourcesans3/SourceSans3-Italic.ttf",
+    "ofl/sourcesans3/SourceSans3-BoldItalic.ttf",
+    "ofl/oswald/Oswald-Regular.ttf",
+    "ofl/oswald/Oswald-Bold.ttf",
+    "ofl/raleway/Raleway-Regular.ttf",
+    "ofl/raleway/Raleway-Bold.ttf",
+    "ofl/raleway/Raleway-Italic.ttf",
+    "ofl/raleway/Raleway-BoldItalic.ttf",
+    "ofl/roboto/Roboto-Regular.ttf",
+    "ofl/roboto/Roboto-Bold.ttf",
+    "ofl/roboto/Roboto-Italic.ttf",
+    "ofl/roboto/Roboto-BoldItalic.ttf",
+    "ofl/oldstandardtt/OldStandardTT-Regular.ttf",
+    "ofl/oldstandardtt/OldStandardTT-Bold.ttf",
+    "ofl/oldstandardtt/OldStandardTT-Italic.ttf",
+    "ofl/abrilfatface/AbrilFatface-Regular.ttf",
+    "ofl/playfairdisplay/PlayfairDisplay-Regular.ttf",
+    "ofl/playfairdisplay/PlayfairDisplay-Bold.ttf",
+    "ofl/playfairdisplay/PlayfairDisplay-Italic.ttf",
+    "ofl/playfairdisplay/PlayfairDisplay-BoldItalic.ttf",
 ];
 
 /// A designer pairing: one face for pane titles, one for the sidebar and
@@ -632,7 +716,7 @@ pub struct Pairing {
     pub body: EditorFont,
 }
 
-pub const PAIRINGS: [Pairing; 8] = [
+pub const PAIRINGS: [Pairing; 17] = [
     Pairing {
         key: "jotjotboom",
         name: "JotJotBoom",
@@ -696,6 +780,78 @@ pub const PAIRINGS: [Pairing; 8] = [
         title: EditorFont::SpecialElite,
         ui: EditorFont::Courier,
         body: EditorFont::Courier,
+    },
+    Pairing {
+        key: "opensans",
+        name: "Open Sans",
+        blurb: "Open Sans throughout — the neutral choice (pluralapp.com, via typ.io)",
+        title: EditorFont::OpenSans,
+        ui: EditorFont::OpenSans,
+        body: EditorFont::OpenSans,
+    },
+    Pairing {
+        key: "montserrat",
+        name: "Montserrat",
+        blurb: "Montserrat headlines over Open Sans — geometric meets humanist (denote.io, via typ.io)",
+        title: EditorFont::Montserrat,
+        ui: EditorFont::OpenSans,
+        body: EditorFont::OpenSans,
+    },
+    Pairing {
+        key: "playfair",
+        name: "Playfair",
+        blurb: "Playfair Display titles, Open Sans for the rest (charlie-montagut.com, via typ.io)",
+        title: EditorFont::Playfair,
+        ui: EditorFont::OpenSans,
+        body: EditorFont::OpenSans,
+    },
+    Pairing {
+        key: "lora",
+        name: "Lora",
+        blurb: "Montserrat titles, Open Sans chrome, Lora for the note (cleverbirds.com, via typ.io)",
+        title: EditorFont::Montserrat,
+        ui: EditorFont::OpenSans,
+        body: EditorFont::Lora,
+    },
+    Pairing {
+        key: "bitter",
+        name: "Bitter",
+        blurb: "Bitter slab titles, Source Sans 3 chrome, Open Sans note (tenbourne.com, via typ.io)",
+        title: EditorFont::Bitter,
+        ui: EditorFont::SourceSans,
+        body: EditorFont::OpenSans,
+    },
+    Pairing {
+        key: "oswald",
+        name: "Oswald",
+        blurb: "Oswald's condensed headlines over Open Sans (flymediaproductions.com, via typ.io)",
+        title: EditorFont::Oswald,
+        ui: EditorFont::OpenSans,
+        body: EditorFont::OpenSans,
+    },
+    Pairing {
+        key: "raleway",
+        name: "Raleway",
+        blurb: "Raleway titles, Open Sans body — two humanist sans, one light, one sturdy (sylviaprats.com, via typ.io)",
+        title: EditorFont::Raleway,
+        ui: EditorFont::OpenSans,
+        body: EditorFont::OpenSans,
+    },
+    Pairing {
+        key: "roboto",
+        name: "Roboto",
+        blurb: "Roboto titles and chrome, Open Sans for the note (rebelmail.com, via typ.io)",
+        title: EditorFont::Roboto,
+        ui: EditorFont::Roboto,
+        body: EditorFont::OpenSans,
+    },
+    Pairing {
+        key: "oldstandard",
+        name: "Old Standard",
+        blurb: "Abril Fatface headlines, Open Sans chrome, Old Standard TT for the note (apartment.liviuoros.com, via typ.io)",
+        title: EditorFont::Abril,
+        ui: EditorFont::OpenSans,
+        body: EditorFont::OldStandard,
     },
 ];
 
