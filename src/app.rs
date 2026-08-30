@@ -1708,7 +1708,28 @@ impl AppModel {
                     .on_press(Message::SetView(view)),
             );
         }
-        retro::pane(p, self.title_font(), fl!("frame-views"), None, col, p.bg)
+        // The settings gear lives in the sidebar's top-right corner.
+        let open = self.core.window.show_context && self.context_page == ContextPage::Themes;
+        let gear: Element<'a, Message> = widget::tooltip(
+            widget::button::custom(retro::accent(p, "⚙").size(17))
+                .padding([0, 6])
+                .class(retro::row_class(p, open))
+                .on_press(Message::ToggleContextPage(ContextPage::Themes)),
+            retro::dim(
+                p,
+                self.with_shortcut(fl!("theme-colours"), MenuAction::Themes),
+            ),
+            widget::tooltip::Position::Bottom,
+        )
+        .into();
+        retro::pane_el(
+            p,
+            self.title_font(),
+            fl!("frame-views"),
+            Some(gear),
+            col,
+            p.bg,
+        )
     }
 
     fn tags_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
@@ -2095,24 +2116,6 @@ impl AppModel {
             .into(),
         );
 
-        items.push(divider().into());
-        items.push(
-            widget::tooltip(
-                widget::button::custom(retro::accent2(p, "◐").size(ds.glyph() + 1.0))
-                    .padding([ds.pad()[0].saturating_sub(1), ds.pad()[1]])
-                    .class(retro::row_class(
-                        p,
-                        self.core.window.show_context && self.context_page == ContextPage::Themes,
-                    ))
-                    .on_press(Message::ToggleContextPage(ContextPage::Themes)),
-                retro::dim(
-                    p,
-                    self.with_shortcut(fl!("theme-colours"), MenuAction::Themes),
-                ),
-                widget::tooltip::Position::Top,
-            )
-            .into(),
-        );
         let row = widget::flex_row(items)
             .spacing(1)
             .align_items(Alignment::Center);
@@ -4024,7 +4027,7 @@ fn tag_tree(tags: &[(String, usize)]) -> Vec<(String, usize)> {
 
 fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     use keyboard::Key;
-    use menu::key_bind::Modifier::{Ctrl, Shift};
+    use menu::key_bind::Modifier::{Alt, Ctrl, Shift};
     let mut binds = HashMap::new();
     let mut bind = |modifiers: &[menu::key_bind::Modifier], key: &str, action: MenuAction| {
         binds.insert(
@@ -4062,7 +4065,7 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     bind(&[Ctrl, Shift], "1", MenuAction::ToggleNav);
     bind(&[Ctrl, Shift], "2", MenuAction::ToggleList);
     bind(&[Ctrl, Shift], "0", MenuAction::Solo);
-    bind(&[Ctrl, Shift], "c", MenuAction::Themes);
+    bind(&[Alt], ",", MenuAction::Themes);
     bind(&[Ctrl, Shift], "m", MenuAction::ToggleMarkers);
     bind(&[Ctrl, Shift], "h", MenuAction::Shortcuts);
     binds

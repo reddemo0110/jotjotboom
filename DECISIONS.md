@@ -483,6 +483,11 @@ Copy of Big Fish in Little China with the tangerine accent muted
   formatted. Fallback if something goes badly wrong: tag
   `v0.1-pre-rich-editor` still builds the old editor.
 
+## 2026-08-30 — Settings gear in the sidebar, Alt+,
+- The drawer (titled Options) is opened from a ⚙ in the top-right of the
+  views pane — tooltip "Settings" — and with Alt+, (Ctrl+Shift+C retired);
+  the ◐ left the dock, which is now format actions only.
+
 ## 2026-08-30 — Editor header, H1 by default, drop line for new images
 - The editor pane no longer repeats the note title in its header (the
   first line is the title); the ✓ save badge stays on the header's right.

@@ -66,7 +66,7 @@ dock-new-folder = folder
 folder-name-placeholder = folder name
 
 # Themes
-theme-colours = Options
+theme-colours = Settings
 appearance = Options
 section-colour = Colour
 font-pairings-hint = Designer pairings set the pane titles, the sidebar and list, and the note together.
