@@ -415,6 +415,7 @@ pub enum EditorFont {
     Vt323,
     PlexSerif,
     Lato,
+    OpenSans,
     PtSans,
     PtSerif,
     Atkinson,
@@ -429,7 +430,7 @@ macro_rules! font_files {
 }
 
 impl EditorFont {
-    pub const ALL: [EditorFont; 18] = [
+    pub const ALL: [EditorFont; 19] = [
         EditorFont::System,
         EditorFont::Plex,
         EditorFont::Fira,
@@ -441,6 +442,7 @@ impl EditorFont {
         EditorFont::Vt323,
         EditorFont::PlexSerif,
         EditorFont::Lato,
+        EditorFont::OpenSans,
         EditorFont::PtSans,
         EditorFont::PtSerif,
         EditorFont::Atkinson,
@@ -463,6 +465,7 @@ impl EditorFont {
             EditorFont::Vt323 => "vt323",
             EditorFont::PlexSerif => "plexserif",
             EditorFont::Lato => "lato",
+            EditorFont::OpenSans => "opensans",
             EditorFont::PtSans => "ptsans",
             EditorFont::PtSerif => "ptserif",
             EditorFont::Atkinson => "atkinson",
@@ -493,6 +496,7 @@ impl EditorFont {
             EditorFont::Vt323 => "VT323",
             EditorFont::PlexSerif => "IBM Plex Serif",
             EditorFont::Lato => "Lato",
+            EditorFont::OpenSans => "Open Sans",
             EditorFont::PtSans => "PT Sans",
             EditorFont::PtSerif => "PT Serif",
             EditorFont::Atkinson => "Atkinson Hyperlegible",
@@ -516,6 +520,7 @@ impl EditorFont {
             EditorFont::Vt323 => "the title font, pixel terminal",
             EditorFont::PlexSerif => "IBM's serif, made for screens",
             EditorFont::Lato => "warm, friendly humanist sans",
+            EditorFont::OpenSans => "Google's open, neutral humanist sans",
             EditorFont::PtSans => "ParaType's public sans",
             EditorFont::PtSerif => "ParaType's public serif",
             EditorFont::Atkinson => "Braille Institute's low-vision face",
@@ -585,6 +590,10 @@ pub const EDITOR_FONT_FILES: &[&[u8]] = font_files![
     "ofl/lato/Lato-Bold.ttf",
     "ofl/lato/Lato-Italic.ttf",
     "ofl/lato/Lato-BoldItalic.ttf",
+    "ofl/opensans/OpenSans-Regular.ttf",
+    "ofl/opensans/OpenSans-Bold.ttf",
+    "ofl/opensans/OpenSans-Italic.ttf",
+    "ofl/opensans/OpenSans-BoldItalic.ttf",
     "ofl/ptsans/PT_Sans-Web-Regular.ttf",
     "ofl/ptsans/PT_Sans-Web-Bold.ttf",
     "ofl/ptsans/PT_Sans-Web-Italic.ttf",

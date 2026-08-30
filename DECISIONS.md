@@ -592,3 +592,8 @@ Copy of Big Fish in Little China with the tangerine accent muted
   only 91 icons, so about half of its folders do.
 - Solar is CC BY 4.0, the rest MIT; the Options card shows the licence and
   the README credits all seven.
+
+## 2026-08-30 — Open Sans
+- Added as a nineteenth editor face (OFL, Regular/Bold/Italic/BoldItalic
+  static instances fetched from Google Fonts' TTF endpoint; full Latin,
+  Cyrillic and Greek coverage, ~100 KB each).
