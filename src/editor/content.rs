@@ -116,7 +116,10 @@ impl RichContent {
         let text = line.text.to_string();
         let col = cursor.position.column;
         let byte = if before {
-            match text.char_indices().nth(col.checked_sub(1)?) {
+            let Some(prev) = col.checked_sub(1) else {
+                return false;
+            };
+            match text.char_indices().nth(prev) {
                 Some((b, _)) => b,
                 None => return false,
             }
