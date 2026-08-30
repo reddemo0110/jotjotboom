@@ -2757,18 +2757,22 @@ impl AppModel {
             }
             col = col.push(widget::flex_row(tiles).spacing(4));
 
-            // Folder icon style: two sets, previewed with a few glyphs each.
+            // Folder icon style: one card per set, previewed with a few glyphs.
             col = col.push(
                 widget::container(widget::text::heading(fl!("icon-set"))).padding([10, 0, 0, 0]),
             );
             col = col.push(widget::text::caption(fl!("icon-set-hint")));
-            let mut sets = widget::row::with_capacity(2).spacing(8);
+            let mut sets =
+                widget::column::with_capacity(crate::glyph::IconSet::ALL.len()).spacing(6);
             let sample = [
                 crate::glyph::Icon::Coffee,
                 crate::glyph::Icon::Star,
                 crate::glyph::Icon::Plane,
                 crate::glyph::Icon::Idea,
                 crate::glyph::Icon::Heart,
+                crate::glyph::Icon::Book,
+                crate::glyph::Icon::Camera,
+                crate::glyph::Icon::Music,
             ];
             for set in crate::glyph::IconSet::ALL {
                 let mut glyphs = widget::row::with_capacity(sample.len()).spacing(6);
@@ -2779,8 +2783,12 @@ impl AppModel {
                             .height(20),
                     );
                 }
+                let header = widget::row::with_capacity(2)
+                    .push(widget::text(set.label()).width(Length::Fill))
+                    .push(widget::text::caption(set.licence()))
+                    .align_y(Alignment::Center);
                 let card = widget::column::with_capacity(3)
-                    .push(widget::text(set.label()))
+                    .push(header)
                     .push(glyphs)
                     .push(widget::text::caption(set.blurb()))
                     .spacing(4);

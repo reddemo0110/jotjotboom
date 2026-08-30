@@ -45,4 +45,4 @@ Developers should install [rustup][rustup] and configure their editor to use [ru
 
 ## Credits
 
-Folder icons are [Boxicons](https://github.com/box-icons/boxicons) and [Iconoir](https://iconoir.com) (both MIT), bundled via Iconify. Bundled fonts are under the OFL/UFL, see `resources/fonts`.
+Folder icons come from [Boxicons](https://github.com/box-icons/boxicons) (MIT), [Iconoir](https://iconoir.com) (MIT), [Solar](https://www.figma.com/community/file/1166831539721848736) by 480 Design (CC BY 4.0), [Myna UI Icons](https://github.com/praveenjuge/mynaui-icons) (MIT), [Majesticons](https://github.com/halfmage/majesticons) (MIT), [Pixelarticons](https://github.com/halfmage/pixelarticons) (MIT) and [Duoicons](https://github.com/fernandcf/duoicons) (MIT), bundled via Iconify. Bundled fonts are under the OFL/UFL, see `resources/fonts`.

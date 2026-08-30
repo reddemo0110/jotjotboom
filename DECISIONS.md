@@ -580,3 +580,15 @@ Copy of Big Fish in Little China with the tangerine accent muted
   and in-note icons together (`icon_set` in config). Iconoir has no cat,
   dog or movie camera, so those three fall back to the Boxicons drawing.
   Script step `iconset:<boxicons|iconoir>`.
+
+## 2026-08-30 — Five more folder-icon styles
+- Solar (bold), Myna UI (solid), Majesticons (solid), Pixelarticons and
+  Duoicons join Boxicons and Iconoir; each set is used in one consistent
+  style rather than mixing line and solid variants. Names were matched to
+  our sixty meanings by keyword, with a few hand overrides (Myna UI cog for
+  gear, boat for ship, telephone for phone; Pixelarticons tools for wrench)
+  and bad matches dropped (Solar has no car, Majesticons no food, Pixelarticons
+  no medal). Whatever a set lacks borrows the Boxicons drawing — Duoicons is
+  only 91 icons, so about half of its folders do.
+- Solar is CC BY 4.0, the rest MIT; the Options card shows the licence and
+  the README credits all seven.
