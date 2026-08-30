@@ -42,7 +42,7 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
   hidden markers), `widget.rs` (drawing, caret, mouse, keys, IME, Ctrl+click).
 - `src/images.rs` — image reference format, assets store, retro pixel treatments.
 - `src/blocks.rs` — the note body as text/image blocks (one editor per text run).
-- `src/pixel.rs` — 8×8 one-colour folder icons a tag can wear instead of `#`.
+- `src/glyph.rs` — folder icons (Boxicons Solid, MIT, bundled as SVG paths) a tag can wear instead of `#`.
 - `src/icon.rs` — the launcher icon generated from a palette and written into
   the user's hicolor theme.
 - `src/config.rs` — cosmic-config entry (`notes_dir`, `device_id`).

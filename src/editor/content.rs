@@ -69,7 +69,7 @@ pub enum HotKind {
 pub struct Overlays {
     pub hotspots: Vec<Hotspot>,
     /// Where a tag's hash sits and the 8-bit icon drawn over it.
-    pub tag_icons: Vec<(Rectangle, crate::pixel::Icon)>,
+    pub tag_icons: Vec<(Rectangle, crate::glyph::Icon)>,
     pub code_bgs: Vec<Rectangle>,
     pub code_block_rows: Vec<Rectangle>,
     pub boxes: Vec<TaskBox>,
@@ -465,8 +465,8 @@ impl RichContent {
                     // A tag with a folder icon wears it instead of its hash (off the caret line).
                     if span.kind == markdown::Kind::Tag && !is_active {
                         let tag = line.text()[span.range.clone()].trim_start_matches('#');
-                        if let Some(icon) = crate::pixel::for_tag(tag, &style.tag_icons) {
-                            let idx = crate::pixel::Icon::ALL
+                        if let Some(icon) = crate::glyph::for_tag(tag, &style.tag_icons) {
+                            let idx = crate::glyph::Icon::ALL
                                 .iter()
                                 .position(|i| *i == icon)
                                 .unwrap_or(0);
@@ -601,7 +601,7 @@ impl RichContent {
                 if let Some((r, _, _)) = span_rect(META_BULLET) {
                     o.bullets.push(r);
                 }
-                for (idx, icon) in crate::pixel::Icon::ALL.iter().enumerate() {
+                for (idx, icon) in crate::glyph::Icon::ALL.iter().enumerate() {
                     if let Some((r, _, _)) = span_rect(META_TAGICON_BASE + idx) {
                         o.tag_icons.push((r, *icon));
                     }

@@ -325,7 +325,7 @@ pub struct Settings {
     pub show_markers: bool,
     pub font: Font,
     /// Folder icons by tag; a tag wearing one shows it instead of its `#`.
-    pub tag_icons: std::sync::Arc<std::collections::HashMap<String, crate::pixel::Icon>>,
+    pub tag_icons: std::sync::Arc<std::collections::HashMap<String, crate::glyph::Icon>>,
 }
 
 #[derive(Clone, Copy, Debug)]

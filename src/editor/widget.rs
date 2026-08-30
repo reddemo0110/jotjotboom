@@ -13,6 +13,7 @@ use cosmic::iced::advanced::clipboard::{self, Clipboard};
 use cosmic::iced::advanced::input_method::{self, InputMethod};
 use cosmic::iced::advanced::mouse;
 use cosmic::iced::advanced::renderer::{self, Quad};
+use cosmic::iced::advanced::svg::Renderer as _;
 use cosmic::iced::advanced::text::Renderer as _;
 use cosmic::iced::advanced::widget::{self, Operation, Tree, operation, tree};
 use cosmic::iced::advanced::{
@@ -625,28 +626,21 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                 );
             }
         }
-        // 8-bit folder icons over the hash of tags that wear one.
+        // Folder icons over the hash of tags that wear one.
         for (r, icon) in &overlays.tag_icons {
             let rect = at(r);
-            // The glyph is wider than the hash it replaces: hang it to the
-            // left, into the space before the tag, so it never touches the word.
-            let cell = self.size * 0.98 / 16.0;
-            let ox = rect.x + rect.width - cell * 16.0 - 1.0;
-            let oy = rect.center_y() - cell * 8.0;
-            for (px, py) in icon.pixels() {
-                renderer.fill_quad(
-                    Quad {
-                        bounds: Rectangle {
-                            x: ox + f32::from(px) * cell,
-                            y: oy + f32::from(py) * cell,
-                            width: cell,
-                            height: cell,
-                        },
-                        ..Quad::default()
-                    },
-                    Background::Color(p.accent2),
-                );
-            }
+            let side = self.size * 1.05;
+            let bounds = Rectangle {
+                x: rect.x + rect.width - side + 1.0,
+                y: rect.center_y() - side / 2.0,
+                width: side,
+                height: side,
+            };
+            renderer.draw_svg(
+                cosmic::iced::advanced::svg::Svg::new(icon.handle(p.accent2)).color(p.accent2),
+                bounds,
+                bounds.expand(2.0),
+            );
         }
         for r in &overlays.bullets {
             let rect = at(r);

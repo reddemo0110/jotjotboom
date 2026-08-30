@@ -561,3 +561,15 @@ Copy of Big Fish in Little China with the tangerine accent muted
 - `docs/brochure.html`: a single-file page (images embedded) telling the
   app's story and features, shot from the examples in the phosphor theme.
   Also published as an artifact for sharing.
+
+## 2026-08-30 — Folder icons: Boxicons instead of pixel art
+- The hand-drawn 8×8 / 16×16 glyphs are replaced by Boxicons Solid
+  (MIT, github.com/box-icons/boxicons), sixty of them, bundled as SVG path
+  data pulled from Iconify (`api.iconify.design/bxs.json`). `src/glyph.rs`
+  keeps the old keys (`coffee`, `book`, … `beer`) so saved assignments
+  still resolve, and adds cart, car, bell, calendar, envelope, phone,
+  moon, sun, cloud, film, pencil, key, lock, brain, cat, dog, palette,
+  wrench, trophy, rocket, wine, pizza, bank, medal, truck, bag, movie,
+  bookmark, folder, user, pram, paint, tree, ship, train, bed, cake, drink.
+  Drawn through the renderer's SVG path with a per-(icon, colour) handle
+  cache so nothing is re-rasterised per frame.

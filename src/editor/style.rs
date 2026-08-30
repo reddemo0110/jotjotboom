@@ -26,8 +26,8 @@ pub const META_TASK_PREFIX: usize = 7;
 /// Clickable spans: a `[[wiki link]]` target and a `#tag`.
 pub const META_LINK: usize = 8;
 pub const META_TAG: usize = 9;
-/// The `#` of a tag wearing a folder icon: invisible at width, the 8-bit
-/// glyph is drawn over it. Metadata = base + index into `pixel::Icon::ALL`.
+/// The `#` of a tag wearing a folder icon: invisible at width, the icon
+/// is drawn over it. Metadata = base + index into `glyph::Icon::ALL`.
 pub const META_TAGICON_BASE: usize = 100;
 
 /// Heading level from the line's leading hashes (0 = not a heading).

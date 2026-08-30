@@ -42,3 +42,7 @@ Developers should install [rustup][rustup] and configure their editor to use [ru
 [rust-analyzer]: https://rust-analyzer.github.io/
 [mold]: https://github.com/rui314/mold
 [sccache]: https://github.com/mozilla/sccache
+
+## Credits
+
+Folder icons are [Boxicons](https://github.com/box-icons/boxicons) (MIT), bundled via Iconify. Bundled fonts are under the OFL/UFL, see `resources/fonts`.
