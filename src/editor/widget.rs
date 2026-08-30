@@ -10,6 +10,7 @@ use super::content::{Highlight, HotKind, RichContent};
 use crate::markdown;
 use crate::retro::Palette;
 use cosmic::iced::advanced::clipboard::{self, Clipboard};
+use cosmic::iced::advanced::input_method::{self, InputMethod};
 use cosmic::iced::advanced::mouse;
 use cosmic::iced::advanced::renderer::{self, Quad};
 use cosmic::iced::advanced::text::Renderer as _;
@@ -71,6 +72,30 @@ impl<'a, Message> RichEditor<'a, Message> {
         self
     }
 
+    /// Where the input method should put its popup, plus the preedit.
+    fn input_method<'b>(&self, state: &'b State, bounds: Rectangle) -> InputMethod<&'b str> {
+        let Some(Focus {
+            window_focused: true,
+            ..
+        }) = &state.focus
+        else {
+            return InputMethod::Disabled;
+        };
+        let origin = bounds.shrink(self.padding).position() - Point::ORIGIN;
+        let caret = match self.content.highlight() {
+            Highlight::Caret(p) => p,
+            Highlight::Range(r) => r.first().map_or(Point::ORIGIN, |r| r.position()),
+        };
+        InputMethod::Enabled {
+            cursor: Rectangle::new(
+                caret + origin,
+                Size::new(1.0, self.content.line_height_at_cursor()),
+            ),
+            purpose: input_method::Purpose::Normal,
+            preedit: state.preedit.as_ref().map(input_method::Preedit::as_ref),
+        }
+    }
+
     /// The hotspot under `point` (widget-local), if any.
     fn hotspot_at(&self, point: Point) -> Option<HotKind> {
         let p = point - Vector::new(self.padding.left, self.padding.top);
@@ -118,6 +143,8 @@ impl<'a, Message> RichEditor<'a, Message> {
 pub struct State {
     focus: Option<Focus>,
     modifiers: keyboard::Modifiers,
+    /// Text being composed by an input method, shown at the caret.
+    preedit: Option<input_method::Preedit>,
     last_click: Option<mouse::Click>,
     drag_click: Option<mouse::click::Kind>,
     /// Emitted on the next event once focus was lost by a click elsewhere.
@@ -178,6 +205,7 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
         tree::State::new(State {
             focus: None,
             modifiers: keyboard::Modifiers::default(),
+            preedit: None,
             last_click: None,
             drag_click: None,
             pending: None,
@@ -267,7 +295,27 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                         Focus::BLINK_MS - (f.now - f.updated_at).as_millis() % Focus::BLINK_MS;
                     shell.request_redraw_at(f.now + Duration::from_millis(until as u64));
                 }
+                shell.request_input_method(&self.input_method(state, bounds));
             }
+            Event::InputMethod(ime) => match ime {
+                input_method::Event::Opened | input_method::Event::Closed => {
+                    state.preedit =
+                        matches!(ime, input_method::Event::Opened).then(input_method::Preedit::new);
+                    shell.request_redraw();
+                }
+                input_method::Event::Preedit(content, selection) if state.focus.is_some() => {
+                    state.preedit = Some(input_method::Preedit {
+                        content: content.clone(),
+                        selection: selection.clone(),
+                        text_size: Some(self.size.into()),
+                    });
+                    shell.request_redraw();
+                }
+                input_method::Event::Commit(text) if state.focus.is_some() => {
+                    shell.publish(on_action(Action::Edit(Edit::Paste(Arc::new(text.clone())))));
+                }
+                _ => {}
+            },
             _ => {}
         }
 

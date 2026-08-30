@@ -462,3 +462,10 @@ Copy of Big Fish in Little China with the tangerine accent muted
   never fights with following it. Hover shows a hand over task boxes, and
   over links/tags with Ctrl held (plus an underline). Task clicks count
   from the list marker onwards, matching where the box is drawn.
+
+## 2026-08-30 — Rich editor phase 4: only editor, merged
+- IME preedit wired like iced's editor. The stock `text_editor` path,
+  the highlighter, the flag and the spike are deleted; `Content` is the
+  cosmic-text content. v0.2 = first release where the note is rendered
+  formatted. Fallback if something goes badly wrong: tag
+  `v0.1-pre-rich-editor` still builds the old editor.

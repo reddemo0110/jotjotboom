@@ -6,7 +6,7 @@
 
 use cosmic::iced::font::{Family, Weight};
 use cosmic::iced::{Alignment, Background, Border, Color, Font, Length};
-use cosmic::widget::{self, text_editor, text_input};
+use cosmic::widget::{self, text_input};
 use cosmic::{Element, theme};
 
 /// Text typed against the COSMIC theme (the bare `widget::Text<'a>` alias defaults to iced's).
@@ -1125,22 +1125,6 @@ pub fn search_class(p: &Palette) -> theme::TextInput {
         hovered: Box::new(move |_| make(p.border)),
         focused: Box::new(move |_| make(p.accent)),
         disabled: Box::new(move |_| make(p.mute)),
-    }
-}
-
-pub fn editor_style(
-    p: Palette,
-) -> impl Fn(&cosmic::Theme, text_editor::Status) -> text_editor::Style + use<> {
-    move |_, _| text_editor::Style {
-        background: Background::Color(Color::TRANSPARENT),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 0.0.into(),
-        },
-        placeholder: p.dim,
-        value: p.fg,
-        selection: p.sel,
     }
 }
 

@@ -1,84 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Editable note text. `Content` is what the rest of the app holds: either
-//! iced's stock editor content or the rich editor's, chosen by the
-//! `rich_editor` flag at construction. Both expose the same small API the
-//! app was already using, so callers never care which one they have.
+//! Editable note text: a cosmic-text editor over a buffer the renderer
+//! draws directly. Exposes the small API the app uses (`perform`,
+//! `move_to`, `cursor`, `line`, `text`, `selection`).
 
 use crate::markdown;
 use cosmic::iced::advanced::graphics::text as gtext;
 use cosmic::iced::{Font, Point, Rectangle, Size};
-use cosmic::widget::text_editor::{self, Action, Cursor, Edit, Line, LineEnding, Motion, Position};
+use cosmic::widget::text_editor::{Action, Cursor, Edit, Line, LineEnding, Motion, Position};
 use cosmic_text::{Attrs, AttrsList, Buffer, BufferRef, Edit as _, Metrics, Shaping};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::{Arc, Weak};
 
-/// The text of one block, behind whichever editor is enabled.
-pub enum Content {
-    Iced(text_editor::Content),
-    Rich(RichContent),
-}
-
-impl Content {
-    pub fn with_text(text: &str) -> Self {
-        if super::rich_enabled() {
-            Content::Rich(RichContent::with_text(text))
-        } else {
-            Content::Iced(text_editor::Content::with_text(text))
-        }
-    }
-
-    pub fn perform(&mut self, action: Action) {
-        match self {
-            Content::Iced(c) => c.perform(action),
-            Content::Rich(c) => c.perform(action),
-        }
-    }
-
-    pub fn move_to(&mut self, cursor: Cursor) {
-        match self {
-            Content::Iced(c) => c.move_to(cursor),
-            Content::Rich(c) => c.move_to(cursor),
-        }
-    }
-
-    pub fn cursor(&self) -> Cursor {
-        match self {
-            Content::Iced(c) => c.cursor(),
-            Content::Rich(c) => c.cursor(),
-        }
-    }
-
-    pub fn line_count(&self) -> usize {
-        match self {
-            Content::Iced(c) => c.line_count(),
-            Content::Rich(c) => c.line_count(),
-        }
-    }
-
-    pub fn line(&self, index: usize) -> Option<Line<'_>> {
-        match self {
-            Content::Iced(c) => c.line(index),
-            Content::Rich(c) => c.line(index),
-        }
-    }
-
-    /// The whole text. Like iced's, ends with a newline.
-    pub fn text(&self) -> String {
-        match self {
-            Content::Iced(c) => c.text(),
-            Content::Rich(c) => c.text(),
-        }
-    }
-
-    pub fn selection(&self) -> Option<String> {
-        match self {
-            Content::Iced(c) => c.selection(),
-            Content::Rich(c) => c.selection(),
-        }
-    }
-}
+/// The text of one block.
+pub type Content = RichContent;
 
 /// The rich editor's text: a cosmic-text editor over a shared buffer so the
 /// renderer can draw the very same buffer (`fill_raw`) that is edited.

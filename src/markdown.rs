@@ -8,7 +8,6 @@
 //! so the text reads as formatted while the cursor can still move over them.
 
 use crate::retro::Palette;
-use cosmic::iced::advanced::text::highlighter::{Format, Highlighter};
 use cosmic::iced::font::{Style, Weight};
 use cosmic::iced::{Color, Font};
 use std::ops::Range;
@@ -333,19 +332,6 @@ pub struct Highlight {
     pub font: Option<Font>,
 }
 
-pub struct MarkdownHighlighter {
-    settings: Settings,
-    current_line: usize,
-    /// `fence_state[i]` = whether line `i` starts inside a code fence.
-    fence_state: Vec<bool>,
-}
-
-impl MarkdownHighlighter {
-    fn highlight_for(&self, kind: Kind) -> Highlight {
-        style_for(kind, &self.settings)
-    }
-}
-
 /// Colour and font for a span kind under `settings` — shared by iced's
 /// highlighter path and the rich editor.
 pub fn style_for(kind: Kind, settings: &Settings) -> Highlight {
@@ -390,66 +376,6 @@ pub fn style_for(kind: Kind, settings: &Settings) -> Highlight {
             color: Some(color),
             font,
         }
-    }
-}
-
-impl Highlighter for MarkdownHighlighter {
-    type Settings = Settings;
-    type Highlight = Highlight;
-    type Iterator<'a> = std::vec::IntoIter<(Range<usize>, Highlight)>;
-
-    fn new(settings: &Self::Settings) -> Self {
-        Self {
-            settings: settings.clone(),
-            current_line: 0,
-            fence_state: vec![false],
-        }
-    }
-
-    fn update(&mut self, new_settings: &Self::Settings) {
-        self.settings = new_settings.clone();
-        self.change_line(0);
-    }
-
-    fn change_line(&mut self, line: usize) {
-        self.current_line = line;
-        self.fence_state.truncate(line + 1);
-    }
-
-    fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
-        let in_fence = self
-            .fence_state
-            .get(self.current_line)
-            .copied()
-            .unwrap_or(false);
-        let (spans, after) = scan_line(line, in_fence);
-        tracing::trace!(
-            line = self.current_line,
-            spans = spans.len(),
-            text = line,
-            "highlight"
-        );
-        if self.fence_state.len() <= self.current_line + 1 {
-            self.fence_state.resize(self.current_line + 2, false);
-        }
-        self.fence_state[self.current_line + 1] = after;
-        self.current_line += 1;
-        spans
-            .into_iter()
-            .map(|s| (s.range, self.highlight_for(s.kind)))
-            .collect::<Vec<_>>()
-            .into_iter()
-    }
-
-    fn current_line(&self) -> usize {
-        self.current_line
-    }
-}
-
-pub fn to_format(h: &Highlight, _theme: &cosmic::Theme) -> Format<Font> {
-    Format {
-        color: h.color,
-        font: h.font,
     }
 }
 

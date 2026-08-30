@@ -139,8 +139,6 @@ pub enum Message {
     SetFont(retro::EditorFont),
     /// Apply a designer pairing (titles, chrome, note) by key.
     SetPairing(String),
-    /// Switch the experimental cosmic-text editor on or off.
-    ToggleRichEditor(bool),
     /// Ctrl+click on a `[[link]]` or `#tag` in the rich editor.
     FollowLink(crate::editor::widget::Link),
     RestoreFonts,
@@ -293,7 +291,6 @@ impl cosmic::Application for AppModel {
         let dock_size = retro::DockSize::from_key(&config.dock_size);
         let task_marker = task_marker_from_config(&config.task_marker);
         let measure = retro::Measure::from_key(&config.text_width);
-        crate::editor::set_rich(config.rich_editor);
         let collapsed: HashSet<String> = config.collapsed_tags.iter().cloned().collect();
         let mut app = AppModel {
             core,
@@ -836,17 +833,6 @@ impl AppModel {
                     }
                 }
             },
-
-            Message::ToggleRichEditor(on) => {
-                crate::editor::set_rich(on);
-                if let Some(handler) = &self.config_handler
-                    && let Err(why) = self.config.set_rich_editor(handler, on)
-                {
-                    tracing::warn!(%why, "saving rich editor flag");
-                }
-                self.reopen_blocks();
-                return self.focus_editor();
-            }
 
             Message::SetPairing(key) => {
                 if let Some(pair) = retro::Pairing::from_key(&key) {
@@ -1581,10 +1567,6 @@ impl AppModel {
                 self.dock_size = retro::DockSize::from_key(&config.dock_size);
                 self.task_marker = task_marker_from_config(&config.task_marker);
                 self.measure = retro::Measure::from_key(&config.text_width);
-                if crate::editor::rich_enabled() != config.rich_editor {
-                    crate::editor::set_rich(config.rich_editor);
-                    self.reopen_blocks();
-                }
                 self.config = config;
             }
 
@@ -1638,15 +1620,6 @@ impl AppModel {
                 tracing::warn!(%why, "saving font pairing");
             }
         }
-    }
-
-    /// Rebuild the open note's blocks (e.g. after the editor flag flipped),
-    /// keeping focus and caret.
-    fn reopen_blocks(&mut self) {
-        let body = self.blocks.body();
-        let focus = self.blocks.focused;
-        let cursor = self.blocks.text(focus).map(|c| c.cursor());
-        self.blocks.rebuild(&body, focus, cursor);
     }
 
     fn palette(&self) -> Palette {
@@ -1951,19 +1924,7 @@ impl AppModel {
             .into()
         };
 
-        let text_area: Element<'a, Message> = if std::env::var_os("JJB_SPIKE").is_some() {
-            // Phase-0 rich-editor spike (see RICH-EDITOR-PLAN.md).
-            widget::container(crate::editor::spike::Spike::new(
-                p,
-                self.editor_font.font(),
-                f32::from(self.font_size),
-                self.measure.max_width().unwrap_or(720.0).min(640.0),
-            ))
-            .padding([6, 10])
-            .into()
-        } else {
-            self.blocks_view(p, note.trashed)
-        };
+        let text_area: Element<'a, Message> = self.blocks_view(p, note.trashed);
         let mut column = widget::column::with_capacity(3)
             .push(text_area)
             .spacing(8)
@@ -2201,15 +2162,6 @@ impl AppModel {
             widget::container(header(fl!("section-font"), Section::Font)).padding([8, 0, 0, 0]),
         );
         if self.appearance_open[Section::Font as usize] {
-            col = col.push(
-                widget::container(
-                    widget::toggler(crate::editor::rich_enabled())
-                        .label(fl!("rich-editor-toggle"))
-                        .on_toggle(Message::ToggleRichEditor),
-                )
-                .padding([4, 0, 8, 0]),
-            );
-            col = col.push(widget::text::caption(fl!("rich-editor-hint")));
             col = col.push(widget::text::caption(fl!("font-pairings-hint")));
             let current = retro::PAIRINGS.iter().find(|pr| {
                 pr.title == self.title_font && pr.ui == self.ui_font && pr.body == self.editor_font
@@ -2897,48 +2849,22 @@ impl AppModel {
             show_markers: self.show_markers,
             font: self.editor_font.font(),
         };
-        let content = match content {
-            crate::editor::Content::Iced(c) => c,
-            crate::editor::Content::Rich(rich) => {
-                let mut editor = crate::editor::RichEditor::new(rich, settings)
-                    .id(id)
-                    .placeholder(if block == 0 {
-                        fl!("untitled")
-                    } else {
-                        String::new()
-                    })
-                    .size(f32::from(self.font_size))
-                    .padding([6, 10]);
-                if is_last {
-                    editor = editor.min_height(220.0);
-                }
-                if !trashed {
-                    editor = editor
-                        .on_action(move |a| Message::Editor(block, a))
-                        .on_link(Message::FollowLink);
-                }
-                return editor.into();
-            }
-        };
-        let mut editor = cosmic::iced::widget::text_editor(content)
+        let mut editor = crate::editor::RichEditor::new(content, settings)
             .id(id)
             .placeholder(if block == 0 {
                 fl!("untitled")
             } else {
                 String::new()
             })
-            .font(self.editor_font.font())
             .size(f32::from(self.font_size))
-            .line_height(1.5)
-            .padding([6, 10])
-            .style(retro::editor_style(*p))
-            .height(Length::Shrink)
-            .highlight_with::<markdown::MarkdownHighlighter>(settings, markdown::to_format);
+            .padding([6, 10]);
         if is_last {
             editor = editor.min_height(220.0);
         }
         if !trashed {
-            editor = editor.on_action(move |a| Message::Editor(block, a));
+            editor = editor
+                .on_action(move |a| Message::Editor(block, a))
+                .on_link(Message::FollowLink);
         }
         editor.into()
     }
@@ -3710,16 +3636,6 @@ impl AppModel {
             Step::Follow(title) => self.update(Message::FollowLink(
                 crate::editor::widget::Link::Note(title),
             )),
-            Step::Rich(on) => {
-                crate::editor::set_rich(on);
-                if let Some(handler) = &self.config_handler
-                    && let Err(why) = self.config.set_rich_editor(handler, on)
-                {
-                    tracing::warn!(%why, "saving rich editor flag");
-                }
-                self.reopen_blocks();
-                self.focus_editor()
-            }
             Step::Size(pane, delta) => {
                 let pane = match pane.as_str() {
                     "sidebar" => Pane::Sidebar,

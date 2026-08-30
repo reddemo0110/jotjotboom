@@ -37,8 +37,6 @@ pub struct Config {
     pub task_marker: String,
     /// Widest the note text gets before it centres: narrow, medium, wide, full.
     pub text_width: String,
-    /// Use the cosmic-text rich editor instead of iced's text editor (build step 3).
-    pub rich_editor: bool,
 }
 
 impl Config {

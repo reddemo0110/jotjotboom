@@ -1,6 +1,6 @@
 # Rich editor — build step 3 plan
 
-Status: planned 2026-08-30; phase 0 spike passed the same day; phases 1–3 (core widget, rich rendering, interactions) **landed 2026-08-30** behind the `rich_editor` flag — see the results at the end. Read `DECISIONS.md` for how the app
+Status: planned 2026-08-30; phase 0 spike passed the same day; **all phases landed 2026-08-30**; the rich editor is the only editor since phase 4. Results per phase at the end. Read `DECISIONS.md` for how the app
 got here; this document is the plan for the piece the handover called "the
 long pole".
 
@@ -247,3 +247,18 @@ Known nit: a decoration span includes leading spaces, so a strike on
 - `toggle_task_at_cursor` now accepts a click anywhere from the list marker
   to the closing bracket, since the rich editor draws the box over the
   marker's space. Both editors benefit.
+
+## Phase 4 result (2026-08-30) — the only editor
+
+- IME: `ModifiersChanged` and `InputMethod` events handled; the widget
+  reports caret rectangle + preedit through `request_input_method` on
+  every redraw while focused, commits arrive as `Edit::Paste`.
+- The stock path is gone: `Content` is a plain alias of `RichContent`;
+  iced's `text_editor` widget, the `Highlighter` impl, `retro::editor_style`,
+  the `rich_editor` flag/toggle/script step, and the phase-0 spike were
+  deleted. `markdown.rs` keeps the scanner and `style_for`.
+- 39 tests pass. Merged to `main` and tagged `v0.2`.
+- Later ideas, not started: inline rules instead of `Block::Rule`
+  widgets; nested-list indentation guides; a "show all markers" mode;
+  performance pass for very long notes (styling is per visible layout,
+  overlays are computed for every run each draw).

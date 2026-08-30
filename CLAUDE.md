@@ -18,7 +18,7 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
 - Visual check without a human: `tools/xshot.py out.png [--keys ctrl+n --type 'text']`
   runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (steps:
   new, type, search, select, pin, trash, folder, format, selectall, dock,
-  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, rich, follow, wait, exit; `;` separates steps — write `\;` inside text),
+  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, wait, exit; `;` separates steps — write `\;` inside text),
   and captures the window with X auto-repeat switched off. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
   hook (iced `window::screenshot`) silently drops editor text and menu labels.
 
@@ -36,7 +36,10 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
 - `src/app.rs` — the libcosmic `Application`: framed views/tags/notes/editor,
   dock, theme picker drawer, autosave, key binds.
 - `src/retro.rs` — palettes, btop-style `frame`, style classes, swatches.
-- `src/markdown.rs` — per-line markdown scanner + the editor highlighter.
+- `src/markdown.rs` — per-line markdown scanner and span → colour/font table.
+- `src/editor/` — the rich editor: `content.rs` (cosmic-text buffer + the
+  editor API the app uses), `style.rs` (span → attributes, active line vs
+  hidden markers), `widget.rs` (drawing, caret, mouse, keys, IME, Ctrl+click).
 - `src/images.rs` — image reference format, assets store, retro pixel treatments.
 - `src/blocks.rs` — the note body as text/image blocks (one editor per text run).
 - `src/config.rs` — cosmic-config entry (`notes_dir`, `device_id`).
