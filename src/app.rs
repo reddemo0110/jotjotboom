@@ -87,6 +87,10 @@ pub struct AppModel {
     /// In-app image picker (context drawer).
     picker_dir: PathBuf,
     picker_entries: Vec<PickerEntry>,
+    /// Thumbnails for the picker's grid, by file path.
+    thumbs: HashMap<PathBuf, ImageState>,
+    /// Grid (thumbnails) or list.
+    picker_grid: bool,
     /// A file drag is hovering the editor, and the body line it would land before.
     drop_hover: bool,
     drop_target: Option<usize>,
@@ -182,6 +186,9 @@ pub enum Message {
     PickImage,
     PickerNavigate(PathBuf),
     PickerChoose(PathBuf),
+    /// A picker thumbnail finished decoding.
+    ThumbLoaded(PathBuf, Result<(u32, u32, Vec<u8>), String>),
+    PickerToggleView,
     DragEnter,
     DragLeave,
     /// A file drag moved over the editor (window coordinates).
@@ -356,6 +363,8 @@ impl cosmic::Application for AppModel {
                 .or_else(dirs::home_dir)
                 .unwrap_or_else(|| PathBuf::from("/")),
             picker_entries: Vec::new(),
+            thumbs: HashMap::new(),
+            picker_grid: true,
             drop_hover: false,
             drop_target: None,
             store,
@@ -783,12 +792,26 @@ impl AppModel {
                 self.picker_entries = images::list_dir(&self.picker_dir);
                 self.context_page = ContextPage::Picker;
                 self.core.window.show_context = true;
+                return self.load_thumbs();
             }
 
             Message::PickerNavigate(dir) => {
                 self.picker_dir = dir;
                 self.picker_entries = images::list_dir(&self.picker_dir);
+                return self.load_thumbs();
             }
+
+            Message::ThumbLoaded(path, result) => {
+                let state = match result {
+                    Ok((w, h, rgba)) => {
+                        ImageState::Ready(widget::image::Handle::from_rgba(w, h, rgba), w, h)
+                    }
+                    Err(err) => ImageState::Failed(err),
+                };
+                self.thumbs.insert(path, state);
+            }
+
+            Message::PickerToggleView => self.picker_grid = !self.picker_grid,
 
             Message::PickerChoose(path) => {
                 self.core.window.show_context = false;
@@ -2871,7 +2894,98 @@ impl AppModel {
             }
         }
         col = col.push(places);
-        col = col.push(widget::text::caption(self.picker_dir.display().to_string()));
+        // Grid or list toggle beside the path.
+        col = col.push(
+            widget::row::with_capacity(2)
+                .push(
+                    widget::text::caption(self.picker_dir.display().to_string())
+                        .width(Length::Fill),
+                )
+                .push(
+                    widget::button::text(if self.picker_grid {
+                        fl!("picker-list")
+                    } else {
+                        fl!("picker-grid")
+                    })
+                    .on_press(Message::PickerToggleView),
+                )
+                .align_y(Alignment::Center)
+                .spacing(8),
+        );
+        if self.picker_entries.is_empty() {
+            col = col.push(widget::text::caption(fl!("picker-empty")));
+        }
+
+        if self.picker_grid {
+            // Folders as chips, then a grid of thumbnails.
+            let mut folders: Vec<Element<'_, Message>> = Vec::new();
+            if let Some(parent) = self.picker_dir.parent() {
+                folders.push(
+                    widget::button::text("..")
+                        .leading_icon(icon::from_name("go-up-symbolic"))
+                        .on_press(Message::PickerNavigate(parent.to_owned()))
+                        .into(),
+                );
+            }
+            for entry in self.picker_entries.iter().filter(|e| e.is_dir) {
+                folders.push(
+                    widget::button::text(entry.name.clone())
+                        .leading_icon(icon::from_name("folder-symbolic"))
+                        .on_press(Message::PickerNavigate(entry.path.clone()))
+                        .into(),
+                );
+            }
+            if !folders.is_empty() {
+                col = col.push(widget::flex_row(folders).spacing(6));
+            }
+            let mut tiles: Vec<Element<'_, Message>> = Vec::new();
+            for entry in self.picker_entries.iter().filter(|e| !e.is_dir) {
+                let picture: Element<'_, Message> = match self.thumbs.get(&entry.path) {
+                    Some(ImageState::Ready(handle, _, _)) => widget::image(handle.clone())
+                        .width(Length::Fixed(104.0))
+                        .height(Length::Fixed(78.0))
+                        .content_fit(cosmic::iced::ContentFit::Cover)
+                        .into(),
+                    Some(ImageState::Failed(_)) => {
+                        widget::container(icon::from_name("image-missing-symbolic").size(28))
+                            .width(Length::Fixed(104.0))
+                            .height(Length::Fixed(78.0))
+                            .align_x(Alignment::Center)
+                            .align_y(Alignment::Center)
+                            .into()
+                    }
+                    _ => widget::container(widget::text::caption("…"))
+                        .width(Length::Fixed(104.0))
+                        .height(Length::Fixed(78.0))
+                        .align_x(Alignment::Center)
+                        .align_y(Alignment::Center)
+                        .into(),
+                };
+                let mut name = entry.name.clone();
+                if name.chars().count() > 16 {
+                    name = name.chars().take(15).collect::<String>() + "…";
+                }
+                let tile = widget::column::with_capacity(2)
+                    .push(picture)
+                    .push(widget::text::caption(name))
+                    .spacing(3)
+                    .align_x(Alignment::Center)
+                    .width(Length::Fixed(108.0));
+                tiles.push(
+                    widget::tooltip(
+                        widget::button::custom(tile)
+                            .padding(2)
+                            .class(cosmic::theme::Button::Image)
+                            .on_press(Message::PickerChoose(entry.path.clone())),
+                        widget::text::caption(entry.name.clone()),
+                        widget::tooltip::Position::Bottom,
+                    )
+                    .into(),
+                );
+            }
+            col = col.push(widget::flex_row(tiles).spacing(6));
+            return widget::scrollable(col).into();
+        }
 
         let mut list = widget::list_column();
         if let Some(parent) = self.picker_dir.parent() {
@@ -2907,9 +3021,6 @@ impl AppModel {
                 )
                 .on_press(msg),
             );
-        }
-        if self.picker_entries.is_empty() {
-            col = col.push(widget::text::caption(fl!("picker-empty")));
         }
         col = col.push(list);
         widget::scrollable(col).into()
@@ -3295,6 +3406,30 @@ impl AppModel {
     /// Copy a file into assets/ and drop it into the note at the caret.
     fn import_image(&mut self, path: &std::path::Path) -> Task<cosmic::Action<Message>> {
         self.import_image_at(path, None)
+    }
+
+    /// Decode thumbnails for the picker's images that are not cached yet.
+    fn load_thumbs(&mut self) -> Task<cosmic::Action<Message>> {
+        let mut tasks = Vec::new();
+        for entry in self.picker_entries.iter().filter(|e| !e.is_dir) {
+            if self.thumbs.contains_key(&entry.path) {
+                continue;
+            }
+            self.thumbs.insert(entry.path.clone(), ImageState::Loading);
+            let path = entry.path.clone();
+            tasks.push(Task::perform(
+                async move {
+                    let p = path.clone();
+                    let result = tokio::task::spawn_blocking(move || images::thumbnail(&p, 160))
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r.map_err(|e| format!("{e:#}")));
+                    (path, result)
+                },
+                |(path, result)| cosmic::Action::App(Message::ThumbLoaded(path, result)),
+            ));
+        }
+        Task::batch(tasks)
     }
 
     /// Body line a drag at window position (`x`, `y`) would drop before:
@@ -3960,6 +4095,7 @@ impl AppModel {
             Step::Solo => self.update(Message::ToggleSolo),
             Step::Image(path) => self.update(Message::ImagesDropped(vec![PathBuf::from(path)])),
             Step::Pick => self.update(Message::PickImage),
+            Step::PickDir(dir) => self.update(Message::PickerNavigate(PathBuf::from(dir))),
             Step::ImgFrame(n, key) => match (self.nth_image_block(n), FrameStyle::from_key(&key)) {
                 (Some(b), Some(f)) => self.update(Message::SetFrame(b, f)),
                 _ => Task::none(),

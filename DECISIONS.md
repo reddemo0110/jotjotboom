@@ -483,6 +483,12 @@ Copy of Big Fish in Little China with the tangerine accent muted
   formatted. Fallback if something goes badly wrong: tag
   `v0.1-pre-rich-editor` still builds the old editor.
 
+## 2026-08-30 — Image picker: thumbnails in a grid
+- The in-app picker defaults to a grid of 104×78 thumbnails (decoded off
+  the UI thread to 160 px, cached per path for the session) with folders
+  as chips above; a button flips to the old list. Script step
+  `pickdir:<path>`.
+
 ## 2026-08-30 — 8-bit folder icons
 - Emoji were rejected as folder icons ("I don't like the emoji style").
   `src/pixel.rs` holds 21 8×8 one-colour pixel glyphs (coffee, book,

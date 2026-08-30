@@ -395,6 +395,15 @@ pub fn list_dir(dir: &Path) -> Vec<PickerEntry> {
     entries
 }
 
+/// A small RGBA thumbnail of an image file, at most `max` px on its long
+/// edge (for the picker's grid).
+pub fn thumbnail(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>)> {
+    let img = image::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let img = img.thumbnail(max, max);
+    let rgba = img.to_rgba8();
+    Ok((rgba.width(), rgba.height(), rgba.into_raw()))
+}
+
 // ---------- asset store ----------
 
 /// Copy `src` into `<notes dir>/assets/`, returning the relative path to

@@ -44,6 +44,8 @@ pub enum Step {
     Image(String),
     /// Open the image picker (portal dialog).
     Pick,
+    /// Point the picker at a folder: `pickdir:/path`.
+    PickDir(String),
     /// Set the frame style of the n-th image: `imgframe:n:key`.
     ImgFrame(usize, String),
     /// Set alignment of the n-th image: `imgalign:n:left|center|right`.
@@ -128,6 +130,7 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "solo" => Step::Solo,
                 "image" => Step::Image(unescape(arg)),
                 "pick" => Step::Pick,
+                "pickdir" => Step::PickDir(unescape(arg)),
                 "imgframe" => {
                     let (n, key) = arg.trim().split_once(':')?;
                     Step::ImgFrame(n.parse().ok()?, key.to_owned())

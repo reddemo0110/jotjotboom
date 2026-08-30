@@ -118,6 +118,8 @@ picker-home = Home
 picker-pictures = Pictures
 picker-downloads = Downloads
 picker-empty = No folders or images here.
+picker-grid = Grid
+picker-list = List
 badge-drop = drop to add
 
 # Image menu
