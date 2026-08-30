@@ -827,6 +827,7 @@ mod tests {
             show_markers: false,
             font: cosmic::font::mono(),
             tag_icons: Default::default(),
+            icon_set: Default::default(),
         };
         c.update(120.0, cosmic::font::mono(), 15.0, 22.5, &settings, None);
         // Narrow width wraps into several visual lines.
@@ -853,6 +854,7 @@ mod tests {
             show_markers: false,
             font: cosmic::font::mono(),
             tag_icons: Default::default(),
+            icon_set: Default::default(),
         };
         c.update(600.0, cosmic::font::mono(), 15.0, 22.5, &settings, None);
         let o = c.overlays();

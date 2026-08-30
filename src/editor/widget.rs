@@ -638,7 +638,10 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                 height: side,
             };
             renderer.draw_svg(
-                cosmic::iced::advanced::svg::Svg::new(icon.handle(p.accent2)).color(p.accent2),
+                cosmic::iced::advanced::svg::Svg::new(
+                    icon.handle(self.settings.icon_set, p.accent2),
+                )
+                .color(p.accent2),
                 bounds,
                 bounds.expand(2.0),
             );

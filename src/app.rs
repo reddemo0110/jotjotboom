@@ -110,8 +110,9 @@ pub struct AppModel {
     tag_rename: Option<(String, String)>,
     /// Tag whose icon grid is open.
     tag_icon_pick: Option<String>,
-    /// Folder icons by tag (shared with the editor's settings).
+    /// Folder icons by tag (shared with the editor's settings), and their style.
     tag_icons: Arc<HashMap<String, crate::glyph::Icon>>,
+    icon_set: crate::glyph::IconSet,
     rename_id: widget::Id,
     query: String,
     search_id: widget::Id,
@@ -176,8 +177,10 @@ pub enum Message {
     TagRenameCancel,
     /// Open the icon grid for a tag.
     TagIconPick(String),
-    /// Give a tag an 8-bit icon (`None` = back to `#`).
+    /// Give a tag an icon (`None` = back to `#`).
     SetTagIcon(String, Option<crate::glyph::Icon>),
+    /// Folder icon style.
+    SetIconSet(crate::glyph::IconSet),
     ToggleMarkers,
     ToggleNav,
     ToggleList,
@@ -325,6 +328,7 @@ impl cosmic::Application for AppModel {
             (!config.icon_theme.is_empty()).then(|| retro::Theme::from_key(&config.icon_theme));
         let coffee_unlocked = config.coffee_unlocked;
         let tag_icons = Arc::new(crate::glyph::parse_assignments(&config.tag_icons));
+        let icon_set = crate::glyph::IconSet::from_key(&config.icon_set);
         let collapsed: HashSet<String> = config.collapsed_tags.iter().cloned().collect();
         let mut app = AppModel {
             core,
@@ -376,6 +380,7 @@ impl cosmic::Application for AppModel {
             tag_rename: None,
             tag_icon_pick: None,
             tag_icons,
+            icon_set,
             rename_id: widget::Id::unique(),
             tags: Vec::new(),
             query: String::new(),
@@ -1016,6 +1021,15 @@ impl AppModel {
                 self.tag_menu = tag;
                 self.tag_rename = None;
                 self.tag_icon_pick = None;
+            }
+
+            Message::SetIconSet(set) => {
+                self.icon_set = set;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_icon_set(handler, set.key().to_owned())
+                {
+                    tracing::warn!(%why, "saving icon set");
+                }
             }
 
             Message::TagIconPick(tag) => {
@@ -1978,7 +1992,7 @@ impl AppModel {
                 .push(chevron)
                 .push(match crate::glyph::for_tag(name, &self.tag_icons) {
                     Some(icon) => Element::from(
-                        widget::svg(icon.handle(p.accent2))
+                        widget::svg(icon.handle(self.icon_set, p.accent2))
                             .width(sz + 3.0)
                             .height(sz + 3.0),
                     ),
@@ -2035,7 +2049,7 @@ impl AppModel {
                     let mut tiles: Vec<Element<'a, Message>> =
                         Vec::with_capacity(crate::glyph::Icon::ALL.len() + 1);
                     for icon in crate::glyph::Icon::ALL {
-                        let handle = icon.handle(p.accent2);
+                        let handle = icon.handle(self.icon_set, p.accent2);
                         tiles.push(
                             widget::tooltip(
                                 widget::button::custom(widget::svg(handle).width(22).height(22))
@@ -2742,6 +2756,47 @@ impl AppModel {
                 );
             }
             col = col.push(widget::flex_row(tiles).spacing(4));
+
+            // Folder icon style: two sets, previewed with a few glyphs each.
+            col = col.push(
+                widget::container(widget::text::heading(fl!("icon-set"))).padding([10, 0, 0, 0]),
+            );
+            col = col.push(widget::text::caption(fl!("icon-set-hint")));
+            let mut sets = widget::row::with_capacity(2).spacing(8);
+            let sample = [
+                crate::glyph::Icon::Coffee,
+                crate::glyph::Icon::Star,
+                crate::glyph::Icon::Plane,
+                crate::glyph::Icon::Idea,
+                crate::glyph::Icon::Heart,
+            ];
+            for set in crate::glyph::IconSet::ALL {
+                let mut glyphs = widget::row::with_capacity(sample.len()).spacing(6);
+                for icon in sample {
+                    glyphs = glyphs.push(
+                        widget::svg(icon.handle(set, label_color))
+                            .width(20)
+                            .height(20),
+                    );
+                }
+                let card = widget::column::with_capacity(3)
+                    .push(widget::text(set.label()))
+                    .push(glyphs)
+                    .push(widget::text::caption(set.blurb()))
+                    .spacing(4);
+                sets = sets.push(
+                    widget::button::custom(widget::container(card).width(Length::Fill))
+                        .padding([8, 12])
+                        .width(Length::Fill)
+                        .class(if self.icon_set == set {
+                            cosmic::theme::Button::Suggested
+                        } else {
+                            cosmic::theme::Button::Standard
+                        })
+                        .on_press(Message::SetIconSet(set)),
+                );
+            }
+            col = col.push(sets);
         }
         widget::scrollable(col).into()
     }
@@ -3309,6 +3364,7 @@ impl AppModel {
             show_markers: self.show_markers,
             font: self.editor_font.font(),
             tag_icons: Arc::clone(&self.tag_icons),
+            icon_set: self.icon_set,
         };
         let mut editor = crate::editor::RichEditor::new(content, settings)
             .id(id)
@@ -4168,6 +4224,9 @@ impl AppModel {
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
             Step::Measure(key) => self.update(Message::SetMeasure(retro::Measure::from_key(&key))),
             Step::Coffee => self.update(Message::ToggleCoffee),
+            Step::IconSet(key) => {
+                self.update(Message::SetIconSet(crate::glyph::IconSet::from_key(&key)))
+            }
             Step::TagIcon(tag, key) => {
                 self.update(Message::SetTagIcon(tag, crate::glyph::Icon::from_key(&key)))
             }

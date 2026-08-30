@@ -45,4 +45,4 @@ Developers should install [rustup][rustup] and configure their editor to use [ru
 
 ## Credits
 
-Folder icons are [Boxicons](https://github.com/box-icons/boxicons) (MIT), bundled via Iconify. Bundled fonts are under the OFL/UFL, see `resources/fonts`.
+Folder icons are [Boxicons](https://github.com/box-icons/boxicons) and [Iconoir](https://iconoir.com) (both MIT), bundled via Iconify. Bundled fonts are under the OFL/UFL, see `resources/fonts`.

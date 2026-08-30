@@ -573,3 +573,10 @@ Copy of Big Fish in Little China with the tangerine accent muted
   bookmark, folder, user, pram, paint, tree, ship, train, bed, cake, drink.
   Drawn through the renderer's SVG path with a per-(icon, colour) handle
   cache so nothing is re-rasterised per frame.
+
+## 2026-08-30 — Two folder-icon styles
+- Iconoir (MIT, iconoir.com) joins Boxicons as a second style for the same
+  sixty meanings; Options → Icon → "Folder icons" switches sidebar, picker
+  and in-note icons together (`icon_set` in config). Iconoir has no cat,
+  dog or movie camera, so those three fall back to the Boxicons drawing.
+  Script step `iconset:<boxicons|iconoir>`.

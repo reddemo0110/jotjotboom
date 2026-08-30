@@ -41,8 +41,10 @@ pub struct Config {
     pub icon_theme: String,
     /// The hidden "Long Black" theme has been found (search for "coffee").
     pub coffee_unlocked: bool,
-    /// Folder icons: `tag=icon` per entry (see `pixel::Icon::key`).
+    /// Folder icons: `tag=icon` per entry (see `glyph::Icon::key`).
     pub tag_icons: Vec<String>,
+    /// Folder icon style: boxicons (solid) or iconoir (outline).
+    pub icon_set: String,
 }
 
 impl Config {

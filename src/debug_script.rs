@@ -86,6 +86,8 @@ pub enum Step {
     Icon(String),
     /// Toggle the neon coffee sign.
     Coffee,
+    /// Folder icon style: `iconset:boxicons|iconoir`.
+    IconSet(String),
     /// Give a tag an 8-bit icon (or `none`): `tagicon:travels:plane`.
     TagIcon(String, String),
     /// Walk the notes list like ↑/↓: `nav:+1` / `nav:-1`.
@@ -176,6 +178,7 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "follow" => Step::Follow(unescape(arg)),
                 "icon" => Step::Icon(arg.trim().to_owned()),
                 "coffee" => Step::Coffee,
+                "iconset" => Step::IconSet(arg.trim().to_owned()),
                 "tagicon" => {
                     let (tag, key) = arg.trim().split_once(':')?;
                     Step::TagIcon(tag.to_owned(), key.to_owned())

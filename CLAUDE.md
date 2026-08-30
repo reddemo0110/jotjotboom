@@ -18,7 +18,7 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
 - Visual check without a human: `tools/xshot.py out.png [--keys ctrl+n --type 'text']`
   runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (steps:
   new, type, search, select, pin, trash, folder, format, selectall, dock,
-  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, wait, exit; `;` separates steps — write `\;` inside text),
+  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, iconset, wait, exit; `;` separates steps — write `\;` inside text),
   and captures the window with X auto-repeat switched off. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
   hook (iced `window::screenshot`) silently drops editor text and menu labels.
 
@@ -42,7 +42,7 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
   hidden markers), `widget.rs` (drawing, caret, mouse, keys, IME, Ctrl+click).
 - `src/images.rs` — image reference format, assets store, retro pixel treatments.
 - `src/blocks.rs` — the note body as text/image blocks (one editor per text run).
-- `src/glyph.rs` — folder icons (Boxicons Solid, MIT, bundled as SVG paths) a tag can wear instead of `#`.
+- `src/glyph.rs` — folder icons a tag can wear instead of `#`: Boxicons Solid or Iconoir (both MIT, bundled as SVG paths), chosen in Options → Icon.
 - `src/icon.rs` — the launcher icon generated from a palette and written into
   the user's hicolor theme.
 - `src/config.rs` — cosmic-config entry (`notes_dir`, `device_id`).
