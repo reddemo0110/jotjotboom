@@ -31,8 +31,8 @@ const AUTOSAVE_DELAY: Duration = Duration::from_millis(600);
 const UNDO_DEPTH: usize = 200;
 /// Typing separated by less than this is one undo step.
 const UNDO_GROUP_IDLE: Duration = Duration::from_millis(700);
-const NAV_WIDTH: f32 = 230.0;
-const NOTE_LIST_WIDTH: f32 = 320.0;
+const NAV_WIDTH: f32 = 244.0;
+const NOTE_LIST_WIDTH: f32 = 340.0;
 /// Pointer travel (px) that turns a press on a picture into a drag.
 const DRAG_THRESHOLD: f32 = 6.0;
 
@@ -49,9 +49,15 @@ pub struct AppModel {
     show_list: bool,
     /// Editor typeface, per-pane text sizes (px) and dock scale — all persisted.
     editor_font: retro::EditorFont,
+    /// Editor body weight (200 | 300 | 400 | 500).
+    editor_weight: u16,
     /// Sidebar + list face, and the pane-title face (a designer pairing sets all three).
     ui_font: retro::EditorFont,
+    /// The notes list's own face (follows `ui_font` until set apart).
+    list_font: retro::EditorFont,
     title_font: retro::EditorFont,
+    /// Which pane the font picker's clicks and size stepper act on.
+    font_target: Pane,
     font_size: u16,
     sidebar_size: u16,
     list_size: u16,
@@ -79,6 +85,34 @@ pub struct AppModel {
     coffee_unlocked: bool,
     /// A picture being dragged to another line (press, then move).
     dragging: Option<ImageDrag>,
+    /// Scroll pane under the pointer: only it shows its scrollbar.
+    scroll_hover: Option<ScrollArea>,
+    /// The pointer left a scroll pane mid-drag; hide its bar on release.
+    scroll_hover_release: bool,
+    /// Left mouse button is down (tracked for the scrollbar hand-off above).
+    mouse_down: bool,
+    /// A sidebar tag (with its subtags) or spacer being dragged to a new spot.
+    tag_drag: Option<TagDrag>,
+    /// The add-a-spacer strip at the bottom of the tags pane is hovered.
+    space_hint: bool,
+    /// Glide time of moving UI in ms (drop indicators and friends); 0 = off.
+    anim_ms: u16,
+    /// Landing softness: ease-out exponent in tenths (10 = linear).
+    anim_ease10: u16,
+    /// Gliding y of the tags-pane drop indicator, within the tag list.
+    tag_line: crate::anim::Glide,
+    /// Bounds of each root entry's rows, and of the whole tag list, as
+    /// recorded by probes in the view.
+    tag_rows: std::cell::RefCell<Vec<std::rc::Rc<std::cell::Cell<cosmic::iced::Rectangle>>>>,
+    tag_area: std::rc::Rc<std::cell::Cell<cosmic::iced::Rectangle>>,
+    /// The same for the note body during an image/card drag.
+    note_line: crate::anim::Glide,
+    note_slots: std::cell::RefCell<
+        std::collections::HashMap<usize, std::rc::Rc<std::cell::Cell<cosmic::iced::Rectangle>>>,
+    >,
+    note_area: std::rc::Rc<std::cell::Cell<cosmic::iced::Rectangle>>,
+    /// The previous animation frame, for frame-time deltas.
+    anim_last: Option<Instant>,
     /// Last known cursor position (window coords), for drag deltas.
     mouse_x: f32,
     mouse_y: f32,
@@ -223,6 +257,33 @@ pub enum Message {
     ResizeStart(usize),
     /// Left button went down on a picture: a click (menu) or the start of a drag.
     ImagePress(usize),
+    /// The pointer entered (true) or left (false) a scroll pane.
+    ScrollHover(ScrollArea, bool),
+    MousePressed,
+    /// Flush the note to disk and leave.
+    Quit,
+    /// Left button went down on a sidebar tag row or spacer: the start of a
+    /// drag. The index is into the root entry list (`root_entries`).
+    TagPress(usize),
+    /// While dragging a sidebar entry, the pointer is over the slot before
+    /// this root entry.
+    TagDragOver(usize),
+    /// Hovering the add-a-spacer strip at the bottom of the tags pane.
+    SpaceHint(bool),
+    /// Append a spacer line to the tag list.
+    AddSpace,
+    /// Remove the spacer at this root-entry index (right-click).
+    RemoveSpace(usize),
+    /// The pane the font picker acts on.
+    SetFontTarget(Pane),
+    /// Set the editor body weight (200 | 300 | 400 | 500).
+    SetWeight(u16),
+    /// Nudge the UI glide time by this many stepper clicks (`±1`).
+    AnimStep(i16),
+    /// Nudge the glide's landing softness by this many clicks (`±1`).
+    AnimEaseStep(i16),
+    /// A frame of the drop-indicator glide.
+    AnimTick(Instant),
     /// Left button went down on a link card: the start of a drag (a
     /// double-click opens the target instead).
     LinkPress(usize),
@@ -330,7 +391,16 @@ impl cosmic::Application for AppModel {
         let show_markers = config.show_markers;
         let (show_nav, show_list) = (!config.hide_nav, !config.hide_list);
         let editor_font = retro::EditorFont::from_key(&config.editor_font);
+        let editor_weight = match config.editor_weight {
+            w @ (200 | 300 | 500) => w,
+            _ => 400,
+        };
         let ui_font = retro::EditorFont::from_key(&config.ui_font);
+        let list_font = if config.list_font.is_empty() {
+            ui_font
+        } else {
+            retro::EditorFont::from_key(&config.list_font)
+        };
         let title_font = title_font_from_config(&config.title_font);
         let font_size = size_from_config(
             config.editor_font_size,
@@ -341,6 +411,8 @@ impl cosmic::Application for AppModel {
         let sidebar_size = pane_size_from_config(config.sidebar_font_size);
         let list_size = pane_size_from_config(config.list_font_size);
         let dock_size = retro::DockSize::from_key(&config.dock_size);
+        let anim_ms = crate::anim::ms_from_key(&config.animation);
+        let anim_ease10 = crate::anim::ease_from_key(&config.animation_ease);
         let task_marker = task_marker_from_config(&config.task_marker);
         let measure = retro::Measure::from_key(&config.text_width);
         let icon_theme =
@@ -362,8 +434,11 @@ impl cosmic::Application for AppModel {
             show_nav,
             show_list,
             editor_font,
+            editor_weight,
             ui_font,
+            list_font,
             title_font,
+            font_target: Pane::Editor,
             font_size,
             sidebar_size,
             list_size,
@@ -376,6 +451,20 @@ impl cosmic::Application for AppModel {
             image_menu: None,
             resizing: None,
             dragging: None,
+            scroll_hover: None,
+            scroll_hover_release: false,
+            mouse_down: false,
+            tag_drag: None,
+            space_hint: false,
+            anim_ms,
+            anim_ease10,
+            tag_line: crate::anim::Glide::default(),
+            tag_rows: std::cell::RefCell::new(Vec::new()),
+            tag_area: std::rc::Rc::default(),
+            note_line: crate::anim::Glide::default(),
+            note_slots: std::cell::RefCell::new(std::collections::HashMap::new()),
+            note_area: std::rc::Rc::default(),
+            anim_last: None,
             show_shortcuts: false,
             coffee: None,
             coffee_seed: 7,
@@ -487,6 +576,8 @@ impl cosmic::Application for AppModel {
                         menu::Item::Button(fl!("pin-note"), None, MenuAction::Pin),
                         menu::Item::Divider,
                         menu::Item::Button(fl!("trash-note"), None, MenuAction::TrashNote),
+                        menu::Item::Divider,
+                        menu::Item::Button(fl!("quit"), None, MenuAction::Quit),
                     ],
                 ),
             ),
@@ -731,6 +822,9 @@ impl cosmic::Application for AppModel {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     Some(Message::MouseMoved(position))
                 }
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                    Some(Message::MousePressed)
+                }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                     Some(Message::MouseReleased)
                 }
@@ -738,6 +832,11 @@ impl cosmic::Application for AppModel {
             }),
         ];
 
+        if self.tag_line.live || self.note_line.live {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(15)).map(Message::AnimTick),
+            );
+        }
         if self.dirty {
             subscriptions.push(
                 cosmic::iced::time::every(Duration::from_millis(200))
@@ -1025,12 +1124,31 @@ impl AppModel {
                 self.edit_ref_kind(block, EditKind::Typing, |r| r.alt = caption);
             }
 
+            Message::SetFontTarget(pane) => self.font_target = pane,
+
             Message::SetFont(font) => {
-                self.editor_font = font;
-                if let Some(handler) = &self.config_handler
-                    && let Err(why) = self.config.set_editor_font(handler, font.key().to_owned())
-                {
-                    tracing::warn!(%why, "saving editor font");
+                let saved = match self.font_target {
+                    Pane::Editor => {
+                        self.editor_font = font;
+                        self.config_handler.as_ref().map(|h| {
+                            self.config.set_editor_font(h, font.key().to_owned())
+                        })
+                    }
+                    Pane::Sidebar => {
+                        self.ui_font = font;
+                        self.config_handler.as_ref().map(|h| {
+                            self.config.set_ui_font(h, font.key().to_owned())
+                        })
+                    }
+                    Pane::List => {
+                        self.list_font = font;
+                        self.config_handler.as_ref().map(|h| {
+                            self.config.set_list_font(h, font.key().to_owned())
+                        })
+                    }
+                };
+                if let Some(Err(why)) = saved {
+                    tracing::warn!(%why, "saving font choice");
                 }
             }
 
@@ -1384,10 +1502,114 @@ impl AppModel {
             }
 
             Message::DragOver(line) => {
+                let mut retarget = false;
+                let unset = !self.note_line.shown();
                 if let Some(d) = &mut self.dragging
                     && d.active
+                    && (unset || d.target != Some(line))
                 {
                     d.target = Some(line);
+                    retarget = true;
+                }
+                if retarget
+                    && let Some(y) = self.note_slot_y(line)
+                {
+                    self.note_line.to(y, crate::anim::params(self.anim_ms, self.anim_ease10));
+                }
+            }
+
+            Message::TagPress(entry) => {
+                self.tag_drag = Some(TagDrag {
+                    entry,
+                    start: Point::new(self.mouse_x, self.mouse_y),
+                    active: false,
+                    target: None,
+                });
+            }
+
+            Message::TagDragOver(slot) => {
+                let mut retarget = false;
+                let unset = !self.tag_line.shown();
+                if let Some(d) = &mut self.tag_drag
+                    && d.active
+                    && (unset || d.target != Some(slot))
+                {
+                    d.target = Some(slot);
+                    retarget = true;
+                }
+                if retarget
+                    && let Some(y) = self.tag_slot_y(slot)
+                {
+                    self.tag_line.to(y, crate::anim::params(self.anim_ms, self.anim_ease10));
+                }
+            }
+
+            Message::SpaceHint(on) => self.space_hint = on,
+
+            Message::SetWeight(weight) => {
+                self.editor_weight = weight;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_editor_weight(handler, weight)
+                {
+                    tracing::warn!(%why, "saving editor weight");
+                }
+            }
+
+            Message::AnimStep(delta) => {
+                let ms = i32::from(self.anim_ms)
+                    + i32::from(delta) * i32::from(crate::anim::STEP_MS);
+                self.anim_ms = u16::try_from(ms.clamp(0, i32::from(crate::anim::MAX_MS)))
+                    .unwrap_or(crate::anim::DEFAULT_MS);
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self
+                        .config
+                        .set_animation(handler, self.anim_ms.to_string())
+                {
+                    tracing::warn!(%why, "saving animation speed");
+                }
+            }
+
+            Message::AnimEaseStep(delta) => {
+                let e = i32::from(self.anim_ease10)
+                    + i32::from(delta) * i32::from(crate::anim::STEP_EASE10);
+                self.anim_ease10 = u16::try_from(e.clamp(
+                    i32::from(crate::anim::MIN_EASE10),
+                    i32::from(crate::anim::MAX_EASE10),
+                ))
+                .unwrap_or(crate::anim::DEFAULT_EASE10);
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self
+                        .config
+                        .set_animation_ease(handler, self.anim_ease10.to_string())
+                {
+                    tracing::warn!(%why, "saving animation landing");
+                }
+            }
+
+            Message::AnimTick(now) => {
+                let dt = self
+                    .anim_last
+                    .replace(now)
+                    .map_or(0.016, |t| now.duration_since(t).as_secs_f32());
+                let tau = crate::anim::params(self.anim_ms, self.anim_ease10);
+                let tags = self.tag_line.step(dt, tau);
+                let note = self.note_line.step(dt, tau);
+                if !tags && !note {
+                    self.anim_last = None;
+                }
+            }
+
+            Message::AddSpace => {
+                let mut order = self.root_entries();
+                order.push(String::new());
+                self.save_tag_order(order);
+            }
+
+            Message::RemoveSpace(entry) => {
+                let mut order = self.root_entries();
+                if order.get(entry).is_some_and(String::is_empty) {
+                    order.remove(entry);
+                    self.save_tag_order(order);
                 }
             }
 
@@ -1395,6 +1617,12 @@ impl AppModel {
                 self.mouse_x = position.x;
                 self.mouse_y = position.y;
                 if let Some(d) = &mut self.dragging
+                    && !d.active
+                    && position.distance(d.start) > DRAG_THRESHOLD
+                {
+                    d.active = true;
+                }
+                if let Some(d) = &mut self.tag_drag
                     && !d.active
                     && position.distance(d.start) > DRAG_THRESHOLD
                 {
@@ -1408,11 +1636,55 @@ impl AppModel {
                 }
             }
 
+            Message::ScrollHover(area, enter) => {
+                if enter {
+                    self.scroll_hover = Some(area);
+                    self.scroll_hover_release = false;
+                } else if self.mouse_down {
+                    // Mid-drag on the scroller the bar must not vanish under
+                    // the pointer; let go of it on release instead.
+                    self.scroll_hover_release = true;
+                } else if self.scroll_hover == Some(area) {
+                    self.scroll_hover = None;
+                }
+            }
+
+            Message::MousePressed => self.mouse_down = true,
+
+            Message::Quit => {
+                // Write anything pending first; closing the main window then
+                // takes the normal exit path (which flushes again, harmlessly).
+                self.close_current();
+                if let Some(id) = self.core.main_window_id() {
+                    return cosmic::iced::runtime::window::close(id);
+                }
+                std::process::exit(0);
+            }
+
             Message::MouseReleased => {
+                self.mouse_down = false;
+                self.tag_line.clear();
+                self.note_line.clear();
+                if self.scroll_hover_release {
+                    self.scroll_hover_release = false;
+                    self.scroll_hover = None;
+                }
                 if let Some(rz) = self.resizing.take()
                     && let Some((_, w)) = self.live_width.take()
                 {
                     self.edit_ref(rz.block, |r| r.width = Some(w));
+                }
+                if let Some(d) = self.tag_drag.take()
+                    && d.active
+                    && let Some(target) = d.target
+                {
+                    let mut order = self.root_entries();
+                    if d.entry < order.len() && target != d.entry && target != d.entry + 1 {
+                        let entry = order.remove(d.entry);
+                        let at = if target > d.entry { target - 1 } else { target };
+                        order.insert(at.min(order.len()), entry);
+                        self.save_tag_order(order);
+                    }
                 }
                 if let Some(d) = self.dragging.take() {
                     if !d.active {
@@ -1862,10 +2134,13 @@ impl AppModel {
                     self.coffee = None;
                     return Task::none();
                 }
-                if self.dragging.is_some()
+                if (self.dragging.is_some() || self.tag_drag.is_some())
                     && matches!(key, keyboard::Key::Named(keyboard::key::Named::Escape))
                 {
                     self.dragging = None;
+                    self.tag_drag = None;
+                    self.tag_line.clear();
+                    self.note_line.clear();
                     return Task::none();
                 }
                 let action = self
@@ -1895,6 +2170,11 @@ impl AppModel {
                 self.show_list = !config.hide_list;
                 self.editor_font = retro::EditorFont::from_key(&config.editor_font);
                 self.ui_font = retro::EditorFont::from_key(&config.ui_font);
+                self.list_font = if config.list_font.is_empty() {
+                    self.ui_font
+                } else {
+                    retro::EditorFont::from_key(&config.list_font)
+                };
                 self.title_font = title_font_from_config(&config.title_font);
                 self.font_size = size_from_config(
                     config.editor_font_size,
@@ -1905,6 +2185,12 @@ impl AppModel {
                 self.sidebar_size = pane_size_from_config(config.sidebar_font_size);
                 self.list_size = pane_size_from_config(config.list_font_size);
                 self.dock_size = retro::DockSize::from_key(&config.dock_size);
+        self.anim_ms = crate::anim::ms_from_key(&config.animation);
+        self.anim_ease10 = crate::anim::ease_from_key(&config.animation_ease);
+        self.editor_weight = match config.editor_weight {
+            w @ (200 | 300 | 500) => w,
+            _ => 400,
+        };
                 self.task_marker = task_marker_from_config(&config.task_marker);
                 self.measure = retro::Measure::from_key(&config.text_width);
                 self.config = config;
@@ -2022,9 +2308,14 @@ impl AppModel {
         self.ui_font.font()
     }
 
+    fn list_font(&self) -> cosmic::font::Font {
+        self.list_font.font()
+    }
+
     fn apply_pairing(&mut self, pair: &retro::Pairing) {
         self.editor_font = pair.body;
         self.ui_font = pair.ui;
+        self.list_font = pair.ui;
         self.title_font = pair.title;
         if let Some(handler) = &self.config_handler {
             for (why, _) in [
@@ -2044,6 +2335,13 @@ impl AppModel {
             {
                 tracing::warn!(%why, "saving font pairing");
             }
+        }
+        if let Some(handler) = &self.config_handler
+            && let Err(why) = self
+                .config
+                .set_list_font(handler, pair.ui.key().to_owned())
+        {
+            tracing::warn!(%why, "saving list font");
         }
     }
 
@@ -2103,10 +2401,152 @@ impl AppModel {
         )
     }
 
+    /// The sidebar's top-level entries, top to bottom: root tag names plus
+    /// "" spacer lines. Saved order first (dropping tags that no longer
+    /// exist), any new tags slotted in alphabetically.
+    fn root_entries(&self) -> Vec<String> {
+        let roots: Vec<&str> = self
+            .tags
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .filter(|n| !n.contains('/'))
+            .collect();
+        let mut out: Vec<String> = self
+            .config
+            .tag_order
+            .iter()
+            .filter(|e| e.is_empty() || roots.contains(&e.as_str()))
+            .cloned()
+            .collect();
+        for root in roots {
+            if !out.iter().any(|e| e == root) {
+                let at = out
+                    .iter()
+                    .position(|e| !e.is_empty() && e.as_str() > root)
+                    .unwrap_or(out.len());
+                out.insert(at, root.to_owned());
+            }
+        }
+        out
+    }
+
+    fn save_tag_order(&mut self, order: Vec<String>) {
+        if let Some(handler) = &self.config_handler
+            && let Err(why) = self.config.set_tag_order(handler, order)
+        {
+            tracing::warn!(%why, "saving tag order");
+        }
+    }
+
+    /// Vertical position (within the tag list) of the gap before root
+    /// entry `slot`, read from the probes recorded at the last layout.
+    fn tag_slot_y(&self, slot: usize) -> Option<f32> {
+        let rows = self.tag_rows.borrow();
+        let area = self.tag_area.get();
+        let y = if let Some(c) = rows.get(slot) {
+            c.get().y
+        } else {
+            let r = rows.last()?.get();
+            r.y + r.height
+        };
+        Some((y - area.y - 2.0).max(0.0))
+    }
+
+    /// Vertical position (within the note body) of the gap before body
+    /// line `line`, from the drag rows' probes.
+    fn note_slot_y(&self, line: usize) -> Option<f32> {
+        let slots = self.note_slots.borrow();
+        let area = self.note_area.get();
+        let y = match slots.get(&line).map(|c| c.get()).filter(|r| r.height > 0.0) {
+            Some(r) => r.y,
+            None => {
+                // Past the end, or a line between blocks: sit under the
+                // nearest measured line above it.
+                let r = slots
+                    .iter()
+                    .filter(|(k, c)| **k < line && c.get().height > 0.0)
+                    .max_by_key(|(k, _)| **k)?
+                    .1
+                    .get();
+                r.y + r.height
+            }
+        };
+        Some((y - area.y - 2.0).max(0.0))
+    }
+
+    /// The probe cell recording where body line `line` sits during a drag.
+    fn note_cell(&self, line: usize) -> std::rc::Rc<std::cell::Cell<cosmic::iced::Rectangle>> {
+        self.note_slots.borrow_mut().entry(line).or_default().clone()
+    }
+
+    /// The editor body face at the chosen weight. Markdown bold and
+    /// headings still come out at full Bold on top of it.
+    fn body_font(&self) -> cosmic::font::Font {
+        use cosmic::iced::font::Weight;
+        cosmic::font::Font {
+            weight: match self.editor_weight {
+                200 => Weight::ExtraLight,
+                300 => Weight::Light,
+                500 => Weight::Medium,
+                _ => Weight::Normal,
+            },
+            ..self.editor_font.font()
+        }
+    }
+
     fn tags_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
         let sz = f32::from(self.sidebar_size);
-        let mut col = widget::column::with_capacity(self.tags.len()).spacing(1);
-        for (name, count) in &self.tags {
+        let entries = self.root_entries();
+        let drag = self.tag_drag.filter(|d| d.active);
+        // During a drag every row splits into a top half (drop above) and a
+        // bottom half (drop below); `slot` reports the gap before `entry`.
+        let slot = |entry: usize| {
+            widget::mouse_area(
+                widget::Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_move(move |_| Message::TagDragOver(entry))
+            .interaction(mouse::Interaction::Grabbing)
+        };
+        let halves = |k: usize| {
+            widget::column::with_capacity(2)
+                .push(slot(k))
+                .push(slot(k + 1))
+                .width(Length::Fill)
+                .height(Length::Fill)
+        };
+        self.tag_rows.borrow_mut().resize_with(entries.len(), || {
+            std::rc::Rc::new(std::cell::Cell::new(cosmic::iced::Rectangle::default()))
+        });
+        let mut col =
+            widget::column::with_capacity(self.tags.len() + entries.len()).spacing(1);
+        for (k, entry) in entries.iter().enumerate() {
+            if entry.is_empty() {
+                // A spacer line: drag it like a tag; right-click removes it.
+                let line = widget::mouse_area(
+                    widget::container(retro::spacer_line(p)).width(Length::Fill),
+                )
+                .on_press(Message::TagPress(k))
+                .on_right_press(Message::RemoveSpace(k))
+                .interaction(mouse::Interaction::Grab);
+                let el: Element<'a, Message> = if drag.is_some() {
+                    cosmic::iced::widget::stack([line.into(), halves(k).into()])
+                        .width(Length::Fill)
+                        .into()
+                } else {
+                    line.into()
+                };
+                col = col.push(crate::probe::probe(el, self.tag_rows.borrow()[k].clone()));
+                continue;
+            }
+            let mut ecol = widget::column::with_capacity(4).spacing(1);
+            let prefix = format!("{entry}/");
+            for (name, count) in self
+                .tags
+                .iter()
+                .filter(|(n, _)| n == entry || n.starts_with(&prefix))
+            {
             // Hidden while any ancestor is folded.
             let folded_away = name
                 .match_indices('/')
@@ -2169,7 +2609,8 @@ impl AppModel {
                 .padding([3, 8, 3, 4])
                 .width(Length::Fill)
                 .class(retro::row_class(p, selected))
-                .on_press(Message::SetView(View::Tag(name.clone())));
+                .on_press(Message::SetView(View::Tag(name.clone())))
+                .on_press_down(Message::TagPress(k));
             // Right-click: a small menu (rename); the rename is an inline input.
             let item =
                 widget::mouse_area(button).on_right_press(Message::TagMenu(Some(name.clone())));
@@ -2255,26 +2696,102 @@ impl AppModel {
                 } else {
                     None
                 };
-            match popup {
-                Some(popup) => {
-                    col = col.push(
-                        widget::popover(item)
-                            .popup(popup)
-                            .position(widget::popover::Position::Bottom)
-                            .on_close(Message::TagRenameCancel),
-                    );
-                }
-                None => col = col.push(item),
+            let base: Element<'a, Message> = match popup {
+                Some(popup) => widget::popover(item)
+                    .popup(popup)
+                    .position(widget::popover::Position::Bottom)
+                    .on_close(Message::TagRenameCancel)
+                    .into(),
+                None => item.into(),
+            };
+            let el: Element<'a, Message> = if drag.is_some() {
+                cosmic::iced::widget::stack([base, halves(k).into()])
+                    .width(Length::Fill)
+                    .into()
+            } else {
+                base
+            };
+            ecol = ecol.push(el);
             }
+            col = col.push(crate::probe::probe(
+                ecol.width(Length::Fill),
+                self.tag_rows.borrow()[k].clone(),
+            ));
         }
         let body: Element<'_, Message> = if self.tags.is_empty() {
             widget::container(retro::dim(p, fl!("no-tags-yet")))
                 .padding([8, 8])
                 .into()
         } else {
-            widget::scrollable(col).height(Length::Fill).into()
+            // Below the list: an invisible strip that shows a line on hover;
+            // clicking it adds a draggable spacer to the tag list.
+            let hint: Element<'a, Message> = if self.space_hint {
+                retro::spacer_line(p)
+            } else {
+                widget::Space::new().width(Length::Fill).into()
+            };
+            let strip = widget::mouse_area(
+                widget::container(hint)
+                    .width(Length::Fill)
+                    .align_y(Alignment::Center)
+                    .height(Length::Fixed(16.0)),
+            )
+            .on_enter(Message::SpaceHint(true))
+            .on_exit(Message::SpaceHint(false))
+            .on_press(Message::AddSpace)
+            .interaction(mouse::Interaction::Pointer);
+            let list: Element<'a, Message> =
+                crate::probe::probe(col.width(Length::Fill), self.tag_area.clone()).into();
+            // The drop indicator floats over the rows at its gliding y, so
+            // nothing shifts while it travels between gaps.
+            let list: Element<'a, Message> = if drag.is_some_and(|d| d.target.is_some())
+                && self.tag_line.shown()
+            {
+                let line = widget::container(retro::slot_line(p))
+                    .padding(cosmic::iced::Padding {
+                        top: self.tag_line.pos.max(0.0),
+                        ..Default::default()
+                    })
+                    .width(Length::Fill);
+                cosmic::iced::widget::stack([list, line.into()])
+                    .width(Length::Fill)
+                    .into()
+            } else {
+                list
+            };
+            widget::column::with_capacity(2)
+                .push(self.hover_scroll(
+                    ScrollArea::Tags,
+                    widget::scrollable(
+                        widget::container(list)
+                            .padding([0, 10, 0, 0])
+                            .width(Length::Fill),
+                    )
+                    .height(Length::Fill),
+                ))
+                .push(strip)
+                .height(Length::Fill)
+                .into()
         };
         retro::pane(p, self.title_font(), fl!("frame-tags"), None, body, p.bg)
+    }
+
+    /// Wrap a scrollable so its bar appears on hover and hides otherwise.
+    fn hover_scroll<'a>(
+        &self,
+        area: ScrollArea,
+        s: cosmic::iced::widget::Scrollable<'a, Message, cosmic::Theme, cosmic::Renderer>,
+    ) -> Element<'a, Message> {
+        let on = self.scroll_hover == Some(area);
+        let w = if on { 8.0 } else { 0.0 };
+        widget::mouse_area(
+            s.scrollbar_width(w)
+                .scroller_width(w)
+                .scrollbar_padding(if on { 2.0 } else { 0.0 }),
+        )
+        .on_enter(Message::ScrollHover(area, true))
+        .on_exit(Message::ScrollHover(area, false))
+        .into()
     }
 
     fn notes_frame<'a>(&'a self, p: &Palette) -> Element<'a, Message> {
@@ -2297,7 +2814,7 @@ impl AppModel {
 
         let search = widget::text_input(fl!("search-placeholder"), &self.query)
             .id(self.search_id.clone())
-            .font(self.ui_font())
+            .font(self.list_font())
             .size(f32::from(self.list_size))
             .padding([5, 8])
             .leading_icon(
@@ -2329,7 +2846,7 @@ impl AppModel {
                         note,
                         selected,
                         self.list_size,
-                        self.ui_font(),
+                        self.list_font(),
                     ))
                     .padding([7, 8])
                     .width(Length::Fill)
@@ -2337,10 +2854,12 @@ impl AppModel {
                     .on_press(Message::Select(note.id.clone())),
                 );
             }
-            widget::scrollable(col)
-                .id(self.notes_scroll_id.clone())
-                .height(Length::Fill)
-                .into()
+            self.hover_scroll(
+                ScrollArea::Notes,
+                widget::scrollable(col.padding([0, 12, 0, 0]))
+                    .id(self.notes_scroll_id.clone())
+                    .height(Length::Fill),
+            )
         };
 
         let content = widget::column::with_capacity(2)
@@ -2471,9 +2990,12 @@ impl AppModel {
             self.title_font(),
             fl!("linked-from").to_lowercase(),
             None,
-            widget::scrollable(row).direction(
-                cosmic::iced::widget::scrollable::Direction::Horizontal(
-                    cosmic::iced::widget::scrollable::Scrollbar::default(),
+            self.hover_scroll(
+                ScrollArea::Backlinks,
+                widget::scrollable(row).direction(
+                    cosmic::iced::widget::scrollable::Direction::Horizontal(
+                        cosmic::iced::widget::scrollable::Scrollbar::default(),
+                    ),
                 ),
             ),
             p.panel,
@@ -2644,6 +3166,122 @@ impl AppModel {
             widget::container(header(fl!("section-font"), Section::Font)).padding([8, 0, 0, 0]),
         );
         if self.appearance_open[Section::Font as usize] {
+            let font_row = |font: retro::EditorFont| {
+                let selected = font
+                    == match self.font_target {
+                        Pane::Editor => self.editor_font,
+                        Pane::Sidebar => self.ui_font,
+                        Pane::List => self.list_font,
+                    };
+                let sample = widget::column::with_capacity(2)
+                    .push(widget::text(font.label()).font(font.font()).size(17))
+                    .push(widget::text::caption(font.blurb()))
+                    .spacing(2);
+                widget::button::custom(widget::container(sample).width(Length::Fill))
+                    .padding([6, 10])
+                    .width(Length::Fill)
+                    .class(if selected {
+                        cosmic::theme::Button::Suggested
+                    } else {
+                        cosmic::theme::Button::Standard
+                    })
+                    .on_press(Message::SetFont(font))
+            };
+            // Which pane the font clicks below act on, with its size.
+            col = col.push(widget::text::heading(fl!("font-target")));
+            let mut targets = widget::row::with_capacity(3).spacing(6);
+            for (pane, label) in [
+                (Pane::Sidebar, fl!("target-tags")),
+                (Pane::List, fl!("target-note")),
+                (Pane::Editor, fl!("target-editor")),
+            ] {
+                targets = targets.push(
+                    widget::button::custom(widget::text(label))
+                        .padding([4, 12])
+                        .class(if self.font_target == pane {
+                            cosmic::theme::Button::Suggested
+                        } else {
+                            cosmic::theme::Button::Standard
+                        })
+                        .on_press(Message::SetFontTarget(pane)),
+                );
+            }
+            col = col.push(targets);
+            let (size, min, max) = match self.font_target {
+                Pane::Editor => (self.font_size, retro::FONT_SIZE_MIN, retro::FONT_SIZE_MAX),
+                Pane::Sidebar => (
+                    self.sidebar_size,
+                    retro::PANE_SIZE_MIN,
+                    retro::PANE_SIZE_MAX,
+                ),
+                Pane::List => (self.list_size, retro::PANE_SIZE_MIN, retro::PANE_SIZE_MAX),
+            };
+            let tstep = |glyph: &'static str, delta: i16, enabled: bool| {
+                widget::button::custom(widget::text(glyph).size(16))
+                    .padding([0, 10])
+                    .class(cosmic::theme::Button::Standard)
+                    .on_press_maybe(
+                        enabled.then_some(Message::SizeStep(self.font_target, delta)),
+                    )
+            };
+            col = col.push(
+                widget::row::with_capacity(4)
+                    .push(
+                        widget::text(fl!("font-size-label"))
+                            .size(14)
+                            .width(Length::Fixed(70.0)),
+                    )
+                    .push(tstep("−", -1, size > min))
+                    .push(widget::text(format!("{size} px")).size(14))
+                    .push(tstep("+", 1, size < max))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            );
+            // The staples up top, the long tail behind a second heading,
+            // and the pairings — the chef's selection — to finish.
+            col = col.push(widget::text::heading(fl!("font-base")));
+            for font in retro::BASE_FONTS {
+                col = col.push(font_row(font));
+            }
+            col = col.push(
+                widget::container(widget::text::heading(fl!("font-weight"))).padding([6, 0, 0, 0]),
+            );
+            col = col.push(widget::text::caption(fl!("font-weight-hint")));
+            let mut weights = widget::row::with_capacity(4).spacing(6);
+            for w in [200u16, 300, 400, 500] {
+                let face = cosmic::font::Font {
+                    weight: match w {
+                        200 => cosmic::iced::font::Weight::ExtraLight,
+                        300 => cosmic::iced::font::Weight::Light,
+                        500 => cosmic::iced::font::Weight::Medium,
+                        _ => cosmic::iced::font::Weight::Normal,
+                    },
+                    ..self.editor_font.font()
+                };
+                weights = weights.push(
+                    widget::button::custom(widget::text(w.to_string()).font(face).size(15))
+                        .padding([4, 12])
+                        .class(if self.editor_weight == w {
+                            cosmic::theme::Button::Suggested
+                        } else {
+                            cosmic::theme::Button::Standard
+                        })
+                        .on_press(Message::SetWeight(w)),
+                );
+            }
+            col = col.push(weights);
+            col = col.push(
+                widget::container(widget::text::heading(fl!("font-more"))).padding([8, 0, 0, 0]),
+            );
+            for font in retro::EditorFont::ALL {
+                if retro::BASE_FONTS.contains(&font) {
+                    continue;
+                }
+                col = col.push(font_row(font));
+            }
+            col = col.push(
+                widget::container(widget::text::heading(fl!("font-chefs"))).padding([8, 0, 0, 0]),
+            );
             col = col.push(widget::text::caption(fl!("font-pairings-hint")));
             let current = retro::PAIRINGS.iter().find(|pr| {
                 pr.title == self.title_font && pr.ui == self.ui_font && pr.body == self.editor_font
@@ -2690,28 +3328,6 @@ impl AppModel {
                     .class(cosmic::theme::Button::Standard)
                     .on_press(Message::RestoreFonts),
             );
-            col = col.push(
-                widget::container(widget::text::heading(fl!("font-editor-only")))
-                    .padding([8, 0, 0, 0]),
-            );
-            for font in retro::EditorFont::ALL {
-                let selected = self.editor_font == font;
-                let sample = widget::column::with_capacity(2)
-                    .push(widget::text(font.label()).font(font.font()).size(17))
-                    .push(widget::text::caption(font.blurb()))
-                    .spacing(2);
-                col = col.push(
-                    widget::button::custom(widget::container(sample).width(Length::Fill))
-                        .padding([6, 10])
-                        .width(Length::Fill)
-                        .class(if selected {
-                            cosmic::theme::Button::Suggested
-                        } else {
-                            cosmic::theme::Button::Standard
-                        })
-                        .on_press(Message::SetFont(font)),
-                );
-            }
         }
 
         // Size: one card per pane with a live sample, then the dock.
@@ -2743,7 +3359,7 @@ impl AppModel {
                     fl!("size-editor"),
                     fl!("size-sample-editor"),
                     self.font_size,
-                    self.editor_font.font(),
+                    self.body_font(),
                     retro::FONT_SIZE_MIN,
                     retro::FONT_SIZE_MAX,
                 ),
@@ -2813,6 +3429,59 @@ impl AppModel {
                 ));
             }
             col = col.push(widths);
+
+            col = col.push(
+                widget::container(widget::text::heading(fl!("animation"))).padding([6, 0, 0, 0]),
+            );
+            col = col.push(widget::text::caption(fl!("animation-hint")));
+            let anim_step = |glyph: &'static str, msg: Option<Message>| {
+                widget::button::custom(widget::text(glyph).size(16))
+                    .padding([0, 10])
+                    .class(cosmic::theme::Button::Standard)
+                    .on_press_maybe(msg)
+            };
+            let time_shown = if self.anim_ms == 0 {
+                fl!("anim-off")
+            } else {
+                format!("{} ms", self.anim_ms)
+            };
+            col = col.push(
+                widget::row::with_capacity(4)
+                    .push(widget::text(fl!("anim-time")).size(14).width(Length::Fixed(70.0)))
+                    .push(anim_step(
+                        "−",
+                        (self.anim_ms > 0).then_some(Message::AnimStep(-1)),
+                    ))
+                    .push(widget::text(time_shown).size(14))
+                    .push(anim_step(
+                        "+",
+                        (self.anim_ms < crate::anim::MAX_MS).then_some(Message::AnimStep(1)),
+                    ))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            );
+            let ease = f32::from(self.anim_ease10) / 10.0;
+            col = col.push(
+                widget::row::with_capacity(4)
+                    .push(
+                        widget::text(fl!("anim-landing"))
+                            .size(14)
+                            .width(Length::Fixed(70.0)),
+                    )
+                    .push(anim_step(
+                        "−",
+                        (self.anim_ease10 > crate::anim::MIN_EASE10)
+                            .then_some(Message::AnimEaseStep(-1)),
+                    ))
+                    .push(widget::text(format!("{ease:.1}")).size(14))
+                    .push(anim_step(
+                        "+",
+                        (self.anim_ease10 < crate::anim::MAX_EASE10)
+                            .then_some(Message::AnimEaseStep(1)),
+                    ))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            );
         }
 
         // Tasks: what a finished one is marked with.
@@ -2850,7 +3519,7 @@ impl AppModel {
             let sample = widget::column::with_capacity(2)
                 .push(
                     retro::text(&p, fl!("task-sample-open"))
-                        .font(self.editor_font.font())
+                        .font(self.body_font())
                         .size(f32::from(self.font_size)),
                 )
                 .push(
@@ -2858,7 +3527,7 @@ impl AppModel {
                         &p,
                         fl!("task-sample-done", mark = self.task_marker.as_str()),
                     )
-                    .font(self.editor_font.font())
+                    .font(self.body_font())
                     .size(f32::from(self.font_size))
                     .class(cosmic::theme::Text::Color(p.fg.scale_alpha(0.45))),
                 )
@@ -2978,7 +3647,7 @@ impl AppModel {
             col = col.push(widget::text::caption(fl!("link-previews-hint")));
             col = col.push(widget::text::caption(fl!("attach-hint")));
         }
-        widget::scrollable(col).into()
+        self.hover_scroll(ScrollArea::Options, widget::scrollable(col))
     }
 
     /// Apply a dock format action to the editor buffer.
@@ -3225,7 +3894,7 @@ impl AppModel {
                 );
             }
             col = col.push(widget::flex_row(tiles).spacing(6));
-            return widget::scrollable(col).into();
+            return self.hover_scroll(ScrollArea::Picker, widget::scrollable(col));
         }
 
         let mut list = widget::list_column();
@@ -3266,7 +3935,7 @@ impl AppModel {
             );
         }
         col = col.push(list);
-        widget::scrollable(col).into()
+        self.hover_scroll(ScrollArea::Picker, widget::scrollable(col))
     }
 
     // ----- shortcuts -----
@@ -3450,9 +4119,6 @@ impl AppModel {
                     i += 1;
                 }
                 Block::Rule(_) => {
-                    if drag.is_some() && target == Some(offsets[i]) {
-                        col = col.push(retro::drop_line(p, fl!("drop-here")));
-                    }
                     let rule = retro::rule_block(p);
                     if drag.is_some() {
                         let slot = |line: usize| {
@@ -3469,18 +4135,16 @@ impl AppModel {
                             .push(slot(offsets[i] + 1))
                             .width(Length::Fill)
                             .height(Length::Fill);
-                        col = col.push(
+                        col = col.push(crate::probe::probe(
                             cosmic::iced::widget::stack([rule, halves.into()]).width(Length::Fill),
-                        );
+                            self.note_cell(offsets[i]),
+                        ));
                     } else {
                         col = col.push(rule);
                     }
                     i += 1;
                 }
                 Block::Link(l) => {
-                    if drag.is_some() && target == Some(offsets[i]) {
-                        col = col.push(retro::drop_line(p, fl!("drop-here")));
-                    }
                     let card = self.link_card(p, l, i);
                     if drag.is_some() {
                         let slot = |line: usize| {
@@ -3497,30 +4161,29 @@ impl AppModel {
                             .push(slot(offsets[i] + 1))
                             .width(Length::Fill)
                             .height(Length::Fill);
-                        col = col.push(
+                        col = col.push(crate::probe::probe(
                             cosmic::iced::widget::stack([card, halves.into()]).width(Length::Fill),
-                        );
+                            self.note_cell(offsets[i]),
+                        ));
                     } else {
                         col = col.push(card);
                     }
                     i += 1;
                 }
                 Block::Image(r) => {
-                    if drag.is_some() && target == Some(offsets[i]) {
-                        col = col.push(retro::drop_line(p, fl!("drop-here")));
-                    }
                     let card = match drag {
                         Some(d) => self.drag_image_card(p, r, i, offsets[i], d.block == i),
                         None => self.image_card(p, r, i),
                     };
                     match r.align {
                         Align::Center => {
-                            col = col.push(
+                            col = col.push(crate::probe::probe(
                                 widget::container(card)
                                     .width(Length::Fill)
                                     .align_x(Alignment::Center)
                                     .padding([4, 10]),
-                            );
+                                self.note_cell(offsets[i]),
+                            ));
                             i += 1;
                         }
                         Align::Left | Align::Right => {
@@ -3544,17 +4207,35 @@ impl AppModel {
                                     .push(widget::Space::new().width(Length::Fill))
                                     .push(card),
                             };
-                            col = col
-                                .push(row.spacing(8).align_y(Alignment::Start).width(Length::Fill));
+                            col = col.push(crate::probe::probe(
+                                row.spacing(8).align_y(Alignment::Start).width(Length::Fill),
+                                self.note_cell(offsets[i]),
+                            ));
                             i += if has_pair { 2 } else { 1 };
                         }
                     }
                 }
             }
         }
-        if drag.is_some() && target == offsets.last().copied() {
-            col = col.push(retro::drop_line(p, fl!("drop-here")));
-        }
+        // The drop indicator floats over the rows at its gliding y instead
+        // of being spliced in, so nothing shifts while it moves.
+        let col: Element<'a, Message> =
+            crate::probe::probe(col.width(Length::Fill), self.note_area.clone()).into();
+        let col: Element<'a, Message> = if drag.is_some_and(|d| d.target.is_some())
+            && self.note_line.shown()
+        {
+            let line = widget::container(retro::drop_line(p, fl!("drop-here")))
+                .padding(cosmic::iced::Padding {
+                    top: self.note_line.pos.max(0.0),
+                    ..Default::default()
+                })
+                .width(Length::Fill);
+            cosmic::iced::widget::stack([col, line.into()])
+                .width(Length::Fill)
+                .into()
+        } else {
+            col
+        };
         // The measure: the column never grows past the chosen width and sits
         // centred with margins; a narrower pane simply wraps the text.
         let mut column = widget::container(col).width(Length::Fill);
@@ -3564,10 +4245,12 @@ impl AppModel {
         let col = widget::container(column)
             .width(Length::Fill)
             .align_x(Alignment::Center);
-        widget::scrollable(col)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .into()
+        self.hover_scroll(
+            ScrollArea::Editor,
+            widget::scrollable(col)
+                .height(Length::Fill)
+                .width(Length::Fill),
+        )
     }
 
     fn text_block<'a>(
@@ -3582,11 +4265,12 @@ impl AppModel {
         let settings = markdown::Settings {
             palette: *p,
             show_markers: self.show_markers,
-            font: self.editor_font.font(),
+            font: self.body_font(),
             tag_icons: Arc::clone(&self.tag_icons),
             icon_set: self.icon_set,
         };
         let mut editor = crate::editor::RichEditor::new(content, settings)
+            .drop_anim(crate::anim::params(self.anim_ms, self.anim_ease10))
             .id(id)
             .placeholder(if block == 0 {
                 fl!("untitled")
@@ -3890,7 +4574,7 @@ impl AppModel {
         l: &'a crate::links::LinkRef,
         block: usize,
     ) -> Element<'a, Message> {
-        let font = self.editor_font.font();
+        let font = self.body_font();
         let size = f32::from(self.font_size);
         let menu_open = self.link_menu == Some(block);
         let editable = self.current.as_ref().is_some_and(|n| !n.trashed);
@@ -4147,7 +4831,7 @@ impl AppModel {
         p: &Palette,
         content: &'a crate::editor::Content,
         offset: usize,
-        target: Option<usize>,
+        _target: Option<usize>,
         is_last: bool,
     ) -> Element<'a, Message> {
         let slot = |line: usize, height: Length| {
@@ -4161,24 +4845,21 @@ impl AppModel {
             widget::column::with_capacity(text.lines().count() * 2 + 2).width(Length::Fill);
         let count = if text.is_empty() {
             // A gap between pictures owns no line; hovering it means "here".
-            col = col.push(slot(
-                offset,
-                Length::Fixed(if is_last { 120.0 } else { 14.0 }),
+            col = col.push(crate::probe::probe(
+                slot(offset, Length::Fixed(if is_last { 120.0 } else { 14.0 })),
+                self.note_cell(offset),
             ));
             0
         } else {
             let mut count = 0;
             for (k, line) in text.split('\n').enumerate() {
-                if target == Some(offset + k) {
-                    col = col.push(retro::drop_line(p, fl!("drop-here")));
-                }
                 let shown = if line.is_empty() {
                     " ".to_owned()
                 } else {
                     line.to_owned()
                 };
                 let line_el = retro::text(p, shown)
-                    .font(self.editor_font.font())
+                    .font(self.body_font())
                     .size(f32::from(self.font_size))
                     .line_height(1.5)
                     .width(Length::Fill);
@@ -4187,10 +4868,11 @@ impl AppModel {
                     .push(slot(offset + k + 1, Length::Fill))
                     .width(Length::Fill)
                     .height(Length::Fill);
-                col = col.push(
+                col = col.push(crate::probe::probe(
                     cosmic::iced::widget::stack([line_el.into(), halves.into()])
                         .width(Length::Fill),
-                );
+                    self.note_cell(offset + k),
+                ));
                 count = k + 1;
             }
             count
@@ -4683,12 +5365,14 @@ impl AppModel {
                         block: b,
                         start: Point::ORIGIN,
                         active: true,
-                        target: Some(line),
+                        target: None,
                     });
+                    let over = self.update(Message::DragOver(line));
                     if matches!(step, Step::ImgMove(..)) {
+                        drop(over);
                         self.update(Message::MouseReleased)
                     } else {
-                        Task::none()
+                        over
                     }
                 }
                 None => Task::none(),
@@ -4699,9 +5383,9 @@ impl AppModel {
                         block: b,
                         start: Point::ORIGIN,
                         active: true,
-                        target: Some(line),
+                        target: None,
                     });
-                    Task::none()
+                    self.update(Message::DragOver(line))
                 }
                 None => Task::none(),
             },
@@ -4728,6 +5412,29 @@ impl AppModel {
                 Task::none()
             }
             Step::TagMenu(tag) => self.update(Message::TagMenu(Some(tag))),
+            Step::TagDrag(entry, slot) | Step::TagMove(entry, slot) => {
+                self.tag_drag = Some(TagDrag {
+                    entry,
+                    start: Point::ORIGIN,
+                    active: true,
+                    target: None,
+                });
+                let over = self.update(Message::TagDragOver(slot));
+                if matches!(step, Step::TagMove(..)) {
+                    drop(over);
+                    self.update(Message::MouseReleased)
+                } else {
+                    over
+                }
+            }
+            Step::AddSpace => self.update(Message::AddSpace),
+            Step::Weight(w) => self.update(Message::SetWeight(w)),
+            Step::FontFor(pane) => self.update(Message::SetFontTarget(match pane.as_str() {
+                "tags" => Pane::Sidebar,
+                "notes" => Pane::List,
+                _ => Pane::Editor,
+            })),
+            Step::Quit => self.update(Message::Quit),
             Step::RenameTag(old, new) => {
                 self.tag_rename = Some((old, new));
                 self.update(Message::TagRenameCommit)
@@ -4997,6 +5704,7 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     bind(&[Ctrl], "f", MenuAction::FocusSearch);
     bind(&[Ctrl, Shift], "p", MenuAction::Pin);
     bind(&[Ctrl, Shift], "d", MenuAction::TrashNote);
+    bind(&[Ctrl], "q", MenuAction::Quit);
     // Edit
     bind(&[Ctrl], "z", MenuAction::Undo);
     bind(&[Ctrl, Shift], "z", MenuAction::Redo);
@@ -5036,6 +5744,30 @@ pub enum EditKind {
     Typing,
     Deleting,
     Other,
+}
+
+/// A scrollable pane whose bar shows only while the pointer is over it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollArea {
+    Tags,
+    Notes,
+    Editor,
+    Options,
+    Picker,
+    Backlinks,
+}
+
+/// A sidebar entry (a tag subtree or a spacer) being dragged to a new spot.
+#[derive(Debug, Clone, Copy)]
+pub struct TagDrag {
+    /// Index into the root entry list.
+    entry: usize,
+    /// Where the button went down (window coords).
+    start: Point,
+    /// The pointer has travelled past `DRAG_THRESHOLD`: a drag, not a click.
+    active: bool,
+    /// Root entry the dragged one will sit before when dropped.
+    target: Option<usize>,
 }
 
 /// A picture being dragged to a new line.
@@ -5182,6 +5914,7 @@ pub enum MenuAction {
     ToggleNav,
     ToggleList,
     Solo,
+    Quit,
 }
 
 impl menu::action::MenuAction for MenuAction {
@@ -5190,6 +5923,7 @@ impl menu::action::MenuAction for MenuAction {
     fn message(&self) -> Self::Message {
         match self {
             MenuAction::About => Message::ToggleContextPage(ContextPage::About),
+            MenuAction::Quit => Message::Quit,
             MenuAction::NewNote => Message::NewNote,
             MenuAction::Undo => Message::Undo,
             MenuAction::Redo => Message::Redo,

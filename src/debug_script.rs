@@ -58,6 +58,18 @@ pub enum Step {
     ImgDrag(usize, usize),
     /// Start dragging the n-th link card with the drop slot before `line`.
     LinkDrag(usize, usize),
+    /// Start dragging the sidebar root entry `n` with the drop slot before
+    /// entry `slot` (drop it for tagmove).
+    TagDrag(usize, usize),
+    TagMove(usize, usize),
+    /// Append a spacer line to the tag list.
+    AddSpace,
+    /// Set the editor body weight (200/300/400/500).
+    Weight(u16),
+    /// Point the font picker at a pane: tags, notes or editor.
+    FontFor(String),
+    /// Quit through the File menu's path (flush, close the window).
+    Quit,
     /// Move the n-th image to sit before body line `line`: `imgmove:n:line`.
     ImgMove(usize, usize),
     /// Set the caption of the n-th image: `imgcaption:n:text`.
@@ -200,6 +212,18 @@ pub fn parse(script: &str) -> Vec<Step> {
                     let (old, new) = arg.trim().split_once(':')?;
                     Step::RenameTag(old.to_owned(), new.to_owned())
                 }
+                "tagdrag" => {
+                    let (n, slot) = arg.trim().split_once(':')?;
+                    Step::TagDrag(n.parse().ok()?, slot.parse().ok()?)
+                }
+                "tagmove" => {
+                    let (n, slot) = arg.trim().split_once(':')?;
+                    Step::TagMove(n.parse().ok()?, slot.parse().ok()?)
+                }
+                "addspace" => Step::AddSpace,
+                "weight" => Step::Weight(arg.trim().parse().ok()?),
+                "fontfor" => Step::FontFor(arg.trim().to_owned()),
+                "quit" => Step::Quit,
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
                 "exit" => Step::Exit,
                 other => {

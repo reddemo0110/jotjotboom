@@ -24,6 +24,8 @@ pub struct Config {
     pub editor_font: String,
     /// Sidebar + notes-list font key. Empty = system monospace.
     pub ui_font: String,
+    /// Notes-list font key. Empty = follow `ui_font`.
+    pub list_font: String,
     /// Pane-title font key. Empty = VT323.
     pub title_font: String,
     /// Editor text size in px. 0 = default.
@@ -48,6 +50,17 @@ pub struct Config {
     /// Do not fetch title/description/picture for web links. (Inverted so
     /// the default is on.)
     pub link_previews_off: bool,
+    /// Sidebar order of the top-level tags, top to bottom; an empty string
+    /// is a spacer line. Tags not listed slot in alphabetically.
+    pub tag_order: Vec<String>,
+    /// Glide time of moving UI, in ms ("0" = snap; old preset keys still
+    /// parse). Empty = default.
+    pub animation: String,
+    /// Landing softness of the glide: ease-out exponent in tenths
+    /// ("10" = linear … "60" = floatiest). Empty = default.
+    pub animation_ease: String,
+    /// Editor body weight: 200, 300, 400 or 500. 0 = default (400).
+    pub editor_weight: u16,
 }
 
 impl Config {

@@ -50,6 +50,9 @@ pub struct RichEditor<'a, Message> {
     on_link: Option<Box<dyn Fn(Link) -> Message + 'a>>,
     /// Label on the drop indicator ("picture drops here").
     drop_label: String,
+    /// Trip time (seconds) and landing exponent for the drop marker's
+    /// glide (`None` = snap).
+    drop_anim: Option<(f32, f32)>,
 }
 
 impl<'a, Message> RichEditor<'a, Message> {
@@ -68,7 +71,13 @@ impl<'a, Message> RichEditor<'a, Message> {
             on_action: None,
             on_link: None,
             drop_label: String::new(),
+            drop_anim: None,
         }
+    }
+
+    pub fn drop_anim(mut self, anim: Option<(f32, f32)>) -> Self {
+        self.drop_anim = anim;
+        self
     }
 
     pub fn drop_label(mut self, label: String) -> Self {
@@ -163,6 +172,9 @@ pub struct State {
     drag_click: Option<mouse::click::Kind>,
     /// Emitted on the next event once focus was lost by a click elsewhere.
     pending: Option<Action>,
+    /// The drop marker's glide (buffer coordinates) and its last frame.
+    marker: crate::anim::Glide,
+    marker_frame: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -225,6 +237,8 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
             last_click: None,
             drag_click: None,
             pending: None,
+            marker: crate::anim::Glide::default(),
+            marker_frame: None,
         })
     }
 
@@ -324,6 +338,20 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                 }
             }
             Event::Window(window::Event::RedrawRequested(now)) => {
+                // The drop marker glides toward its line rather than jumping.
+                if let Some(line) = self.content.drop_marker() {
+                    let dt = state
+                        .marker_frame
+                        .replace(*now)
+                        .map_or(0.016, |t| now.duration_since(t).as_secs_f32());
+                    state.marker.to(self.content.line_top(line), self.drop_anim);
+                    if state.marker.step(dt, self.drop_anim) {
+                        shell.request_redraw();
+                    }
+                } else {
+                    state.marker.clear();
+                    state.marker_frame = None;
+                }
                 if let Some(f) = &mut state.focus
                     && f.window_focused
                 {
@@ -706,7 +734,13 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
 
         // A file being dragged over the note: the line where it would land.
         if let Some(line) = self.content.drop_marker() {
-            let y = text_bounds.y + self.content.line_top(line) - 1.0;
+            let y = text_bounds.y
+                + if state.marker.shown() {
+                    state.marker.pos
+                } else {
+                    self.content.line_top(line)
+                }
+                - 1.0;
             renderer.fill_quad(
                 Quad {
                     bounds: Rectangle {

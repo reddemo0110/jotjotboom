@@ -430,6 +430,10 @@ pub enum EditorFont {
     Oswald,
     Raleway,
     Roboto,
+    Mulish,
+    NunitoSans,
+    HankenGrotesk,
+    Commissioner,
     OldStandard,
     Abril,
     Playfair,
@@ -440,7 +444,7 @@ macro_rules! font_files {
 }
 
 impl EditorFont {
-    pub const ALL: [EditorFont; 29] = [
+    pub const ALL: [EditorFont; 33] = [
         EditorFont::System,
         EditorFont::Plex,
         EditorFont::Fira,
@@ -467,6 +471,10 @@ impl EditorFont {
         EditorFont::Oswald,
         EditorFont::Raleway,
         EditorFont::Roboto,
+        EditorFont::Mulish,
+        EditorFont::NunitoSans,
+        EditorFont::HankenGrotesk,
+        EditorFont::Commissioner,
         EditorFont::OldStandard,
         EditorFont::Abril,
         EditorFont::Playfair,
@@ -500,6 +508,10 @@ impl EditorFont {
             EditorFont::Oswald => "oswald",
             EditorFont::Raleway => "raleway",
             EditorFont::Roboto => "roboto",
+            EditorFont::Mulish => "mulish",
+            EditorFont::NunitoSans => "nunitosans",
+            EditorFont::HankenGrotesk => "hankengrotesk",
+            EditorFont::Commissioner => "commissioner",
             EditorFont::OldStandard => "oldstandard",
             EditorFont::Abril => "abril",
             EditorFont::Playfair => "playfair",
@@ -541,6 +553,10 @@ impl EditorFont {
             EditorFont::Oswald => "Oswald",
             EditorFont::Raleway => "Raleway",
             EditorFont::Roboto => "Roboto",
+            EditorFont::Mulish => "Mulish",
+            EditorFont::NunitoSans => "Nunito Sans",
+            EditorFont::HankenGrotesk => "Hanken Grotesk",
+            EditorFont::Commissioner => "Commissioner",
             EditorFont::OldStandard => "Old Standard TT",
             EditorFont::Abril => "Abril Fatface",
             EditorFont::Playfair => "Playfair Display",
@@ -575,6 +591,10 @@ impl EditorFont {
             EditorFont::Oswald => "condensed gothic, loud in headlines",
             EditorFont::Raleway => "elegant thin-to-bold display sans",
             EditorFont::Roboto => "Android's workhorse sans",
+            EditorFont::Mulish => "minimalist rounded sans, light on its feet",
+            EditorFont::NunitoSans => "the rounded Nunito, straightened for text",
+            EditorFont::HankenGrotesk => "a quiet grotesk with warm details",
+            EditorFont::Commissioner => "low-contrast humanist, gently flared",
             EditorFont::OldStandard => "a 19th-century book face, scholarly",
             EditorFont::Abril => "fat-face display, poster loud",
             EditorFont::Playfair => "high-contrast transitional display serif",
@@ -701,6 +721,57 @@ pub const EDITOR_FONT_FILES: &[&[u8]] = font_files![
     "ofl/playfairdisplay/PlayfairDisplay-Bold.ttf",
     "ofl/playfairdisplay/PlayfairDisplay-Italic.ttf",
     "ofl/playfairdisplay/PlayfairDisplay-BoldItalic.ttf",
+    "ofl/mulish/Mulish-Regular.ttf",
+    "ofl/mulish/Mulish-Bold.ttf",
+    "ofl/mulish/Mulish-Italic.ttf",
+    "ofl/mulish/Mulish-BoldItalic.ttf",
+    "ofl/nunitosans/NunitoSans-Regular.ttf",
+    "ofl/nunitosans/NunitoSans-Bold.ttf",
+    "ofl/nunitosans/NunitoSans-Italic.ttf",
+    "ofl/nunitosans/NunitoSans-BoldItalic.ttf",
+    "ofl/hankengrotesk/HankenGrotesk-Regular.ttf",
+    "ofl/hankengrotesk/HankenGrotesk-Bold.ttf",
+    "ofl/hankengrotesk/HankenGrotesk-Italic.ttf",
+    "ofl/hankengrotesk/HankenGrotesk-BoldItalic.ttf",
+    "ofl/commissioner/Commissioner-Regular.ttf",
+    "ofl/commissioner/Commissioner-Bold.ttf",
+    "ofl/opensans/OpenSans-Light.ttf",
+    "ofl/opensans/OpenSans-Medium.ttf",
+    "ofl/lato/Lato-Light.ttf",
+    "ofl/roboto/Roboto-ExtraLight.ttf",
+    "ofl/roboto/Roboto-Light.ttf",
+    "ofl/roboto/Roboto-Medium.ttf",
+    "ofl/sourcesans3/SourceSans3-ExtraLight.ttf",
+    "ofl/sourcesans3/SourceSans3-Light.ttf",
+    "ofl/sourcesans3/SourceSans3-Medium.ttf",
+    "ofl/mulish/Mulish-ExtraLight.ttf",
+    "ofl/mulish/Mulish-Light.ttf",
+    "ofl/mulish/Mulish-Medium.ttf",
+    "ofl/nunitosans/NunitoSans-ExtraLight.ttf",
+    "ofl/nunitosans/NunitoSans-Light.ttf",
+    "ofl/nunitosans/NunitoSans-Medium.ttf",
+    "ofl/hankengrotesk/HankenGrotesk-ExtraLight.ttf",
+    "ofl/hankengrotesk/HankenGrotesk-Light.ttf",
+    "ofl/hankengrotesk/HankenGrotesk-Medium.ttf",
+    "ofl/commissioner/Commissioner-ExtraLight.ttf",
+    "ofl/commissioner/Commissioner-Light.ttf",
+    "ofl/commissioner/Commissioner-Medium.ttf",
+];
+
+/// The staple body faces shown first in the font picker; the rest live
+/// under "more fonts".
+pub const BASE_FONTS: [EditorFont; 11] = [
+    EditorFont::System,
+    EditorFont::OpenSans,
+    EditorFont::Mulish,
+    EditorFont::NunitoSans,
+    EditorFont::HankenGrotesk,
+    EditorFont::Commissioner,
+    EditorFont::Lato,
+    EditorFont::SourceSans,
+    EditorFont::Roboto,
+    EditorFont::Atkinson,
+    EditorFont::PtSans,
 ];
 
 /// A designer pairing: one face for pane titles, one for the sidebar and
@@ -1592,6 +1663,46 @@ pub fn comic<'a, M: 'static>(
 
 /// The drop indicator while a picture is dragged: an accent rule with a tag,
 /// drawn exactly where the picture will land.
+/// A thin dim line: the sidebar's spacer between tag groups.
+pub fn spacer_line<'a, M: 'static>(p: &Palette) -> Element<'a, M> {
+    let dim = p.dim;
+    widget::container(
+        widget::container(widget::Space::new().width(Length::Fill).height(2))
+            .width(Length::Fill)
+            .class(theme::Container::custom(move |_| widget::container::Style {
+                background: Some(Background::Color(dim)),
+                border: Border {
+                    radius: 1.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })),
+    )
+    .width(Length::Fill)
+    .padding([5, 24])
+    .into()
+}
+
+/// A thin accent line: where a dragged sidebar entry will land.
+pub fn slot_line<'a, M: 'static>(p: &Palette) -> Element<'a, M> {
+    let accent = p.accent;
+    widget::container(
+        widget::container(widget::Space::new().width(Length::Fill).height(2))
+            .width(Length::Fill)
+            .class(theme::Container::custom(move |_| widget::container::Style {
+                background: Some(Background::Color(accent)),
+                border: Border {
+                    radius: 1.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })),
+    )
+    .width(Length::Fill)
+    .padding([1, 4])
+    .into()
+}
+
 pub fn drop_line<'a, M: 'static>(p: &Palette, label: String) -> Element<'a, M> {
     let accent = p.accent;
     let rule = || {

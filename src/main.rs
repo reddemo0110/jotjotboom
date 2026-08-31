@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+mod anim;
 mod app;
 mod blocks;
 mod coffee;
@@ -13,6 +14,7 @@ mod images;
 mod links;
 mod markdown;
 mod note;
+mod probe;
 mod retro;
 mod secrets;
 mod store;
