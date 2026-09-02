@@ -727,3 +727,18 @@ Copy of Big Fish in Little China with the tangerine accent muted
   and rendering all verified in-harness (debug + installed release, their
   exact config, injected real Ctrl+B). `RUST_LOG=jotjotboom=debug` now
   logs every format apply to diagnose it live; awaiting specifics.
+
+## 2026-09-03 — Roadmap: cross-desktop polish for 1.0
+Agreed direction: JotJotBoom keeps its own identity everywhere (no GTK/Qt
+rewrites); the 1.0 goal on GNOME/KDE is "perfect citizen", not disguise.
+Queued for when the colour work settles, in order:
+1. Detect dark/light and accent via the `org.freedesktop.appearance`
+   portal when the cosmic-config daemon is absent (also improves the
+   follow-the-desktop theme on COSMIC).
+2. Offer the xdg-desktop-portal file chooser when it responds; the in-app
+   picker stays as the fallback.
+3. Flatpak packaging (appears properly in GNOME Software / KDE Discover;
+   AUR alongside).
+4. Paper-cut sweep under Mutter and KWin: CSD shadow/corners, cursor
+   theme, menu popup behaviour — needs a VM or nested session to test,
+   and a nested-compositor variant of the xshot harness.
