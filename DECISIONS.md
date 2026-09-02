@@ -742,3 +742,21 @@ Queued for when the colour work settles, in order:
 4. Paper-cut sweep under Mutter and KWin: CSD shadow/corners, cursor
    theme, menu popup behaviour — needs a VM or nested session to test,
    and a nested-compositor variant of the xshot harness.
+
+## 2026-09-03 — Roadmap: macOS and Windows (post-1.0)
+The stack travels (iced/winit, wgpu on Metal/DX12, cosmic-text shapes its
+own fonts, files-on-disk + dirs + keyring are portable); libcosmic's
+winit path off-Wayland is the risk, being lightly travelled upstream.
+Sequencing agreed: Linux 1.0 first, then a CI spike — GitHub Actions
+macOS/Windows runners proving it builds — to turn unknowns into a list;
+if healthy, Mac/Windows is a 1.x milestone. Known work already:
+- cfg-gate the Linux-isms (icon.rs writes hicolor + gtk-update-icon-cache;
+  bundles carry the icon instead).
+- Cmd vs Ctrl: keybinds resolve per-platform; menu stays in-window (iced
+  has no Mac global menu).
+- Packaging via cargo-packager (.app/.dmg, Windows installer). Ongoing
+  tolls: Apple notarization ($99/yr) or scary warnings; Windows unsigned
+  installers trip SmartScreen (cert optional, survivable without).
+- CI proves builds; feel needs real hardware or beta testers per OS.
+Sync (steps 7–8) gains value at the same moment — multi-OS users are the
+ones who want their notes everywhere.
