@@ -44,6 +44,15 @@ pub struct AppModel {
     config: Config,
     config_handler: Option<cosmic_config::Config>,
     theme: retro::Theme,
+    /// The colour buffet: a highlight (a minimal theme) on a dark plate,
+    /// or on a paper plate with a chosen ink, painted instead of `theme`
+    /// while `buffet_on`.
+    buffet_on: bool,
+    buffet_light_mode: bool,
+    buffet_highlight: retro::Theme,
+    buffet_dark: retro::Dark,
+    buffet_light: retro::Light,
+    buffet_ink: retro::Ink,
     show_markers: bool,
     show_nav: bool,
     show_list: bool,
@@ -69,7 +78,7 @@ pub struct AppModel {
     /// Launcher icon: a theme's colours, or `None` to follow the theme.
     icon_theme: Option<retro::Theme>,
     /// Which sections of the Appearance drawer are unfolded.
-    appearance_open: [bool; 6],
+    appearance_open: [bool; 7],
     /// Processed images keyed by path|mtime|style|theme.
     image_cache: HashMap<String, ImageState>,
     /// Block index of the image whose ⋯ menu is open.
@@ -195,6 +204,13 @@ pub enum Message {
     /// ↑ / ↓ outside the editor: open the note above / below, like mail.
     NavigateNotes(i32),
     SetTheme(retro::Theme),
+    /// Colour buffet: pick the highlight (a minimal theme), a dark plate,
+    /// a paper plate, or the light side's ink. Any turns the buffet on
+    /// (plates pick their side too); `SetTheme` turns it off.
+    SetBuffetHighlight(retro::Theme),
+    SetBuffetDark(retro::Dark),
+    SetBuffetLight(retro::Light),
+    SetBuffetInk(retro::Ink),
     SetFont(retro::EditorFont),
     /// Apply a designer pairing (titles, chrome, note) by key.
     SetPairing(String),
@@ -388,6 +404,12 @@ impl cosmic::Application for AppModel {
             .license(env!("CARGO_PKG_LICENSE"));
 
         let theme = retro::Theme::from_key(&config.theme);
+        let buffet_on = config.buffet_on;
+        let buffet_light_mode = config.buffet_mode == "light";
+        let buffet_highlight = buffet_highlight_from_config(&config.buffet_highlight);
+        let buffet_dark = retro::Dark::from_key(&config.buffet_dark);
+        let buffet_light = retro::Light::from_key(&config.buffet_light);
+        let buffet_ink = retro::Ink::from_key(&config.buffet_ink);
         let show_markers = config.show_markers;
         let (show_nav, show_list) = (!config.hide_nav, !config.hide_list);
         let editor_font = retro::EditorFont::from_key(&config.editor_font);
@@ -430,6 +452,12 @@ impl cosmic::Application for AppModel {
             config,
             config_handler,
             theme,
+            buffet_on,
+            buffet_light_mode,
+            buffet_highlight,
+            buffet_dark,
+            buffet_light,
+            buffet_ink,
             show_markers,
             show_nav,
             show_list,
@@ -446,7 +474,7 @@ impl cosmic::Application for AppModel {
             task_marker,
             measure,
             icon_theme,
-            appearance_open: [false; 6],
+            appearance_open: [false; 7],
             image_cache: HashMap::new(),
             image_menu: None,
             resizing: None,
@@ -1722,14 +1750,46 @@ impl AppModel {
 
             Message::SetTheme(theme) => {
                 self.theme = theme;
+                self.buffet_on = false;
                 if self.icon_theme.is_none() {
                     self.install_icon();
                 }
-                if let Some(handler) = &self.config_handler
-                    && let Err(why) = self.config.set_theme(handler, theme.key().to_owned())
-                {
-                    tracing::warn!(%why, "could not persist theme");
+                if let Some(handler) = &self.config_handler {
+                    if let Err(why) = self.config.set_theme(handler, theme.key().to_owned()) {
+                        tracing::warn!(%why, "could not persist theme");
+                    }
+                    if let Err(why) = self.config.set_buffet_on(handler, false) {
+                        tracing::warn!(%why, "could not persist buffet_on");
+                    }
                 }
+            }
+
+            Message::SetBuffetHighlight(theme) => {
+                // A classic theme is not a highlight; ignore rather than
+                // silently serving the previous colour.
+                if !theme.is_minimal() {
+                    return Task::none();
+                }
+                self.buffet_highlight = theme;
+                self.persist_buffet();
+            }
+
+            Message::SetBuffetDark(dark) => {
+                self.buffet_dark = dark;
+                self.buffet_light_mode = false;
+                self.persist_buffet();
+            }
+
+            Message::SetBuffetLight(light) => {
+                self.buffet_light = light;
+                self.buffet_light_mode = true;
+                self.persist_buffet();
+            }
+
+            Message::SetBuffetInk(ink) => {
+                self.buffet_ink = ink;
+                self.buffet_light_mode = true;
+                self.persist_buffet();
             }
 
             Message::ToggleNav => {
@@ -2148,6 +2208,7 @@ impl AppModel {
                     .iter()
                     .find(|(bind, _)| bind.matches(modifiers, &key, Some(&physical)))
                     .map(|(_, action)| action.message());
+                tracing::trace!(?modifiers, ?key, matched = action.is_some(), "key bind lookup");
                 if let Some(message) = action {
                     return self.update(message);
                 }
@@ -2165,6 +2226,12 @@ impl AppModel {
             Message::UpdateConfig(config) => {
                 // A changed notes_dir takes effect on next launch; everything else is live.
                 self.theme = retro::Theme::from_key(&config.theme);
+                self.buffet_on = config.buffet_on;
+                self.buffet_light_mode = config.buffet_mode == "light";
+                self.buffet_highlight = buffet_highlight_from_config(&config.buffet_highlight);
+                self.buffet_dark = retro::Dark::from_key(&config.buffet_dark);
+                self.buffet_light = retro::Light::from_key(&config.buffet_light);
+                self.buffet_ink = retro::Ink::from_key(&config.buffet_ink);
                 self.show_markers = config.show_markers;
                 self.show_nav = !config.hide_nav;
                 self.show_list = !config.hide_list;
@@ -2194,6 +2261,11 @@ impl AppModel {
                 self.task_marker = task_marker_from_config(&config.task_marker);
                 self.measure = retro::Measure::from_key(&config.text_width);
                 self.config = config;
+                // A theme or buffet change from outside (another instance,
+                // a config edit) repaints a follow-mode icon too.
+                if self.icon_theme.is_none() {
+                    self.install_icon();
+                }
             }
 
             Message::LaunchUrl(url) => match open::that_detached(&url) {
@@ -2206,7 +2278,8 @@ impl AppModel {
         Task::none()
     }
 
-    /// The themes on offer: the sixteen, plus Long Black once it is found.
+    /// The themes on offer: the sixteen classics and the minimal eleven,
+    /// plus Long Black once it is found.
     fn themes(&self) -> Vec<retro::Theme> {
         let mut all = retro::Theme::ALL.to_vec();
         if self.coffee_unlocked || self.theme == retro::Theme::LongBlack {
@@ -2282,13 +2355,19 @@ impl AppModel {
 
     /// Write the chosen (or theme-following) icon into the user's icon theme.
     fn install_icon(&self) {
-        let theme = self.icon_theme.unwrap_or(self.theme);
-        let svg = crate::icon::svg(&theme.palette(self.core.system_theme()));
-        match crate::icon::install(Self::APP_ID, &svg) {
-            Ok(true) => tracing::info!(theme = theme.key(), "launcher icon updated"),
+        // Following the colour theme follows the buffet too when it is on.
+        let palette = match self.icon_theme {
+            Some(theme) => theme.palette(self.core.system_theme()),
+            None => self.palette(),
+        };
+        let svg = crate::icon::svg(&palette);
+        // Off the UI thread: a changed icon rewrites hicolor files and runs
+        // gtk-update-icon-cache, too slow for the buffet's live tasting.
+        std::thread::spawn(move || match crate::icon::install(Self::APP_ID, &svg) {
+            Ok(true) => tracing::info!("launcher icon updated"),
             Ok(false) => {}
             Err(err) => tracing::warn!(%err, "installing launcher icon"),
-        }
+        });
     }
 
     /// The face pane titles are set in: VT323 as-is, anything else bold.
@@ -2346,7 +2425,71 @@ impl AppModel {
     }
 
     fn palette(&self) -> Palette {
-        self.theme.palette(self.core.system_theme())
+        if self.buffet_on {
+            if self.buffet_light_mode {
+                retro::buffet_light(self.buffet_accent(), self.buffet_light, self.buffet_ink)
+            } else {
+                retro::buffet_dark(self.buffet_accent(), self.buffet_dark)
+            }
+        } else {
+            self.theme.palette(self.core.system_theme())
+        }
+    }
+
+    /// What identifies the palette themed images are processed with: the
+    /// theme key, or the buffet pairing while it is serving.
+    fn palette_id(&self) -> String {
+        if self.buffet_on {
+            if self.buffet_light_mode {
+                format!(
+                    "buffet:{}/{}/{}",
+                    self.buffet_highlight.key(),
+                    self.buffet_light.key(),
+                    self.buffet_ink.key()
+                )
+            } else {
+                format!(
+                    "buffet:{}/{}",
+                    self.buffet_highlight.key(),
+                    self.buffet_dark.key()
+                )
+            }
+        } else {
+            self.theme.key().to_owned()
+        }
+    }
+
+    /// The buffet's highlight colour (the stored minimal theme's accent).
+    fn buffet_accent(&self) -> cosmic::iced::Color {
+        self.buffet_highlight
+            .minimal_accent()
+            .unwrap_or_else(|| retro::Theme::Tomato.minimal_accent().unwrap())
+    }
+
+    /// Switch the buffet on and write its three config entries.
+    fn persist_buffet(&mut self) {
+        self.buffet_on = true;
+        if self.icon_theme.is_none() {
+            self.install_icon();
+        }
+        if let Some(handler) = &self.config_handler {
+            let mode = if self.buffet_light_mode { "light" } else { "dark" };
+            let writes = [
+                self.config.set_buffet_on(handler, true),
+                self.config.set_buffet_mode(handler, mode.to_owned()),
+                self.config
+                    .set_buffet_highlight(handler, self.buffet_highlight.key().to_owned()),
+                self.config
+                    .set_buffet_dark(handler, self.buffet_dark.key().to_owned()),
+                self.config
+                    .set_buffet_light(handler, self.buffet_light.key().to_owned()),
+                self.config
+                    .set_buffet_ink(handler, self.buffet_ink.key().to_owned()),
+            ];
+            for why in writes.into_iter().filter_map(Result::err) {
+                tracing::warn!(%why, "could not persist buffet");
+            }
+        }
     }
 
     // ----- frames -----
@@ -3149,16 +3292,116 @@ impl AppModel {
         col = col.push(header(fl!("section-colour"), Section::Colour));
         if self.appearance_open[Section::Colour as usize] {
             col = col.push(widget::text::caption(fl!("theme-picker-hint")));
-            for theme in self.themes() {
-                let palette = theme.palette(system);
-                col = col.push(retro::swatch(
+            let swatch = |theme: retro::Theme| {
+                retro::swatch(
                     theme,
-                    &palette,
-                    self.theme == theme,
+                    &theme.palette(system),
+                    !self.buffet_on && self.theme == theme,
                     label_color,
                     Message::SetTheme(theme),
+                )
+            };
+            for theme in self.themes().into_iter().filter(|t| !t.is_minimal()) {
+                col = col.push(swatch(theme));
+            }
+            col = col.push(
+                widget::container(widget::text::heading(fl!("theme-minimal-header")))
+                    .padding([10, 0, 0, 0]),
+            );
+            col = col.push(widget::text::caption(fl!("theme-minimal-hint")));
+            for theme in retro::Theme::ALL.into_iter().filter(|t| t.is_minimal()) {
+                col = col.push(swatch(theme));
+            }
+        }
+
+        // Colour buffet: mix any highlight with any dark plate, live.
+        col = col.push(
+            widget::container(header(fl!("section-buffet"), Section::Buffet)).padding([8, 0, 0, 0]),
+        );
+        if self.appearance_open[Section::Buffet as usize] {
+            col = col.push(widget::text::caption(fl!("buffet-hint")));
+            col = col.push(
+                widget::container(widget::text(fl!("buffet-highlight"))).padding([6, 0, 2, 0]),
+            );
+            let mut chips: Vec<Element<'_, Message>> = Vec::new();
+            for theme in retro::Theme::ALL.into_iter().filter(|t| t.is_minimal()) {
+                if let Some(colour) = theme.minimal_accent() {
+                    chips.push(retro::chip(
+                        colour,
+                        self.buffet_highlight == theme,
+                        label_color,
+                        Message::SetBuffetHighlight(theme),
+                    ));
+                }
+            }
+            col = col.push(widget::flex_row(chips).spacing(6));
+
+            // Dark mode: a dark plate, light ink comes with it.
+            col = col.push(
+                widget::container(widget::text::heading(fl!("buffet-dark-mode")))
+                    .padding([10, 0, 2, 0]),
+            );
+            let dark_active = !self.buffet_light_mode;
+            let mut plates: Vec<Element<'_, Message>> = Vec::new();
+            for dark in retro::Dark::ALL {
+                plates.push(retro::chip(
+                    dark.color(),
+                    dark_active && self.buffet_dark == dark,
+                    label_color,
+                    Message::SetBuffetDark(dark),
                 ));
             }
+            col = col.push(widget::flex_row(plates).spacing(6));
+
+            // Light mode: a paper plate and a writing ink.
+            col = col.push(
+                widget::container(widget::text::heading(fl!("buffet-light-mode")))
+                    .padding([10, 0, 2, 0]),
+            );
+            col =
+                col.push(widget::container(widget::text(fl!("buffet-paper"))).padding([2, 0, 2, 0]));
+            let mut papers: Vec<Element<'_, Message>> = Vec::new();
+            for light in retro::Light::ALL {
+                papers.push(retro::chip(
+                    light.color(),
+                    self.buffet_light_mode && self.buffet_light == light,
+                    label_color,
+                    Message::SetBuffetLight(light),
+                ));
+            }
+            col = col.push(widget::flex_row(papers).spacing(6));
+            col =
+                col.push(widget::container(widget::text(fl!("buffet-ink"))).padding([6, 0, 2, 0]));
+            let mut inks: Vec<Element<'_, Message>> = Vec::new();
+            for ink in retro::Ink::ALL {
+                inks.push(retro::chip(
+                    ink.color(),
+                    self.buffet_light_mode && self.buffet_ink == ink,
+                    label_color,
+                    Message::SetBuffetInk(ink),
+                ));
+            }
+            col = col.push(widget::flex_row(inks).spacing(6));
+
+            let status = if self.buffet_on {
+                if self.buffet_light_mode {
+                    fl!(
+                        "buffet-serving-light",
+                        hi = self.buffet_highlight.label(),
+                        paper = self.buffet_light.label(),
+                        ink = self.buffet_ink.label()
+                    )
+                } else {
+                    fl!(
+                        "buffet-serving-dark",
+                        hi = self.buffet_highlight.label(),
+                        plate = self.buffet_dark.label()
+                    )
+                }
+            } else {
+                fl!("buffet-off")
+            };
+            col = col.push(widget::container(widget::text::caption(status)).padding([6, 0, 0, 0]));
         }
 
         // Font.
@@ -3561,11 +3804,14 @@ impl AppModel {
                 .padding([4, 0, 8, 0]),
             );
             let mut tiles: Vec<Element<'_, Message>> = Vec::with_capacity(retro::Theme::ALL.len());
-            let current = self.icon_theme.unwrap_or(self.theme);
+            // Following the buffet, no theme tile is "the" icon.
+            let current = self
+                .icon_theme
+                .or_else(|| (!self.buffet_on).then_some(self.theme));
             for theme in self.themes() {
                 let svg = crate::icon::svg(&theme.palette(system));
                 let handle = widget::svg::Handle::from_memory(svg.into_bytes());
-                let selected = current == theme;
+                let selected = current == Some(theme);
                 tiles.push(
                     widget::tooltip(
                         widget::button::custom(widget::svg(handle).width(52).height(52))
@@ -3653,6 +3899,11 @@ impl AppModel {
     /// Apply a dock format action to the editor buffer.
     fn apply_format(&mut self, format: Format) {
         use text_editor::{Action, Edit, Motion};
+        tracing::debug!(
+            ?format,
+            has_text = self.blocks.focused_text().is_some(),
+            "applying format"
+        );
         if self.blocks.focused_text().is_none() {
             return;
         }
@@ -3672,10 +3923,11 @@ impl AppModel {
         };
 
         match format {
-            Format::Bold | Format::Italic | Format::Code | Format::Link => {
+            Format::Bold | Format::Italic | Format::Mark | Format::Code | Format::Link => {
                 let (before, after) = match format {
                     Format::Bold => ("**", "**"),
                     Format::Italic => ("*", "*"),
+                    Format::Mark => ("==", "=="),
                     Format::Code => ("`", "`"),
                     _ => ("[[", "]]"),
                 };
@@ -4286,7 +4538,8 @@ impl AppModel {
         if !trashed {
             editor = editor
                 .on_action(move |a| Message::Editor(block, a))
-                .on_link(Message::FollowLink);
+                .on_link(Message::FollowLink)
+                .on_mark(|| Message::Format(Format::Mark));
         }
         editor.into()
     }
@@ -4300,9 +4553,9 @@ impl AppModel {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_nanos());
         let theme = if r.frame.themed() {
-            self.theme.key()
+            self.palette_id()
         } else {
-            ""
+            String::new()
         };
         let cols = if r.frame == FrameStyle::Ascii {
             images::ascii_layout(r.width).0
@@ -5390,6 +5643,19 @@ impl AppModel {
                 None => Task::none(),
             },
             Step::Theme(key) => self.update(Message::SetTheme(retro::Theme::from_key(&key))),
+            Step::Buffet(highlight, dark) => {
+                let _ = self.update(Message::SetBuffetHighlight(retro::Theme::from_key(
+                    &highlight,
+                )));
+                self.update(Message::SetBuffetDark(retro::Dark::from_key(&dark)))
+            }
+            Step::BuffetLight(highlight, paper, ink) => {
+                let _ = self.update(Message::SetBuffetHighlight(retro::Theme::from_key(
+                    &highlight,
+                )));
+                let _ = self.update(Message::SetBuffetLight(retro::Light::from_key(&paper)));
+                self.update(Message::SetBuffetInk(retro::Ink::from_key(&ink)))
+            }
             Step::Fold(tag) => self.update(Message::ToggleTagFold(tag)),
             Step::Nav(delta) => self.update(Message::NavigateNotes(delta)),
             Step::ToggleBox(line, col) => {
@@ -5447,6 +5713,7 @@ impl AppModel {
                 "tasks" => Section::Tasks,
                 "icon" => Section::Icon,
                 "links" => Section::Links,
+                "buffet" => Section::Buffet,
                 _ => Section::Size,
             })),
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
@@ -5624,6 +5891,13 @@ pub enum Section {
     Tasks = 3,
     Icon = 4,
     Links = 5,
+    Buffet = 6,
+}
+
+/// The buffet highlight from config: a minimal theme key, or Tomato.
+fn buffet_highlight_from_config(s: &str) -> retro::Theme {
+    let t = retro::Theme::from_key(s);
+    if t.is_minimal() { t } else { retro::Theme::Tomato }
 }
 
 fn title_font_from_config(s: &str) -> retro::EditorFont {
@@ -5713,6 +5987,7 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     bind(&[Ctrl], "b", MenuAction::Format(Format::Bold));
     bind(&[Ctrl], "i", MenuAction::Format(Format::Italic));
     bind(&[Ctrl], "e", MenuAction::Format(Format::Code));
+    bind(&[Ctrl], "h", MenuAction::Format(Format::Mark));
     bind(&[Ctrl], "1", MenuAction::Format(Format::H1));
     bind(&[Ctrl], "2", MenuAction::Format(Format::H2));
     bind(&[Ctrl], "l", MenuAction::Format(Format::Bullet));
@@ -5812,6 +6087,8 @@ pub enum ImageState {
 pub enum Format {
     Bold,
     Italic,
+    /// `==text==`: a highlighter band behind the words.
+    Mark,
     Code,
     H1,
     H2,
@@ -5824,9 +6101,10 @@ pub enum Format {
 }
 
 impl Format {
-    pub const ALL: [Format; 11] = [
+    pub const ALL: [Format; 12] = [
         Format::Bold,
         Format::Italic,
+        Format::Mark,
         Format::Code,
         Format::H1,
         Format::H2,
@@ -5849,6 +6127,7 @@ impl Format {
             Format::Todo => "todo",
             Format::Link => "link",
             Format::Tag => "tag",
+            Format::Mark => "mark",
             Format::Rule => "rule",
             Format::Quote => "quote",
         }
@@ -5867,6 +6146,7 @@ impl Format {
             Format::Tag => "#",
             Format::Rule => "—",
             Format::Quote => "❝",
+            Format::Mark => "░",
         }
     }
 
@@ -5883,6 +6163,7 @@ impl Format {
             Format::Tag => fl!("dock-tag"),
             Format::Rule => fl!("dock-rule"),
             Format::Quote => fl!("dock-quote"),
+            Format::Mark => fl!("dock-mark"),
         }
     }
 }

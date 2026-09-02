@@ -637,3 +637,93 @@ Copy of Big Fish in Little China with the tangerine accent muted
 - Harness: `JJB_LINK_FIXTURE=/path/page.html` serves that file for every
   address (an `og:image` there may be a path next to it); `attach:<path>`
   script step.
+
+## 2026-09-02 — The minimal themes (ten colour cards)
+- Ten new themes from the user's colour-card screenshots: Tomato #CE2939,
+  Steel Blue #35637C, Goji Berry (Pantone 18-1659, sampled #B22E3D),
+  Coquelicot #EC4908, Shamrock Green (Pantone 15-6432, sampled #71A56A),
+  Seoul Yellow #F6B65A, Flame of Burnt Brandy #F29538, Blue Fjord
+  (Pantone 7454, #648BA8), Azure #0099FF, Mikado #FFC40C, and (added the
+  same evening) Apricot #FFAB40. Labels are the
+  card names, not action-movie puns; blurbs echo the cards' captions.
+- They share one charcoal base (`retro::minimal()`: bg #121214, panel
+  #171719, fg #D7D7D5). The card colour appears **only** as: the selection
+  highlight (28 % blend over bg), tag and link colour, the editor caret,
+  H1/H2, and small marks that already rode the accent (list bullets, done
+  ticks, dock accents). Everything else stays neutral — per the user's spec
+  "highlights, tags, cursor, H1 and H2, that's it".
+- `Palette` grew three slots to make that possible without touching the
+  sixteen classics: `caret` (classics: fg), `h3` (H3–H6 heading colour;
+  classics: accent, minimal: fg — so only H1/H2 carry colour), and `title`
+  (pane-header colour; classics: accent, minimal: the dim grey).
+  `span_attrs` now takes the heading level.
+- The picker's Colour section lists the classics first, then a "Minimal"
+  sub-header with the ten; `Theme::is_minimal()` does the grouping and
+  `Theme::ALL` holds every variant so config keys round-trip.
+
+## 2026-09-02 — The colour buffet
+- A second, experimental colour picker ("Colour buffet", its own foldable
+  Options section) that mixes any of the eleven minimal highlights with any
+  of six dark plates from the user's black cards: Night #0E0E10, Rich Black
+  #171717 (the near-identical #171718 card folded into it), Jet Black
+  #1A1A1A, Graphite #1F2124 (unnamed on its card), Ink #212529, Onyx
+  #353839. Round chips, click to apply live; the ring marks the selection.
+- The pairing paints via `retro::minimal_with(accent, bg)`: the neutrals
+  (panel, hairlines, mute, dim) are now blends of the base toward the
+  foreground, so any dark works as a plate — `minimal()` is the same
+  function pinned to charcoal #121214, which moved the fixed minimal
+  neutrals by ~1/255 (imperceptible).
+- Buffet state is three config entries (`buffet_on`, `buffet_highlight` =
+  a minimal theme key, `buffet_dark`); clicking any chip switches the
+  buffet on, choosing a theme in the Colour section switches it off, and
+  the swatch list drops its selected ring while the buffet is serving. The
+  launcher icon follows the buffet when it follows the colour theme.
+- Harness: `buffet:<highlight>,<dark>` script step.
+
+## 2026-09-02 — The buffet's light side
+- The Colour buffet now has clear **Dark mode** and **Light mode**
+  subsections under the shared Highlight row. Dark mode is the six plates
+  as before. Light mode picks two things, per the user: a **Paper** plate —
+  Pearl White #FBFCF8, Cream #FAFAF2, Porcelain #F6F6F6, Moon #EDEDE9,
+  Quartz #E1E6EA, Bone #D4D4CE, joined the same evening by Ivory White
+  #FFFCEF, Coastal Ivory #F6F1E8, Milk #FFFFF5 (unnamed on its card) and
+  Off White #FAF9F6, the row ordered bright to grey; later five
+  screen-comfort whites went in ahead of them at the user's ask, in their
+  given order — Light Gray #F5F5F5, Antiflash White #F2F3F4, Nearly White
+  #FAFAFA, Subtle Off-White #F8F7F7, Warm White #FFFDF7 — for fifteen papers — and a writing **Ink** — Midnight #060B11,
+  Ink #212529, Navy #023246, Night #495057, Steel Slate #57666D — all from
+  the user's light-mode cards (the AWSMCOLOR strip supplied Porcelain and
+  Navy; its #287094 was skipped as too close to the Steel Blue highlight).
+- Clicking a plate serves its side (`buffet_mode` config, plus
+  `buffet_light` / `buffet_ink`); the selection rings only show on the
+  active side, and the status line reads "Serving X on Y" or
+  "Serving X on Y, writing in Z".
+- `minimal_with` now takes the ink too and blends every neutral between
+  plate and ink, so one function paints both sides; selected-row text uses
+  a brighter-than-ink white only when the plate is dark (luma < 0.5).
+  `retro::buffet_dark` / `retro::buffet_light` are the two entry points.
+- Harness: `buffet:h,dark` (dark side) or `buffet:h,paper,ink` (light).
+
+## 2026-09-02 — The highlighter, and the sweep's fixes
+- Middle-mouse drag is a **highlighter**: sweep over words like a marker
+  pen and on release the selection becomes `==marked==` in the file (the
+  Obsidian-compatible mark syntax), drawn as an accent band (32 %, rounded)
+  behind the glyphs with the `==` ghosted like other markers. Also on the
+  dock/Format menu ("Highlight", `░`) and Ctrl+H, which toggle it on the
+  selection like Bold does. Previews strip doubled `==` but keep a lone `=`.
+- Bug sweep (user report + /code-review): bullet dots were flush against
+  their text in proportional faces — the invisible `- ` footprint is now
+  1.5× wide on bullet lines only (task-box prefixes keep line metrics);
+  numbered markers (`1. `) no longer collapse into anonymous dots — new
+  `Kind::NumMarker` keeps the digits visible in the accent; themed-frame
+  image cache keys and the Icon picker's "current" tile now know about the
+  buffet (`palette_id()`); SetBuffetHighlight rejects non-minimal keys
+  instead of half-applying; a follow-mode icon re-installs on external
+  config changes and installs off-thread (no chip-click stutter); buffet
+  config writes log failures; the serving line is fully translatable
+  (`buffet-serving-dark`/`-light`); `minimal_accent()` is exhaustive so a
+  forgotten new-theme arm fails the build, not the runtime.
+- The user's "Bold doesn't work" could not be reproduced: key, menu, dock
+  and rendering all verified in-harness (debug + installed release, their
+  exact config, injected real Ctrl+B). `RUST_LOG=jotjotboom=debug` now
+  logs every format apply to diagnose it live; awaiting specifics.

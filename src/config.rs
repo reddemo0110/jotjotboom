@@ -61,6 +61,18 @@ pub struct Config {
     pub animation_ease: String,
     /// Editor body weight: 200, 300, 400 or 500. 0 = default (400).
     pub editor_weight: u16,
+    /// Colour buffet: paint with the buffet pairing instead of `theme`.
+    pub buffet_on: bool,
+    /// Buffet highlight: a minimal theme key. Empty = tomato.
+    pub buffet_highlight: String,
+    /// Buffet dark plate key (see `retro::Dark::key`). Empty = rich black.
+    pub buffet_dark: String,
+    /// Buffet side: "light" for the light mode, anything else = dark.
+    pub buffet_mode: String,
+    /// Buffet paper plate key (see `retro::Light::key`). Empty = pearl white.
+    pub buffet_light: String,
+    /// Buffet writing colour key (see `retro::Ink::key`). Empty = ink.
+    pub buffet_ink: String,
 }
 
 impl Config {

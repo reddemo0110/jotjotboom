@@ -28,10 +28,15 @@ pub enum Kind {
     /// A URL / image reference: shown ghosted.
     LinkUrl,
     ListMarker,
+    /// A numbered-list marker (`1. `, `2) `): stays visible, unlike the
+    /// dash that turns into a drawn dot.
+    NumMarker,
     Quote,
     /// Text of a completed task.
     Done,
     Strike,
+    /// `==highlighted==` text: drawn over a highlighter band.
+    Mark,
     /// An unticked task box `[ ] ` (with its trailing space).
     TaskBox,
     /// A ticked task box `[x] ` (with its trailing space).
@@ -141,7 +146,7 @@ pub fn scan_line(line: &str, in_fence: bool) -> (Vec<Span>, bool) {
         {
             spans.push(Span {
                 range: pos..pos + digits + 2,
-                kind: Kind::ListMarker,
+                kind: Kind::NumMarker,
             });
             pos += digits + 2;
         }
@@ -190,9 +195,10 @@ fn scan_inline(line: &str, start: usize, base: Option<Kind>, spans: &mut Vec<Spa
                 }
                 i += 1;
             }
-            b'*' | b'_' | b'~' => {
+            b'*' | b'_' | b'~' | b'=' => {
                 let run = bytes[i..].iter().take_while(|&&c| c == b).count().min(3);
-                let run = if b == b'~' {
+                // Strike and mark come only as doubles: `~~s~~`, `==m==`.
+                let run = if b == b'~' || b == b'=' {
                     if run >= 2 { 2 } else { 0 }
                 } else {
                     run
@@ -205,6 +211,7 @@ fn scan_inline(line: &str, start: usize, base: Option<Kind>, spans: &mut Vec<Spa
                         let k = after + rel;
                         let kind = match (b, run) {
                             (b'~', _) => Kind::Strike,
+                            (b'=', _) => Kind::Mark,
                             (_, 1) => Kind::Italic,
                             (_, 2) => Kind::Bold,
                             _ => Kind::BoldItalic,
@@ -368,10 +375,12 @@ pub fn style_for(kind: Kind, settings: &Settings) -> Highlight {
             Kind::Heading => (p.accent, Some(bold)),
             Kind::Tag | Kind::Link => (p.accent2, None),
             Kind::LinkUrl => (ghost, None),
-            Kind::ListMarker => (p.accent, None),
+            Kind::ListMarker | Kind::NumMarker => (p.accent, None),
             Kind::Quote => (p.dim, Some(italic)),
             // Finished tasks fade into the theme rather than change colour.
             Kind::Done | Kind::Strike => (p.fg.scale_alpha(0.45), None),
+            // The band behind it carries the colour; the text stays put.
+            Kind::Mark => (p.fg, None),
             Kind::TaskBox => (p.dim, None),
             Kind::TaskDone => (p.accent, Some(bold)),
         };
@@ -451,6 +460,20 @@ mod tests {
     }
 
     #[test]
+    fn highlight_marks() {
+        assert_eq!(
+            kinds("a ==marked run== b"),
+            vec![
+                ("==", Kind::Marker),
+                ("marked run", Kind::Mark),
+                ("==", Kind::Marker),
+            ]
+        );
+        // A lone `=` or a spaced pair is plain text.
+        assert_eq!(kinds("a = b == c"), vec![]);
+    }
+
+    #[test]
     fn lists_tasks_quotes_rules_fences() {
         assert_eq!(
             kinds("- [x] done ✓"),
@@ -460,7 +483,7 @@ mod tests {
                 ("done ✓", Kind::Done)
             ]
         );
-        assert_eq!(kinds("3. third"), vec![("3. ", Kind::ListMarker)]);
+        assert_eq!(kinds("3. third"), vec![("3. ", Kind::NumMarker)]);
         assert_eq!(
             kinds("> quoted"),
             vec![("> ", Kind::QuoteMarker), ("quoted", Kind::Quote)]

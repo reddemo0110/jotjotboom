@@ -53,6 +53,7 @@ badge-not-saved = ✗ not saved — last saved { $time }
 # Dock
 dock-bold = Bold
 dock-italic = Italic
+dock-mark = Highlight
 dock-code = Code
 dock-h1 = Heading 1
 dock-h2 = Heading 2
@@ -110,6 +111,18 @@ task-sample-open = - [ ] pick up milk
 task-sample-done = - [{ $mark }] walk the duck
 show-markers = Show markdown syntax
 theme-picker-hint = Retro palettes, a plain white, five from COLOURlovers, and one that follows your desktop. Click to apply.
+theme-minimal-header = Minimal
+theme-minimal-hint = One colour on charcoal: highlights, tags, the caret, H1 and H2. Everything else stays quiet.
+section-buffet = Colour buffet
+buffet-hint = Serve yourself: a highlight, then a plate from either side. A click applies it; picking a theme above switches the buffet off.
+buffet-highlight = Highlight
+buffet-dark-mode = Dark mode
+buffet-light-mode = Light mode
+buffet-paper = Paper
+buffet-ink = Ink
+buffet-serving-dark = Serving { $hi } on { $plate }.
+buffet-serving-light = Serving { $hi } on { $paper }, writing in { $ink }.
+buffet-off = Nothing plated yet — click a colour to switch the buffet on.
 
 # Layout
 show-nav = Views and tags

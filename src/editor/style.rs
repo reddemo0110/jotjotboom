@@ -26,6 +26,8 @@ pub const META_TASK_PREFIX: usize = 7;
 /// Clickable spans: a `[[wiki link]]` target and a `#tag`.
 pub const META_LINK: usize = 8;
 pub const META_TAG: usize = 9;
+/// `==marked==` text: a highlighter band is drawn behind these glyphs.
+pub const META_MARK: usize = 10;
 /// The `#` of a tag wearing a folder icon: invisible at width, the icon
 /// is drawn over it. Metadata = base + index into `glyph::Icon::ALL`.
 pub const META_TAGICON_BASE: usize = 100;
@@ -72,12 +74,14 @@ pub fn line_base(
     }
 }
 
-/// Attributes for one span. `active` is whether the caret is on this line.
+/// Attributes for one span. `active` is whether the caret is on this line,
+/// `level` the line's heading level (0 = not a heading).
 pub fn span_attrs(
     kind: Kind,
     base: &Attrs<'static>,
     line_height: f32,
     active: bool,
+    level: usize,
     s: &Settings,
 ) -> Attrs<'static> {
     let p = &s.palette;
@@ -122,7 +126,14 @@ pub fn span_attrs(
             if active {
                 styled()
             } else {
+                // Half again wider than the literal `- ` so the drawn dot
+                // gets air before the text — proportional faces shape the
+                // hyphen-space pair too narrow for a comfortable gap.
+                let m = base
+                    .metrics_opt
+                    .map_or(Metrics::new(14.0, line_height), Metrics::from);
                 transparent(META_BULLET)
+                    .metrics(Metrics::new(m.font_size * 1.5, m.line_height))
             }
         }
         Kind::TaskBox => {
@@ -146,6 +157,8 @@ pub fn span_attrs(
                 transparent(META_QUOTE)
             }
         }
+        // Numbered markers keep their digits on screen, in the accent.
+        Kind::NumMarker => styled(),
         Kind::Quote => styled(),
         Kind::Code => styled().family(Family::Monospace).metadata(META_CODE),
         Kind::CodeBlock => styled().family(Family::Monospace).metadata(META_CODE_BLOCK),
@@ -155,9 +168,13 @@ pub fn span_attrs(
         Kind::Strike => styled()
             .strikethrough()
             .strikethrough_color(color(p.fg.scale_alpha(0.8))),
+        // H3 down take the palette's `h3` colour — the accent on the
+        // classics, plain text on the minimal themes.
+        Kind::Heading if level >= 3 => styled().weight(Weight::BOLD).color(color(p.h3)),
         Kind::Heading => styled().weight(Weight::BOLD),
         Kind::Link => styled().metadata(META_LINK),
         Kind::Tag => styled().metadata(META_TAG),
+        Kind::Mark => styled().metadata(META_MARK),
         Kind::Bold | Kind::Italic | Kind::BoldItalic => styled(),
     }
 }

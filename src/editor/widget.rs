@@ -48,6 +48,8 @@ pub struct RichEditor<'a, Message> {
     palette: Palette,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
     on_link: Option<Box<dyn Fn(Link) -> Message + 'a>>,
+    /// Fired when a middle-drag finishes over a selection: the highlighter.
+    on_mark: Option<Box<dyn Fn() -> Message + 'a>>,
     /// Label on the drop indicator ("picture drops here").
     drop_label: String,
     /// Trip time (seconds) and landing exponent for the drop marker's
@@ -70,6 +72,7 @@ impl<'a, Message> RichEditor<'a, Message> {
             settings,
             on_action: None,
             on_link: None,
+            on_mark: None,
             drop_label: String::new(),
             drop_anim: None,
         }
@@ -87,6 +90,11 @@ impl<'a, Message> RichEditor<'a, Message> {
 
     pub fn on_link(mut self, f: impl Fn(Link) -> Message + 'a) -> Self {
         self.on_link = Some(Box::new(f));
+        self
+    }
+
+    pub fn on_mark(mut self, f: impl Fn() -> Message + 'a) -> Self {
+        self.on_mark = Some(Box::new(f));
         self
     }
 
@@ -170,6 +178,8 @@ pub struct State {
     reveal_pending: bool,
     last_click: Option<mouse::Click>,
     drag_click: Option<mouse::click::Kind>,
+    /// A middle-button drag in flight: on release it becomes a `==mark==`.
+    mark_drag: bool,
     /// Emitted on the next event once focus was lost by a click elsewhere.
     pending: Option<Action>,
     /// The drop marker's glide (buffer coordinates) and its last frame.
@@ -236,6 +246,7 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
             reveal_pending: false,
             last_click: None,
             drag_click: None,
+            mark_drag: false,
             pending: None,
             marker: crate::anim::Glide::default(),
             marker_frame: None,
@@ -425,6 +436,32 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 state.drag_click = None;
             }
+            // Middle-drag is the highlighter: sweep over text like a marker
+            // pen, and on release the selection becomes `==marked==`.
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+                if self.on_mark.is_some()
+                    && let Some(p) = cursor.position_in(bounds)
+                {
+                    let p = p - text_origin;
+                    state.focus = Some(Focus::now());
+                    state.mark_drag = true;
+                    state.drag_click = Some(mouse::click::Kind::Single);
+                    shell.publish(on_action(Action::Click(p)));
+                    shell.capture_event();
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
+                if state.mark_drag {
+                    state.mark_drag = false;
+                    state.drag_click = None;
+                    if self.content.selection().is_some()
+                        && let Some(on_mark) = &self.on_mark
+                    {
+                        shell.publish(on_mark());
+                    }
+                    shell.capture_event();
+                }
+            }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if state.drag_click == Some(mouse::click::Kind::Single)
                     && let Some(p) = cursor.position_in(bounds)
@@ -551,6 +588,20 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                     ..Quad::default()
                 },
                 Background::Color(p.accent2.scale_alpha(0.15)),
+            );
+        }
+        // Highlighter bands: a marker stroke behind `==marked==` text.
+        for r in &overlays.marks {
+            renderer.fill_quad(
+                Quad {
+                    bounds: at(r),
+                    border: Border {
+                        radius: 3.0.into(),
+                        ..Default::default()
+                    },
+                    ..Quad::default()
+                },
+                Background::Color(p.accent.scale_alpha(0.32)),
             );
         }
         for r in &overlays.quote_bars {
@@ -800,7 +851,7 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
                         },
                         ..Quad::default()
                     },
-                    Background::Color(p.fg),
+                    Background::Color(p.caret),
                 );
             }
         }

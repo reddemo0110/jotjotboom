@@ -306,6 +306,11 @@ fn strip_inline_markup(line: &str) -> String {
                 out.push(c);
             }
             '*' | '_' | '`' | '~' => {}
+            // `==mark==` highlights: drop the doubled markers, keep lone `=`.
+            '=' if chars.get(i + 1) == Some(&'=') => {
+                i += 2;
+                continue;
+            }
             _ => out.push(c),
         }
         i += 1;

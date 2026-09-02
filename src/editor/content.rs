@@ -80,6 +80,8 @@ pub struct Overlays {
     pub bullets: Vec<Rectangle>,
     pub quote_bars: Vec<Rectangle>,
     pub strikes: Vec<(Rectangle, Option<cosmic_text::Color>)>,
+    /// Highlighter bands behind `==marked==` text.
+    pub marks: Vec<Rectangle>,
 }
 
 /// The caret or selection, in buffer coordinates.
@@ -473,8 +475,14 @@ impl RichContent {
                 let base = super::style::line_base(font, size, line_height, level, style);
                 let mut list = AttrsList::new(&base);
                 for (j, span) in spans.iter().enumerate() {
-                    let mut attrs =
-                        super::style::span_attrs(span.kind, &base, line_height, is_active, style);
+                    let mut attrs = super::style::span_attrs(
+                        span.kind,
+                        &base,
+                        line_height,
+                        is_active,
+                        level,
+                        style,
+                    );
                     // A tag with a folder icon wears it instead of its hash (off the caret line).
                     if span.kind == markdown::Kind::Tag && !is_active {
                         let tag = line.text()[span.range.clone()].trim_start_matches('#');
@@ -493,6 +501,8 @@ impl RichContent {
                         }
                     }
                     // A task's `- ` gets no bullet: the box is the marker.
+                    // It also keeps the line's own metrics — the widened
+                    // footprint is only for the drawn bullet dot.
                     if span.kind == markdown::Kind::ListMarker
                         && !is_active
                         && spans.get(j + 1).is_some_and(|n| {
@@ -500,6 +510,9 @@ impl RichContent {
                         })
                     {
                         attrs = attrs.metadata(super::style::META_TASK_PREFIX);
+                        if let Some(m) = base.metrics_opt {
+                            attrs = attrs.metrics(m.into());
+                        }
                     }
                     list.add_span(span.range.clone(), &attrs);
                 }
@@ -553,6 +566,16 @@ impl RichContent {
                         x: r.x - 3.0,
                         y: r.y + (r.height - h) / 2.0,
                         width: r.width + 6.0,
+                        height: h,
+                    });
+                }
+                if let Some((r, _, _)) = span_rect(META_MARK) {
+                    // A little taller than the glyphs, like a marker stroke.
+                    let h = size * 1.35;
+                    o.marks.push(Rectangle {
+                        x: r.x - 2.0,
+                        y: r.y + (r.height - h) / 2.0,
+                        width: r.width + 4.0,
                         height: h,
                     });
                 }

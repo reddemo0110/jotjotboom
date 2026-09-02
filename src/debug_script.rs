@@ -76,6 +76,10 @@ pub enum Step {
     ImgCaption(usize, String),
     /// Switch theme by key.
     Theme(String),
+    /// Colour buffet, dark side: `buffet:highlight,dark`.
+    Buffet(String, String),
+    /// Colour buffet, light side: `buffet:highlight,paper,ink`.
+    BuffetLight(String, String, String),
     /// Fold / unfold the sub-tags of a tag: `fold:travels`.
     Fold(String),
     /// Editor font by key: `font:plex`.
@@ -179,6 +183,18 @@ pub fn parse(script: &str) -> Vec<Step> {
                     Step::ImgCaption(n.trim().parse().ok()?, unescape(text))
                 }
                 "theme" => Step::Theme(arg.trim().to_owned()),
+                "buffet" => {
+                    let parts: Vec<&str> = arg.trim().split(',').map(str::trim).collect();
+                    match parts.as_slice() {
+                        [h, d] => Step::Buffet((*h).to_owned(), (*d).to_owned()),
+                        [h, p, i] => Step::BuffetLight(
+                            (*h).to_owned(),
+                            (*p).to_owned(),
+                            (*i).to_owned(),
+                        ),
+                        _ => return None,
+                    }
+                }
                 "fold" => Step::Fold(arg.trim().to_owned()),
                 "font" => Step::Font(arg.trim().to_owned()),
                 "pairing" => Step::Pairing(arg.trim().to_owned()),

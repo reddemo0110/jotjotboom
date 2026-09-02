@@ -57,10 +57,34 @@ pub enum Theme {
     Cosmic,
     /// Hidden: crema on espresso. Found by searching for "coffee".
     LongBlack,
+    // The minimal family: one light colour on shared charcoal, from the
+    // user's colour cards. Only highlights, tags, caret and H1/H2 colour.
+    /// Tomato red, #CE2939.
+    Tomato,
+    /// Steel blue, #35637C.
+    SteelBlue,
+    /// Goji berry, Pantone 18-1659.
+    GojiBerry,
+    /// Coquelicot poppy orange, #EC4908.
+    Coquelicot,
+    /// Shamrock green, Pantone 15-6432.
+    Shamrock,
+    /// Seoul ginkgo yellow, #F6B65A.
+    SeoulYellow,
+    /// Flame of Burnt Brandy, #F29538.
+    BurntBrandy,
+    /// Blue Fjord, Pantone 7454.
+    BlueFjord,
+    /// Azure, #0099FF.
+    Azure,
+    /// Mikado yellow, #FFC40C.
+    Mikado,
+    /// Apricot orange, #FFAB40.
+    Apricot,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 16] = [
+    pub const ALL: [Theme; 27] = [
         Theme::Phosphor,
         Theme::Amber,
         Theme::WordPerfect,
@@ -77,7 +101,61 @@ impl Theme {
         Theme::OceanFive,
         Theme::Adrift,
         Theme::Cosmic,
+        Theme::Tomato,
+        Theme::SteelBlue,
+        Theme::GojiBerry,
+        Theme::Coquelicot,
+        Theme::Shamrock,
+        Theme::SeoulYellow,
+        Theme::BurntBrandy,
+        Theme::BlueFjord,
+        Theme::Azure,
+        Theme::Mikado,
+        Theme::Apricot,
     ];
+
+    /// The minimal family shares one charcoal base; only its light colour
+    /// differs, and the picker groups it under its own header.
+    pub fn is_minimal(self) -> bool {
+        self.minimal_accent().is_some()
+    }
+
+    /// The card colour of a minimal theme; `None` for the classics.
+    /// Also the highlight side of the colour buffet.
+    pub fn minimal_accent(self) -> Option<Color> {
+        Some(match self {
+            Theme::Tomato => hex(0xce2939),
+            Theme::SteelBlue => hex(0x35637c),
+            Theme::GojiBerry => hex(0xb22e3d),
+            Theme::Coquelicot => hex(0xec4908),
+            Theme::Shamrock => hex(0x71a56a),
+            Theme::SeoulYellow => hex(0xf6b65a),
+            Theme::BurntBrandy => hex(0xf29538),
+            Theme::BlueFjord => hex(0x648ba8),
+            Theme::Azure => hex(0x0099ff),
+            Theme::Mikado => hex(0xffc40c),
+            Theme::Apricot => hex(0xffab40),
+            // Exhaustive on purpose: a new variant must declare its side
+            // here, or `palette()`'s catch-all would panic at runtime.
+            Theme::Phosphor
+            | Theme::Amber
+            | Theme::WordPerfect
+            | Theme::Paper
+            | Theme::White
+            | Theme::Plasma
+            | Theme::C64
+            | Theme::GameBoy
+            | Theme::Synthwave
+            | Theme::Goldfish
+            | Theme::GoldfishMuted
+            | Theme::Provoking
+            | Theme::EmoKid
+            | Theme::OceanFive
+            | Theme::Adrift
+            | Theme::Cosmic
+            | Theme::LongBlack => return None,
+        })
+    }
 
     pub fn key(self) -> &'static str {
         match self {
@@ -98,6 +176,17 @@ impl Theme {
             Theme::OceanFive => "oceanfive",
             Theme::Adrift => "adrift",
             Theme::Cosmic => "cosmic",
+            Theme::Tomato => "tomato",
+            Theme::SteelBlue => "steelblue",
+            Theme::GojiBerry => "gojiberry",
+            Theme::Coquelicot => "coquelicot",
+            Theme::Shamrock => "shamrock",
+            Theme::SeoulYellow => "seoulyellow",
+            Theme::BurntBrandy => "burntbrandy",
+            Theme::BlueFjord => "bluefjord",
+            Theme::Azure => "azure",
+            Theme::Mikado => "mikado",
+            Theme::Apricot => "apricot",
         }
     }
 
@@ -130,6 +219,17 @@ impl Theme {
             Theme::OceanFive => "The Abyss Five",
             Theme::Adrift => "Adrift in Dreamscape",
             Theme::Cosmic => "Desktop Cop",
+            Theme::Tomato => "Tomato",
+            Theme::SteelBlue => "Steel Blue",
+            Theme::GojiBerry => "Goji Berry",
+            Theme::Coquelicot => "Coquelicot",
+            Theme::Shamrock => "Shamrock Green",
+            Theme::SeoulYellow => "Seoul Yellow",
+            Theme::BurntBrandy => "Flame of Burnt Brandy",
+            Theme::BlueFjord => "Blue Fjord",
+            Theme::Azure => "Azure",
+            Theme::Mikado => "Mikado",
+            Theme::Apricot => "Apricot",
         }
     }
 
@@ -153,10 +253,24 @@ impl Theme {
             Theme::OceanFive => "COLOURlovers 'Ocean Five' — deep sea, coral, sand",
             Theme::Adrift => "COLOURlovers 'Adrift in Dreams' — sea greens on ink blue",
             Theme::Cosmic => "follows your desktop theme. Serve the public trust.",
+            Theme::Tomato => "#CE2939 — or was #FF6347 the good one?",
+            Theme::SteelBlue => "the steel that never rusts, wired to the web",
+            Theme::GojiBerry => "Pantone 18-1659. A wolfberry, in other words.",
+            Theme::Coquelicot => "a cute, fresh name for a wild poppy",
+            Theme::Shamrock => "Pantone 15-6432, the clover Ireland grows",
+            Theme::SeoulYellow => "ginkgo leaves turning along Seoul streets",
+            Theme::BurntBrandy => "a colour name that really existed",
+            Theme::BlueFjord => "Pantone 7454, northern water",
+            Theme::Azure => "the clear sky, where web colours began",
+            Theme::Mikado => "the emperor's colour",
+            Theme::Apricot => "#FFAB40, ripe off the tree",
         }
     }
 
     pub fn palette(self, cosmic: &cosmic::Theme) -> Palette {
+        if let Some(accent) = self.minimal_accent() {
+            return minimal(accent);
+        }
         match self {
             Theme::LongBlack => Palette {
                 bg: hex(0x160f0b),
@@ -169,6 +283,9 @@ impl Theme {
                 border: hex(0x3d2b1f),
                 sel: hex(0x4a3222),
                 selfg: hex(0xfff3e0),
+                caret: hex(0xf1e2c8),
+                h3: hex(0xe0a262),
+                title: hex(0xe0a262),
             },
             Theme::Phosphor => Palette {
                 bg: hex(0x050806),
@@ -181,6 +298,9 @@ impl Theme {
                 border: hex(0x1f5a2f),
                 sel: hex(0x0f3a1c),
                 selfg: hex(0xd7ffe0),
+                caret: hex(0xb9f2bf),
+                h3: hex(0x4dff8f),
+                title: hex(0x4dff8f),
             },
             Theme::Amber => Palette {
                 bg: hex(0x0b0704),
@@ -193,6 +313,9 @@ impl Theme {
                 border: hex(0x5c3c12),
                 sel: hex(0x3a2408),
                 selfg: hex(0xfff1d6),
+                caret: hex(0xffc978),
+                h3: hex(0xffb02e),
+                title: hex(0xffb02e),
             },
             Theme::WordPerfect => Palette {
                 bg: hex(0x1c2874),
@@ -205,6 +328,9 @@ impl Theme {
                 border: hex(0x7c86c6),
                 sel: hex(0x2f3d94),
                 selfg: hex(0xffffff),
+                caret: hex(0xe6e8ee),
+                h3: hex(0xf0e07c),
+                title: hex(0xf0e07c),
             },
             Theme::Paper => Palette {
                 bg: hex(0x0a0a0b),
@@ -217,6 +343,9 @@ impl Theme {
                 border: hex(0x3c3c3c),
                 sel: hex(0x2c2c30),
                 selfg: hex(0xffffff),
+                caret: hex(0xe8e8e8),
+                h3: hex(0xffffff),
+                title: hex(0xffffff),
             },
             Theme::Plasma => Palette {
                 bg: hex(0x180500),
@@ -229,6 +358,9 @@ impl Theme {
                 border: hex(0x6e3414),
                 sel: hex(0x4c2009),
                 selfg: hex(0xffe6cf),
+                caret: hex(0xff8f3c),
+                h3: hex(0xffb66b),
+                title: hex(0xffb66b),
             },
             Theme::C64 => Palette {
                 bg: hex(0x443c86),
@@ -241,6 +373,9 @@ impl Theme {
                 border: hex(0x7c75c0),
                 sel: hex(0x5a52a8),
                 selfg: hex(0xffffff),
+                caret: hex(0xbdb8ee),
+                h3: hex(0xd0d68e),
+                title: hex(0xd0d68e),
             },
             Theme::GameBoy => Palette {
                 // The real DMG screen: muted olive, not emulator lime.
@@ -254,6 +389,9 @@ impl Theme {
                 border: hex(0x6e7a58),
                 sel: hex(0x6e7a58),
                 selfg: hex(0xdbe3c4),
+                caret: hex(0x1f261a),
+                h3: hex(0x2c3a24),
+                title: hex(0x2c3a24),
             },
             Theme::Synthwave => Palette {
                 bg: hex(0x120823),
@@ -266,6 +404,9 @@ impl Theme {
                 border: hex(0x5e3d94),
                 sel: hex(0x3b2063),
                 selfg: hex(0xffffff),
+                caret: hex(0xf2dcff),
+                h3: hex(0xff6ec7),
+                title: hex(0xff6ec7),
             },
             Theme::White => Palette {
                 bg: hex(0xffffff),
@@ -278,6 +419,9 @@ impl Theme {
                 border: hex(0xd2d2d2),
                 sel: hex(0xe8e8e8),
                 selfg: hex(0x0c0c0c),
+                caret: hex(0x0c0c0c),
+                h3: hex(0x0c0c0c),
+                title: hex(0x0c0c0c),
             },
             Theme::Goldfish => Palette {
                 bg: hex(0x0f1a1e),
@@ -290,6 +434,9 @@ impl Theme {
                 border: hex(0x2f5260),
                 sel: hex(0x1f3d48),
                 selfg: hex(0xffffff),
+                caret: hex(0xe0e4cc),
+                h3: hex(0xfa6900),
+                title: hex(0xfa6900),
             },
             Theme::GoldfishMuted => Palette {
                 bg: hex(0x0f1a1e),
@@ -302,6 +449,9 @@ impl Theme {
                 border: hex(0x2f5260),
                 sel: hex(0x1f3d48),
                 selfg: hex(0xffffff),
+                caret: hex(0xe0e4cc),
+                h3: hex(0xc9773f),
+                title: hex(0xc9773f),
             },
             Theme::Provoking => Palette {
                 bg: hex(0x2a1520),
@@ -314,6 +464,9 @@ impl Theme {
                 border: hex(0x6d3f52),
                 sel: hex(0x542437),
                 selfg: hex(0xffffff),
+                caret: hex(0xf0dcb0),
+                h3: hex(0xd95b43),
+                title: hex(0xd95b43),
             },
             Theme::EmoKid => Palette {
                 bg: hex(0x1e252b),
@@ -326,6 +479,9 @@ impl Theme {
                 border: hex(0x455360),
                 sel: hex(0x323e49),
                 selfg: hex(0xffffff),
+                caret: hex(0xe6edf0),
+                h3: hex(0x4ecdc4),
+                title: hex(0x4ecdc4),
             },
             Theme::OceanFive => Palette {
                 bg: hex(0x0d1b1e),
@@ -338,6 +494,9 @@ impl Theme {
                 border: hex(0x2f4f55),
                 sel: hex(0x1e3d43),
                 selfg: hex(0xffffff),
+                caret: hex(0xf2e8d0),
+                h3: hex(0xeb6841),
+                title: hex(0xeb6841),
             },
             Theme::Adrift => Palette {
                 bg: hex(0x081f2d),
@@ -350,6 +509,9 @@ impl Theme {
                 border: hex(0x2a5d6d),
                 sel: hex(0x1a4a5c),
                 selfg: hex(0xffffff),
+                caret: hex(0xdfe8d8),
+                h3: hex(0xcff09e),
+                title: hex(0xcff09e),
             },
             Theme::Cosmic => {
                 let c = cosmic.cosmic();
@@ -368,8 +530,261 @@ impl Theme {
                     border: container.component.divider.into(),
                     sel: accent,
                     selfg: c.on_accent_color().into(),
+                    caret: fg,
+                    h3: accent,
+                    title: accent,
                 }
             }
+            t => unreachable!("minimal {t:?} returned above"),
+        }
+    }
+}
+
+/// The dark side of the colour buffet: base blacks from the user's cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Dark {
+    /// "Night 06", #0E0E10.
+    Night,
+    /// Rich black, #171717 — the default plate.
+    #[default]
+    RichBlack,
+    /// Jet black, #1A1A1A.
+    JetBlack,
+    /// #1F2124, a blue-grey graphite.
+    Graphite,
+    /// Ink, #212529.
+    Ink,
+    /// Onyx, #353839.
+    Onyx,
+}
+
+impl Dark {
+    pub const ALL: [Dark; 6] = [
+        Dark::Night,
+        Dark::RichBlack,
+        Dark::JetBlack,
+        Dark::Graphite,
+        Dark::Ink,
+        Dark::Onyx,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Dark::Night => "night",
+            Dark::RichBlack => "richblack",
+            Dark::JetBlack => "jetblack",
+            Dark::Graphite => "graphite",
+            Dark::Ink => "ink",
+            Dark::Onyx => "onyx",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Dark {
+        Dark::ALL
+            .into_iter()
+            .find(|d| d.key() == key)
+            .unwrap_or_default()
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Dark::Night => "Night",
+            Dark::RichBlack => "Rich Black",
+            Dark::JetBlack => "Jet Black",
+            Dark::Graphite => "Graphite",
+            Dark::Ink => "Ink",
+            Dark::Onyx => "Onyx",
+        }
+    }
+
+    pub fn color(self) -> Color {
+        match self {
+            Dark::Night => hex(0x0e0e10),
+            Dark::RichBlack => hex(0x171717),
+            Dark::JetBlack => hex(0x1a1a1a),
+            Dark::Graphite => hex(0x1f2124),
+            Dark::Ink => hex(0x212529),
+            Dark::Onyx => hex(0x353839),
+        }
+    }
+}
+
+/// The light side of the colour buffet: paper plates from the user's cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Light {
+    /// Pearl white, #FBFCF8 — the default sheet.
+    #[default]
+    PearlWhite,
+    /// #FAFAF2, a warm cream.
+    Cream,
+    /// #F6F6F6, plain porcelain.
+    Porcelain,
+    /// Moon, #EDEDE9.
+    Moon,
+    /// Quartz, #E1E6EA.
+    Quartz,
+    /// #D4D4CE, a pale bone grey.
+    Bone,
+    /// Ivory white, #FFFCEF.
+    IvoryWhite,
+    /// Coastal ivory, #F6F1E8.
+    CoastalIvory,
+    /// #FFFFF5, barely-there milk.
+    Milk,
+    /// Off white, #FAF9F6.
+    OffWhite,
+    /// #F5F5F5 — easy on the eyes over long sessions, contrast intact.
+    LightGray,
+    /// Antiflash white, #F2F3F4 — calm, no glare on bright monitors.
+    Antiflash,
+    /// #FAFAFA — nearly pure white with the sharp edge taken off.
+    NearlyWhite,
+    /// #F8F7F7 — the minimalist editor surface.
+    SubtleOffWhite,
+    /// #FFFDF7 — a friendly paper-like warmth.
+    WarmWhite,
+}
+
+impl Light {
+    pub const ALL: [Light; 15] = [
+        Light::LightGray,
+        Light::Antiflash,
+        Light::NearlyWhite,
+        Light::SubtleOffWhite,
+        Light::WarmWhite,
+        Light::PearlWhite,
+        Light::Milk,
+        Light::IvoryWhite,
+        Light::OffWhite,
+        Light::Cream,
+        Light::Porcelain,
+        Light::CoastalIvory,
+        Light::Moon,
+        Light::Quartz,
+        Light::Bone,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Light::PearlWhite => "pearlwhite",
+            Light::Cream => "cream",
+            Light::Porcelain => "porcelain",
+            Light::Moon => "moon",
+            Light::Quartz => "quartz",
+            Light::Bone => "bone",
+            Light::IvoryWhite => "ivorywhite",
+            Light::CoastalIvory => "coastalivory",
+            Light::Milk => "milk",
+            Light::OffWhite => "offwhite",
+            Light::LightGray => "lightgray",
+            Light::Antiflash => "antiflash",
+            Light::NearlyWhite => "nearlywhite",
+            Light::SubtleOffWhite => "subtleoffwhite",
+            Light::WarmWhite => "warmwhite",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Light {
+        Light::ALL
+            .into_iter()
+            .find(|l| l.key() == key)
+            .unwrap_or_default()
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Light::PearlWhite => "Pearl White",
+            Light::Cream => "Cream",
+            Light::Porcelain => "Porcelain",
+            Light::Moon => "Moon",
+            Light::Quartz => "Quartz",
+            Light::Bone => "Bone",
+            Light::IvoryWhite => "Ivory White",
+            Light::CoastalIvory => "Coastal Ivory",
+            Light::Milk => "Milk",
+            Light::OffWhite => "Off White",
+            Light::LightGray => "Light Gray",
+            Light::Antiflash => "Antiflash White",
+            Light::NearlyWhite => "Nearly White",
+            Light::SubtleOffWhite => "Subtle Off-White",
+            Light::WarmWhite => "Warm White",
+        }
+    }
+
+    pub fn color(self) -> Color {
+        match self {
+            Light::PearlWhite => hex(0xfbfcf8),
+            Light::Cream => hex(0xfafaf2),
+            Light::Porcelain => hex(0xf6f6f6),
+            Light::Moon => hex(0xedede9),
+            Light::Quartz => hex(0xe1e6ea),
+            Light::Bone => hex(0xd4d4ce),
+            Light::IvoryWhite => hex(0xfffcef),
+            Light::CoastalIvory => hex(0xf6f1e8),
+            Light::Milk => hex(0xfffff5),
+            Light::OffWhite => hex(0xfaf9f6),
+            Light::LightGray => hex(0xf5f5f5),
+            Light::Antiflash => hex(0xf2f3f4),
+            Light::NearlyWhite => hex(0xfafafa),
+            Light::SubtleOffWhite => hex(0xf8f7f7),
+            Light::WarmWhite => hex(0xfffdf7),
+        }
+    }
+}
+
+/// The writing colour of the buffet's light side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Ink {
+    /// Midnight, #060B11.
+    Midnight,
+    /// Ink, #212529 — the default nib.
+    #[default]
+    Ink,
+    /// Deep harbour navy, #023246.
+    Navy,
+    /// Night, #495057.
+    Night,
+    /// Steel slate, #57666D.
+    Slate,
+}
+
+impl Ink {
+    pub const ALL: [Ink; 5] = [Ink::Midnight, Ink::Ink, Ink::Navy, Ink::Night, Ink::Slate];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Ink::Midnight => "midnight",
+            Ink::Ink => "ink",
+            Ink::Navy => "navy",
+            Ink::Night => "night",
+            Ink::Slate => "slate",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Ink {
+        Ink::ALL
+            .into_iter()
+            .find(|i| i.key() == key)
+            .unwrap_or_default()
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Ink::Midnight => "Midnight",
+            Ink::Ink => "Ink",
+            Ink::Navy => "Navy",
+            Ink::Night => "Night",
+            Ink::Slate => "Steel Slate",
+        }
+    }
+
+    pub fn color(self) -> Color {
+        match self {
+            Ink::Midnight => hex(0x060b11),
+            Ink::Ink => hex(0x212529),
+            Ink::Navy => hex(0x023246),
+            Ink::Night => hex(0x495057),
+            Ink::Slate => hex(0x57666d),
         }
     }
 }
@@ -386,6 +801,14 @@ pub struct Palette {
     pub border: Color,
     pub sel: Color,
     pub selfg: Color,
+    /// Editor caret. The classics use `fg`; the minimal themes their accent.
+    pub caret: Color,
+    /// H3–H6 heading text. The classics use `accent`; the minimal themes
+    /// keep colour for H1/H2 only and set this to `fg`.
+    pub h3: Color,
+    /// Pane header text. The classics use `accent`; the minimal themes
+    /// keep their headers quiet.
+    pub title: Color,
 }
 
 fn hex(rgb: u32) -> Color {
@@ -394,6 +817,81 @@ fn hex(rgb: u32) -> Color {
         ((rgb >> 8) & 0xff) as u8,
         (rgb & 0xff) as u8,
     )
+}
+
+/// `a` blended toward `b` by `t` (0 = all `a`, 1 = all `b`).
+fn mix(a: Color, b: Color, t: f32) -> Color {
+    Color::from_rgb(
+        a.r + (b.r - a.r) * t,
+        a.g + (b.g - a.g) * t,
+        a.b + (b.b - a.b) * t,
+    )
+}
+
+/// A minimal palette from any plate-and-ink pairing — the colour buffet.
+/// The accent carries the selection highlight, tags and links, the caret,
+/// H1/H2 and list markers; the neutrals are all blends of the plate toward
+/// the ink, so this works for a dark plate with light ink and the other
+/// way round.
+pub fn minimal_with(accent: Color, bg: Color, fg: Color) -> Palette {
+    let luma = 0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b;
+    Palette {
+        bg,
+        panel: mix(bg, fg, 0.03),
+        fg,
+        dim: mix(bg, fg, 0.63),
+        mute: mix(bg, fg, 0.29),
+        accent,
+        accent2: accent,
+        border: mix(bg, fg, 0.12),
+        sel: mix(bg, accent, 0.28),
+        // Selected text pops a notch past the ink on a dark plate; on a
+        // light one the ink itself is the strongest thing on the page.
+        selfg: if luma < 0.5 { hex(0xf2f2f0) } else { fg },
+        caret: accent,
+        h3: fg,
+        title: mix(bg, fg, 0.63),
+    }
+}
+
+/// The buffet's dark side: light ink on one of the dark plates.
+pub fn buffet_dark(accent: Color, plate: Dark) -> Palette {
+    minimal_with(accent, plate.color(), hex(0xd7d7d5))
+}
+
+/// The buffet's light side: a chosen ink on one of the paper plates.
+pub fn buffet_light(accent: Color, plate: Light, ink: Ink) -> Palette {
+    minimal_with(accent, plate.color(), ink.color())
+}
+
+/// The minimal family: one light colour on the shared charcoal base.
+fn minimal(accent: Color) -> Palette {
+    minimal_with(accent, hex(0x121214), hex(0xd7d7d5))
+}
+
+/// A round colour chip for the buffet pickers; `ring` outlines the
+/// selected one.
+pub fn chip<'a, M: Clone + 'static>(
+    colour: Color,
+    selected: bool,
+    ring: Color,
+    msg: M,
+) -> Element<'a, M> {
+    let dot = widget::container(widget::Space::new())
+        .width(24)
+        .height(24)
+        .class(theme::Container::custom(move |_| {
+            widget::container::Style {
+                background: Some(Background::Color(colour)),
+                border: Border {
+                    color: if selected { ring } else { Color::TRANSPARENT },
+                    width: 2.0,
+                    radius: 12.0.into(),
+                },
+                ..Default::default()
+            }
+        }));
+    widget::mouse_area(dot).on_press(msg).into()
 }
 
 pub fn mono() -> Font {
@@ -1136,7 +1634,7 @@ pub fn title<'a>(p: &Palette, s: impl Into<std::borrow::Cow<'a, str>> + 'a) -> T
     widget::text(s)
         .font(TITLE_FONT)
         .size(21)
-        .class(theme::Text::Color(p.accent))
+        .class(theme::Text::Color(p.title))
 }
 
 /// A flat pane in the flat layout: the title (and optional badge) as a
