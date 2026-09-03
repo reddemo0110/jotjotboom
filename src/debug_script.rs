@@ -78,6 +78,26 @@ pub enum Step {
     Theme(String),
     /// Colour buffet, dark side: `buffet:highlight,dark`.
     Buffet(String, String),
+    /// Select `sel:line,col,line2,col2` in the focused editor (byte cols);
+    /// with two args just places the caret.
+    Sel(usize, usize, Option<(usize, usize)>),
+    /// Set a cell of the first table block: `cell:row,col,text`.
+    Cell(usize, usize, String),
+    /// Open a cell for editing (and leave it open): `editcell:row,col`.
+    EditCell(usize, usize),
+    /// Formula pointing: `fpick:r,c` clicks a cell; `fpick:r,c,r2,c2`
+    /// sweeps a range (left active for capture); `pickdone` releases.
+    Pick2(usize, usize, Option<(usize, usize)>),
+    /// Extend the active pick to a cell (its own step, so renders happen
+    /// between sweep points like a real drag): `fpickover:r,c`.
+    PickOver2(usize, usize),
+    PickDone,
+    /// Set the open cell's draft text: `draft:=SUM(`.
+    Draft(String),
+    /// Drag the fill handle from one cell to another: `fill:r,c,r2,c2`.
+    Fill(usize, usize, usize, usize),
+    /// Rubber-band select cells (left active): `tsel:r,c,r2,c2`.
+    TSel(usize, usize, usize, usize),
     /// Colour buffet, light side: `buffet:highlight,paper,ink`.
     BuffetLight(String, String, String),
     /// Fold / unfold the sub-tags of a tag: `fold:travels`.
@@ -126,13 +146,14 @@ pub fn parse(script: &str) -> Vec<Step> {
     split_steps(script)
         .into_iter()
         .filter_map(|raw| {
-            let raw = raw.trim();
+            // Leading trim only: a `type:` arg may end in a real space.
+            let raw = raw.trim_start();
             if raw.is_empty() {
                 return None;
             }
             let (cmd, arg) = raw
                 .split_once(':')
-                .map_or((raw, ""), |(c, a)| (c.trim(), a));
+                .map_or((raw.trim_end(), ""), |(c, a)| (c.trim(), a));
             let step = match cmd {
                 "new" => Step::New,
                 "type" => Step::Type(unescape(arg)),
@@ -183,6 +204,75 @@ pub fn parse(script: &str) -> Vec<Step> {
                     Step::ImgCaption(n.trim().parse().ok()?, unescape(text))
                 }
                 "theme" => Step::Theme(arg.trim().to_owned()),
+                "fpick" => {
+                    let nums: Vec<usize> = arg
+                        .trim()
+                        .split(',')
+                        .map(|n| n.trim().parse())
+                        .collect::<Result<_, _>>()
+                        .ok()?;
+                    match nums.as_slice() {
+                        [r, c] => Step::Pick2(*r, *c, None),
+                        [r, c, r2, c2] => Step::Pick2(*r, *c, Some((*r2, *c2))),
+                        _ => return None,
+                    }
+                }
+                "fpickover" => {
+                    let (r, c) = arg.trim().split_once(',')?;
+                    Step::PickOver2(r.trim().parse().ok()?, c.trim().parse().ok()?)
+                }
+                "pickdone" => Step::PickDone,
+                "draft" => Step::Draft(unescape(arg)),
+                "tsel" => {
+                    let nums: Vec<usize> = arg
+                        .trim()
+                        .split(',')
+                        .map(|n| n.trim().parse())
+                        .collect::<Result<_, _>>()
+                        .ok()?;
+                    match nums.as_slice() {
+                        [r, c, r2, c2] => Step::TSel(*r, *c, *r2, *c2),
+                        _ => return None,
+                    }
+                }
+                "fill" => {
+                    let nums: Vec<usize> = arg
+                        .trim()
+                        .split(',')
+                        .map(|n| n.trim().parse())
+                        .collect::<Result<_, _>>()
+                        .ok()?;
+                    match nums.as_slice() {
+                        [r, c, r2, c2] => Step::Fill(*r, *c, *r2, *c2),
+                        _ => return None,
+                    }
+                }
+                "editcell" => {
+                    let (r, c) = arg.trim().split_once(',')?;
+                    Step::EditCell(r.trim().parse().ok()?, c.trim().parse().ok()?)
+                }
+                "cell" => {
+                    let (r, rest) = arg.trim_start().split_once(',')?;
+                    let (c, text) = rest.split_once(',')?;
+                    Step::Cell(
+                        r.trim().parse().ok()?,
+                        c.trim().parse().ok()?,
+                        unescape(text),
+                    )
+                }
+                "sel" => {
+                    let nums: Vec<usize> = arg
+                        .trim()
+                        .split(',')
+                        .map(|n| n.trim().parse())
+                        .collect::<Result<_, _>>()
+                        .ok()?;
+                    match nums.as_slice() {
+                        [l, c] => Step::Sel(*l, *c, None),
+                        [l, c, l2, c2] => Step::Sel(*l, *c, Some((*l2, *c2))),
+                        _ => return None,
+                    }
+                }
                 "buffet" => {
                     let parts: Vec<&str> = arg.trim().split(',').map(str::trim).collect();
                     match parts.as_slice() {
@@ -329,7 +419,8 @@ mod tests {
             steps,
             vec![
                 Step::New,
-                Step::Type("Hello\nworld; ok".into()),
+                // The trailing space survives: typed text is verbatim.
+                Step::Type("Hello\nworld; ok ".into()),
                 Step::Wait(500),
                 Step::Select(2),
                 Step::Search("milk".into()),

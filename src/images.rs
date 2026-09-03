@@ -245,7 +245,7 @@ pub fn replace_line(body: &str, line: usize, new_line: &str) -> String {
 /// A note body split into runs of text and standalone images. Text segments
 /// always bracket images (possibly empty) so there is somewhere to type
 /// before, between and after pictures.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Segment {
     Text(String),
     Image(ImageRef),
@@ -253,6 +253,8 @@ pub enum Segment {
     Link(crate::links::LinkRef),
     /// A thematic break (`---`, `***`, `___`), kept verbatim.
     Rule(String),
+    /// A pipe table (with its optional trailing size comment).
+    Table(crate::table::Table),
 }
 
 /// `---` / `***` / `___` (three or more, spaces allowed) on a line of its own.
@@ -267,10 +269,13 @@ pub fn is_rule_line(line: &str) -> bool {
 }
 
 pub fn split(body: &str) -> Vec<Segment> {
+    let lines: Vec<&str> = body.lines().collect();
     let mut out: Vec<Segment> = Vec::new();
     let mut text: Vec<&str> = Vec::new();
     let mut in_fence = false;
-    for line in body.lines() {
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
         let t = line.trim_start();
         if t.starts_with("```") || t.starts_with("~~~") {
             in_fence = !in_fence;
@@ -287,9 +292,34 @@ pub fn split(body: &str) -> Vec<Segment> {
             out.push(Segment::Text(text.join("\n")));
             text.clear();
             out.push(Segment::Link(l));
+        } else if !in_fence
+            && crate::table::table_line(line)
+            && lines.get(i + 1).is_some_and(|l| crate::table::separator_line(l))
+        {
+            // A pipe table: rows, then maybe its size comment.
+            let start = i;
+            i += 2;
+            while i < lines.len() && crate::table::table_line(lines[i]) {
+                i += 1;
+            }
+            if i < lines.len() && crate::table::size_comment(lines[i]) {
+                i += 1;
+            }
+            if let Some(table) = crate::table::Table::parse(&lines[start..i]) {
+                out.push(Segment::Text(text.join("\n")));
+                text.clear();
+                out.push(Segment::Table(table));
+                continue;
+            }
+            // Not actually parseable: keep the lines as text.
+            for l in &lines[start..i] {
+                text.push(l);
+            }
+            continue;
         } else {
             text.push(line);
         }
+        i += 1;
     }
     out.push(Segment::Text(text.join("\n")));
     out
@@ -306,6 +336,7 @@ pub fn join(segments: &[Segment]) -> String {
             Segment::Image(r) => parts.push(r.to_markdown()),
             Segment::Rule(t) => parts.push(t.clone()),
             Segment::Link(l) => parts.push(l.to_markdown()),
+            Segment::Table(t) => parts.push(t.to_markdown()),
         }
     }
     let mut body = parts.join("\n");

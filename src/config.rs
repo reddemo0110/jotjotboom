@@ -73,6 +73,12 @@ pub struct Config {
     pub buffet_light: String,
     /// Buffet writing colour key (see `retro::Ink::key`). Empty = ink.
     pub buffet_ink: String,
+    /// Hide the table toolbar (+/− row/column, money). (Inverted so the
+    /// default is shown.)
+    pub table_toolbar_off: bool,
+    /// Last window size in logical pixels; 0 = let the compositor choose.
+    pub window_width: u32,
+    pub window_height: u32,
 }
 
 impl Config {

@@ -190,10 +190,23 @@ pub fn preview(body: &str) -> String {
             || line.starts_with("---")
             || line.starts_with("***")
             || is_tag_only_line(line)
+            || crate::table::separator_line(line)
+            || crate::table::size_comment(line)
         {
             continue;
         }
-        let line = strip_block_markup(line);
+        // A table row reads as its cells, space-separated.
+        let line = if crate::table::table_line(line) {
+            line.trim_matches('|')
+                .split('|')
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .collect::<Vec<_>>()
+                .join(" · ")
+        } else {
+            line.to_owned()
+        };
+        let line = strip_block_markup(&line);
         let line = strip_inline_markup(line.as_str());
         let line = line.trim();
         if line.is_empty() {

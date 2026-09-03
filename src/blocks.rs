@@ -18,6 +18,8 @@ pub enum Block {
     Rule(String),
     /// A link card: a web address or an attached file on its own line.
     Link(LinkRef),
+    /// A live table (pipe table in the file).
+    Table(crate::table::Table),
 }
 
 pub struct Blocks {
@@ -44,6 +46,7 @@ impl Blocks {
                 Segment::Image(r) => Block::Image(r),
                 Segment::Rule(t) => Block::Rule(t),
                 Segment::Link(l) => Block::Link(l),
+                Segment::Table(t) => Block::Table(t),
             })
             .collect();
         Self { items, focused: 0 }
@@ -59,6 +62,7 @@ impl Blocks {
                 Block::Image(r) => Segment::Image(r.clone()),
                 Block::Rule(t) => Segment::Rule(t.clone()),
                 Block::Link(l) => Segment::Link(l.clone()),
+                Block::Table(t) => Segment::Table(t.clone()),
             })
             .collect();
         images::join(&segments)
@@ -72,6 +76,7 @@ impl Blocks {
                 Block::Image(r) => Segment::Image(r.clone()),
                 Block::Rule(t) => Segment::Rule(t.clone()),
                 Block::Link(l) => Segment::Link(l.clone()),
+                Block::Table(t) => Segment::Table(t.clone()),
             })
             .collect()
     }
@@ -98,6 +103,13 @@ impl Blocks {
                 _ => None,
             })
             .collect()
+    }
+
+    pub fn table_mut(&mut self, block: usize) -> Option<&mut crate::table::Table> {
+        match self.items.get_mut(block) {
+            Some(Block::Table(t)) => Some(t),
+            _ => None,
+        }
     }
 
     pub fn image_mut(&mut self, block: usize) -> Option<&mut ImageRef> {
@@ -266,6 +278,8 @@ impl Blocks {
                     }
                 }
                 Block::Image(_) | Block::Rule(_) | Block::Link(_) => 1,
+                // Rows + separator + maybe the size comment.
+                Block::Table(t) => t.to_markdown().lines().count(),
             };
         }
         out.push(line);
@@ -334,6 +348,8 @@ impl Blocks {
                 images::is_rule_line(l)
                     || images::parse_line(l).is_some()
                     || crate::links::parse_line(l).is_some()
+                    // A finished `| --- |` row turns pipe lines into a table.
+                    || crate::table::separator_line(l)
             })
         })
     }

@@ -126,14 +126,14 @@ pub fn span_attrs(
             if active {
                 styled()
             } else {
-                // Half again wider than the literal `- ` so the drawn dot
-                // gets air before the text — proportional faces shape the
-                // hyphen-space pair too narrow for a comfortable gap.
+                // More than double the literal `- ` so the drawn dot gets a
+                // conventional gutter before the text — proportional faces
+                // shape the hyphen-space pair far too narrow for that.
                 let m = base
                     .metrics_opt
                     .map_or(Metrics::new(14.0, line_height), Metrics::from);
                 transparent(META_BULLET)
-                    .metrics(Metrics::new(m.font_size * 1.5, m.line_height))
+                    .metrics(Metrics::new(m.font_size * 2.2, m.line_height))
             }
         }
         Kind::TaskBox => {

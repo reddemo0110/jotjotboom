@@ -44,6 +44,13 @@ struct Inner {
     /// A drop indicator to draw before this line (`line_count` = after the
     /// last line), while a file is being dragged over the note.
     drop_marker: Option<usize>,
+    /// The app asked for keyboard focus (dock click, format action). The
+    /// widget takes it on its next event — id-free, unlike a focus
+    /// operation, so no other widget gets unfocused along the way.
+    focus_requested: bool,
+    /// The app asked this editor to let go of keyboard focus (a sibling
+    /// took it, or a table took the keys).
+    unfocus_requested: bool,
 }
 
 /// A task box to draw: its square, the mark inside, and whether it is done.
@@ -108,6 +115,8 @@ impl RichContent {
             bounds: Rectangle::default(),
             pointer_y: None,
             drop_marker: None,
+            focus_requested: false,
+            unfocus_requested: false,
         }))
     }
 
@@ -175,6 +184,22 @@ impl RichContent {
 
     pub fn pointer_y(&self) -> Option<f32> {
         self.0.borrow().pointer_y
+    }
+
+    pub fn request_focus(&self) {
+        self.0.borrow_mut().focus_requested = true;
+    }
+
+    pub fn take_focus_request(&self) -> bool {
+        std::mem::take(&mut self.0.borrow_mut().focus_requested)
+    }
+
+    pub fn request_unfocus(&self) {
+        self.0.borrow_mut().unfocus_requested = true;
+    }
+
+    pub fn take_unfocus_request(&self) -> bool {
+        std::mem::take(&mut self.0.borrow_mut().unfocus_requested)
     }
 
     pub fn set_drop_marker(&self, line: Option<usize>) {

@@ -78,13 +78,34 @@ pub struct AppModel {
     /// Launcher icon: a theme's colours, or `None` to follow the theme.
     icon_theme: Option<retro::Theme>,
     /// Which sections of the Appearance drawer are unfolded.
-    appearance_open: [bool; 7],
+    appearance_open: [bool; 8],
     /// Processed images keyed by path|mtime|style|theme.
     image_cache: HashMap<String, ImageState>,
     /// Block index of the image whose ⋯ menu is open.
     image_menu: Option<usize>,
     /// Drag-resize in progress.
     resizing: Option<Resize>,
+    /// Table cell being edited (block, row, col) and its raw draft text.
+    table_edit: Option<(usize, usize, usize)>,
+    table_draft: String,
+    /// Whether the open cell's draft was typed into: fresh cells let ←/→
+    /// roam the grid; a touched draft keeps them for the text caret.
+    table_touched: bool,
+    table_input: widget::Id,
+    /// A live column/row resize on a table.
+    table_resize: Option<TableResize>,
+    /// Excel-style pointing: while a formula draft expects a reference,
+    /// clicking or sweeping cells writes the ref/range into the draft.
+    table_pick: Option<TablePick>,
+    /// The fill handle mid-drag: replicate the source cell down or across
+    /// on release, formulas translated relative to each target row/column.
+    table_fill: Option<TableFill>,
+    /// Cells being rubber-band selected: press-drag across the grid, then
+    /// Delete/Backspace clears them. A press that never leaves its cell
+    /// becomes a normal click-to-edit on release.
+    table_sel: Option<TableSel>,
+    /// Live window size, persisted (debounced by the autosave tick).
+    win_size: Option<(u32, u32)>,
     /// The Ctrl+Shift+H shortcuts overlay.
     show_shortcuts: bool,
     /// The neon coffee sign (Ctrl+Shift+Enter): current steam frame and glow.
@@ -212,6 +233,34 @@ pub enum Message {
     SetBuffetLight(retro::Light),
     SetBuffetInk(retro::Ink),
     SetFont(retro::EditorFont),
+    /// Open a table cell for editing / edit the draft / commit and move.
+    TableEdit(usize, usize, usize),
+    TableDraft(String),
+    TableCommit(TableMove),
+    TableAddRow(usize),
+    TableAddCol(usize),
+    TableRemoveRow(usize),
+    TableRemoveCol(usize),
+    /// Start dragging a column (true) or row (false) edge: block, index,
+    /// and the size the drag starts from.
+    TableResizeStart(usize, bool, usize, f32),
+    /// Formula pointing: press picks a cell ref, sweeping extends a range.
+    TablePick(usize, usize, usize),
+    TablePickOver(usize, usize, usize),
+    /// Cycle the open cell's format: plain → $ → € → £ → ¥ → plain.
+    TableMoney,
+    /// The fill handle: press on the open cell's corner dot, sweep, release.
+    TableFillStart(usize, usize, usize),
+    TableFillOver(usize, usize, usize),
+    /// Rubber-band cell selection: press, sweep, then Delete clears.
+    TableSelStart(usize, usize, usize),
+    TableSelOver(usize, usize, usize),
+    /// Options: show or hide the table toolbar.
+    SetTableToolbar(bool),
+    /// The window was resized; remembered so next launch matches.
+    WindowResized(f32, f32),
+    /// Ticks only while the remembered size is unwritten; writes it.
+    WindowSizeTick,
     /// Apply a designer pairing (titles, chrome, note) by key.
     SetPairing(String),
     /// Ctrl+click on a `[[link]]` or `#tag` in the rich editor.
@@ -474,10 +523,19 @@ impl cosmic::Application for AppModel {
             task_marker,
             measure,
             icon_theme,
-            appearance_open: [false; 7],
+            appearance_open: [false; 8],
             image_cache: HashMap::new(),
             image_menu: None,
             resizing: None,
+            table_edit: None,
+            table_draft: String::new(),
+            table_touched: false,
+            table_input: widget::Id::unique(),
+            table_resize: None,
+            table_pick: None,
+            table_fill: None,
+            table_sel: None,
+            win_size: None,
             dragging: None,
             scroll_hover: None,
             scroll_hover_release: false,
@@ -847,6 +905,9 @@ impl cosmic::Application for AppModel {
                     Some(Message::ImagesDropped(paths))
                 }
                 Event::Window(window::Event::Opened { .. }) => Some(Message::LoadFonts),
+                Event::Window(window::Event::Resized(size)) => {
+                    Some(Message::WindowResized(size.width, size.height))
+                }
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     Some(Message::MouseMoved(position))
                 }
@@ -869,6 +930,16 @@ impl cosmic::Application for AppModel {
             subscriptions.push(
                 cosmic::iced::time::every(Duration::from_millis(200))
                     .map(|_| Message::AutosaveTick),
+            );
+        }
+        // Ticks only while a resize is unsaved; one write and it is gone.
+        if self
+            .win_size
+            .is_some_and(|(w, h)| (w, h) != (self.config.window_width, self.config.window_height))
+        {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(1000))
+                    .map(|_| Message::WindowSizeTick),
             );
         }
         if self.coffee.is_some() {
@@ -1662,6 +1733,22 @@ impl AppModel {
                         as u32;
                     self.live_width = Some((rz.block, w));
                 }
+                if let Some(tr) = self.table_resize {
+                    let delta = if tr.col {
+                        position.x - tr.start
+                    } else {
+                        position.y - tr.start
+                    };
+                    if let Some(t) = self.blocks.table_mut(tr.block) {
+                        if tr.col {
+                            if let Some(w) = t.widths.get_mut(tr.index) {
+                                *w = (tr.size + delta).clamp(48.0, 600.0);
+                            }
+                        } else if let Some(h) = t.heights.get_mut(tr.index) {
+                            *h = (tr.size + delta).clamp(26.0, 300.0);
+                        }
+                    }
+                }
             }
 
             Message::ScrollHover(area, enter) => {
@@ -1678,6 +1765,217 @@ impl AppModel {
             }
 
             Message::MousePressed => self.mouse_down = true,
+
+            Message::TableEdit(block, row, col) => {
+                self.commit_table_edit();
+                self.table_sel = None;
+                self.blur_editors();
+                if self.blocks.table_mut(block).is_some() {
+                    self.table_draft = self
+                        .blocks
+                        .table_mut(block)
+                        .map(|t| t.cell(row, col).to_owned())
+                        .unwrap_or_default();
+                    self.table_edit = Some((block, row, col));
+                    self.table_touched = false;
+                    return widget::text_input::focus(self.table_input.clone());
+                }
+            }
+
+            Message::TableDraft(text) => {
+                self.table_draft = text;
+                self.table_touched = true;
+            }
+
+            Message::TableCommit(mv) => {
+                let edited = self.table_edit;
+                self.commit_table_edit();
+                if let (
+                    Some((block, row, col)),
+                    TableMove::Down | TableMove::Right | TableMove::Left,
+                ) = (edited, mv)
+                {
+                    let (rows, cols) = self
+                        .blocks
+                        .table_mut(block)
+                        .map(|t| (t.rows.len(), t.cols()))
+                        .unwrap_or_default();
+                    let next = match mv {
+                        TableMove::Down if row + 1 < rows => Some((row + 1, col)),
+                        // Enter on the bottom row grows the table, Keynote
+                        // style — the next row is always one Enter away.
+                        TableMove::Down => {
+                            self.record(EditKind::Other);
+                            if let Some(t) = self.blocks.table_mut(block) {
+                                t.add_row();
+                                self.dirty = true;
+                                self.last_edit = Instant::now();
+                            }
+                            Some((row + 1, col))
+                        }
+                        TableMove::Right if col + 1 < cols => Some((row, col + 1)),
+                        TableMove::Right if row + 1 < rows => Some((row + 1, 0)),
+                        // Sideways at the edge stays put — arrows must
+                        // never dump the caret out of the table.
+                        TableMove::Right => Some((row, col)),
+                        TableMove::Left if col > 0 => Some((row, col - 1)),
+                        TableMove::Left => Some((row, col)),
+                        _ => None,
+                    };
+                    if let Some((r, c)) = next {
+                        return self.update(Message::TableEdit(block, r, c));
+                    }
+                    // Leaving the table: give the keyboard back to the
+                    // editor so arrows walk text, not the notes list.
+                    return self.focus_editor();
+                }
+            }
+
+            Message::TableAddRow(block) => {
+                self.record(EditKind::Other);
+                if let Some(t) = self.blocks.table_mut(block) {
+                    t.add_row();
+                    self.dirty = true;
+                    self.last_edit = Instant::now();
+                }
+            }
+
+            Message::TableAddCol(block) => {
+                self.record(EditKind::Other);
+                if let Some(t) = self.blocks.table_mut(block) {
+                    t.add_col();
+                    self.dirty = true;
+                    self.last_edit = Instant::now();
+                }
+            }
+
+            Message::TableRemoveRow(block) => {
+                let row = match self.table_edit {
+                    Some((b, r, _)) if b == block => r,
+                    _ => self.blocks.table_mut(block).map_or(0, |t| t.rows.len() - 1),
+                };
+                self.table_edit = None;
+                self.record(EditKind::Other);
+                if let Some(t) = self.blocks.table_mut(block) {
+                    t.remove_row(row.max(1));
+                    self.dirty = true;
+                    self.last_edit = Instant::now();
+                }
+            }
+
+            Message::TableRemoveCol(block) => {
+                let col = match self.table_edit {
+                    Some((b, _, c)) if b == block => c,
+                    _ => self.blocks.table_mut(block).map_or(0, |t| t.cols() - 1),
+                };
+                self.table_edit = None;
+                self.record(EditKind::Other);
+                if let Some(t) = self.blocks.table_mut(block) {
+                    t.remove_col(col);
+                    self.dirty = true;
+                    self.last_edit = Instant::now();
+                }
+            }
+
+            Message::TableResizeStart(block, col, index, size) => {
+                self.commit_table_edit();
+                self.record(EditKind::Other);
+                self.table_resize = Some(TableResize {
+                    block,
+                    col,
+                    index,
+                    start: if col { self.mouse_x } else { self.mouse_y },
+                    size,
+                });
+            }
+
+            Message::TableMoney => {
+                if self.table_edit.is_some() {
+                    self.table_draft = crate::table::cycle_money(&self.table_draft);
+                    self.table_touched = true;
+                    return widget::text_input::focus(self.table_input.clone());
+                }
+            }
+
+            Message::TableSelStart(block, row, col) => {
+                self.commit_table_edit();
+                self.blur_editors();
+                self.table_sel = Some(TableSel {
+                    block,
+                    anchor: (row, col),
+                    current: (row, col),
+                    active: false,
+                });
+            }
+
+            Message::TableSelOver(block, row, col) => {
+                if let Some(sel) = &mut self.table_sel
+                    && sel.block == block
+                {
+                    sel.current = (row, col);
+                    sel.active |= (row, col) != sel.anchor;
+                }
+            }
+
+            Message::TableFillStart(block, row, col) => {
+                self.commit_table_edit();
+                self.record(EditKind::Other);
+                self.table_fill = Some(TableFill {
+                    block,
+                    from: (row, col),
+                    current: (row, col),
+                });
+            }
+
+            Message::TableFillOver(block, row, col) => {
+                if let Some(f) = &mut self.table_fill
+                    && f.block == block
+                {
+                    f.current = (row, col);
+                }
+            }
+
+            Message::WindowResized(w, h) => {
+                // A maximised size is the compositor's, not a choice worth
+                // restoring; remember the free-floating one.
+                if !self.core.window.is_maximized && w >= 1.0 && h >= 1.0 {
+                    self.win_size = Some((w.round() as u32, h.round() as u32));
+                }
+            }
+
+            Message::SetTableToolbar(on) => {
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_table_toolbar_off(handler, !on)
+                {
+                    tracing::warn!(%why, "could not persist table toolbar");
+                }
+            }
+
+            Message::TablePick(block, row, col) => {
+                let base = self.table_draft.clone();
+                self.table_draft = format!("{base}{}", cell_ref(row, col));
+                self.table_pick = Some(TablePick {
+                    block,
+                    anchor: (row, col),
+                    current: (row, col),
+                    base,
+                });
+                return widget::text_input::focus(self.table_input.clone());
+            }
+
+            Message::TablePickOver(block, row, col) => {
+                if let Some(pick) = &mut self.table_pick
+                    && pick.block == block
+                {
+                    pick.current = (row, col);
+                    let a = cell_ref(pick.anchor.0, pick.anchor.1);
+                    self.table_draft = if (row, col) == pick.anchor {
+                        format!("{}{a}", pick.base)
+                    } else {
+                        format!("{}{a}:{}", pick.base, cell_ref(row, col))
+                    };
+                }
+            }
 
             Message::Quit => {
                 // Write anything pending first; closing the main window then
@@ -1701,6 +1999,43 @@ impl AppModel {
                     && let Some((_, w)) = self.live_width.take()
                 {
                     self.edit_ref(rz.block, |r| r.width = Some(w));
+                }
+                if self.table_resize.take().is_some() {
+                    self.dirty = true;
+                    self.last_edit = Instant::now();
+                }
+                if self.table_pick.take().is_some() {
+                    return Task::batch([
+                        widget::text_input::focus(self.table_input.clone()),
+                        widget::text_input::move_cursor_to_end(self.table_input.clone()),
+                    ]);
+                }
+                if let Some(sel) = self.table_sel {
+                    if !sel.active {
+                        self.table_sel = None;
+                        return self.update(Message::TableEdit(
+                            sel.block,
+                            sel.anchor.0,
+                            sel.anchor.1,
+                        ));
+                    }
+                }
+                if let Some(f) = self.table_fill.take() {
+                    if let Some((rows, cols)) = fill_targets(f) {
+                        if let Some(t) = self.blocks.table_mut(f.block) {
+                            let source = t.cell(f.from.0, f.from.1).to_owned();
+                            for (r, c) in rows.flat_map(|r| cols.clone().map(move |c| (r, c))) {
+                                if (r, c) == f.from {
+                                    continue;
+                                }
+                                let dr = r as isize - f.from.0 as isize;
+                                let dc = c as isize - f.from.1 as isize;
+                                t.set_cell(r, c, crate::table::translate_formula(&source, dr, dc));
+                            }
+                            self.dirty = true;
+                            self.last_edit = Instant::now();
+                        }
+                    }
                 }
                 if let Some(d) = self.tag_drag.take()
                     && d.active
@@ -1835,6 +2170,10 @@ impl AppModel {
                     !matches!(action, Action::ClearSelection | Action::Scroll { .. });
                 if claims_focus {
                     self.blocks.focused = block;
+                    // Clicking back into the text puts the table away:
+                    // commit the open cell, drop its toolbar and selection.
+                    self.commit_table_edit();
+                    self.table_sel = None;
                 }
 
                 self.image_menu = None;
@@ -1851,7 +2190,12 @@ impl AppModel {
                             if let Some(prev) = block.checked_sub(1)
                                 && matches!(
                                     self.blocks.items.get(prev),
-                                    Some(Block::Image(_) | Block::Rule(_) | Block::Link(_))
+                                    Some(
+                                        Block::Image(_)
+                                            | Block::Rule(_)
+                                            | Block::Link(_)
+                                            | Block::Table(_)
+                                    )
                                 )
                             {
                                 self.record(EditKind::Other);
@@ -1942,6 +2286,22 @@ impl AppModel {
                 }
             }
 
+            Message::WindowSizeTick => {
+                if let Some((w, h)) = self.win_size
+                    && let Some(handler) = &self.config_handler
+                {
+                    for why in [
+                        self.config.set_window_width(handler, w),
+                        self.config.set_window_height(handler, h),
+                    ]
+                    .into_iter()
+                    .filter_map(Result::err)
+                    {
+                        tracing::warn!(%why, "could not persist window size");
+                    }
+                }
+            }
+
             Message::SetView(view) => {
                 if self.view == view {
                     return Task::none();
@@ -1956,6 +2316,21 @@ impl AppModel {
             }
 
             Message::NavigateNotes(delta) => {
+                // Inside a table, ↑/↓ walk its cells — the single-line cell
+                // input ignores them, so they land here, and hopping notes
+                // mid-table would be a shock.
+                if let Some((block, row, col)) = self.table_edit {
+                    let rows = self.blocks.table_mut(block).map_or(0, |t| t.rows.len());
+                    let next = if delta > 0 {
+                        row + 1
+                    } else {
+                        row.wrapping_sub(1)
+                    };
+                    if next < rows {
+                        return self.update(Message::TableEdit(block, next, col));
+                    }
+                    return Task::none();
+                }
                 let len = self.notes.len();
                 if len == 0 {
                     return Task::none();
@@ -2186,6 +2561,70 @@ impl AppModel {
             }
 
             Message::Key(modifiers, key, physical) => {
+                // A table cell is open: Tab walks the row, Escape drops the
+                // draft. (Enter commits through the input's on_submit.)
+                if self.table_edit.is_some() {
+                    match key {
+                        keyboard::Key::Named(keyboard::key::Named::Tab) => {
+                            return self.update(Message::TableCommit(if modifiers.shift() {
+                                TableMove::Left
+                            } else {
+                                TableMove::Right
+                            }));
+                        }
+                        keyboard::Key::Named(keyboard::key::Named::ArrowLeft)
+                            if !self.table_touched && modifiers.is_empty() =>
+                        {
+                            return self.update(Message::TableCommit(TableMove::Left));
+                        }
+                        keyboard::Key::Named(keyboard::key::Named::ArrowRight)
+                            if !self.table_touched && modifiers.is_empty() =>
+                        {
+                            return self.update(Message::TableCommit(TableMove::Right));
+                        }
+                        keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                            self.table_edit = None;
+                            self.table_draft.clear();
+                            return self.focus_editor();
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(sel) = self.table_sel
+                    && sel.active
+                    && self.table_edit.is_none()
+                {
+                    match key {
+                        keyboard::Key::Named(
+                            keyboard::key::Named::Delete | keyboard::key::Named::Backspace,
+                        ) => {
+                            self.record(EditKind::Other);
+                            if let Some(t) = self.blocks.table_mut(sel.block) {
+                                let (r0, r1) = (
+                                    sel.anchor.0.min(sel.current.0),
+                                    sel.anchor.0.max(sel.current.0),
+                                );
+                                let (c0, c1) = (
+                                    sel.anchor.1.min(sel.current.1),
+                                    sel.anchor.1.max(sel.current.1),
+                                );
+                                for r in r0..=r1 {
+                                    for c in c0..=c1 {
+                                        t.set_cell(r, c, String::new());
+                                    }
+                                }
+                                self.dirty = true;
+                                self.last_edit = Instant::now();
+                            }
+                            return Task::none();
+                        }
+                        keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                            self.table_sel = None;
+                            return Task::none();
+                        }
+                        _ => {}
+                    }
+                }
                 let enter = matches!(key, keyboard::Key::Named(keyboard::key::Named::Enter));
                 if enter && modifiers.control() && modifiers.shift() {
                     return self.update(Message::ToggleCoffee);
@@ -3404,6 +3843,22 @@ impl AppModel {
             col = col.push(widget::container(widget::text::caption(status)).padding([6, 0, 0, 0]));
         }
 
+        // Tables.
+        col = col.push(
+            widget::container(header(fl!("section-tables"), Section::Tables)).padding([8, 0, 0, 0]),
+        );
+        if self.appearance_open[Section::Tables as usize] {
+            col = col.push(
+                widget::container(
+                    widget::toggler(!self.config.table_toolbar_off)
+                        .label(fl!("table-toolbar-toggle"))
+                        .on_toggle(Message::SetTableToolbar),
+                )
+                .padding([4, 0]),
+            );
+            col = col.push(widget::text::caption(fl!("table-toolbar-hint")));
+        }
+
         // Font.
         col = col.push(
             widget::container(header(fl!("section-font"), Section::Font)).padding([8, 0, 0, 0]),
@@ -3931,22 +4386,126 @@ impl AppModel {
                     Format::Code => ("`", "`"),
                     _ => ("[[", "]]"),
                 };
-                if let Some(selection) = editor.selection() {
-                    // Already wrapped? Then this press unwraps it.
-                    let inner = selection
-                        .strip_prefix(before)
-                        .and_then(|s| s.strip_suffix(after))
-                        .filter(|s| !s.is_empty());
-                    let text = match inner {
-                        Some(inner) => inner.to_owned(),
-                        None => format!("{before}{selection}{after}"),
+                // A proper toggle, like every editor: wrap what's chosen,
+                // unwrap it when it (or its surroundings) already carry the
+                // markers, and step over a closing marker so Ctrl+B twice
+                // means "start bold … stop bold".
+                let cursor = editor.cursor();
+                let line_no = cursor.position.line;
+                let text = editor
+                    .line(line_no)
+                    .map(|l| l.text.into_owned())
+                    .unwrap_or_default();
+                let select =
+                    |editor: &mut crate::editor::Content, a: usize, b: usize| {
+                        editor.move_to(text_editor::Cursor {
+                            position: text_editor::Position {
+                                line: line_no,
+                                column: b,
+                            },
+                            selection: Some(text_editor::Position {
+                                line: line_no,
+                                column: a,
+                            }),
+                        })
                     };
-                    perform(editor, Action::Edit(Edit::Paste(Arc::new(text))));
-                } else {
-                    insert_str(editor, before);
-                    insert_str(editor, after);
-                    for _ in 0..after.chars().count() {
-                        perform(editor, Action::Move(Motion::Left));
+                let caret_to = |editor: &mut crate::editor::Content, col: usize| {
+                    editor.move_to(text_editor::Cursor {
+                        position: text_editor::Position {
+                            line: line_no,
+                            column: col,
+                        },
+                        selection: None,
+                    })
+                };
+                // Replace `a..b` with `with`, then select `keep` inside the
+                // result so the next press toggles straight back.
+                let replace = |editor: &mut crate::editor::Content,
+                               a: usize,
+                               b: usize,
+                               with: &str,
+                               keep: (usize, usize)| {
+                    select(editor, a, b);
+                    perform(editor, Action::Edit(Edit::Paste(Arc::new(with.to_owned()))));
+                    select(editor, keep.0, keep.1);
+                };
+                let one_line = cursor.selection.filter(|s| s.line == line_no).map(|s| {
+                    (
+                        s.column.min(cursor.position.column),
+                        s.column.max(cursor.position.column),
+                    )
+                });
+                match one_line {
+                    Some((start, end)) if start != end => {
+                        let selected = text[start..end].to_owned();
+                        let stripped = selected
+                            .strip_prefix(before)
+                            .and_then(|s| s.strip_suffix(after))
+                            .filter(|s| !s.is_empty());
+                        if let Some(inner) = stripped {
+                            // The markers came along in the selection.
+                            let inner = inner.to_owned();
+                            replace(editor, start, end, &inner, (start, start + inner.len()));
+                        } else if wrapped_in(&text, start, end, format, before, after) {
+                            // Only the words were selected (the markers hide
+                            // when rendered): eat the markers around them.
+                            let a = start - before.len();
+                            replace(editor, a, end + after.len(), &selected, (a, a + selected.len()));
+                        } else {
+                            let wrapped = format!("{before}{selected}{after}");
+                            replace(
+                                editor,
+                                start,
+                                end,
+                                &wrapped,
+                                (start + before.len(), end + before.len()),
+                            );
+                        }
+                    }
+                    _ if cursor.selection.is_some() => {
+                        // A multi-line selection: wrap or strip it whole.
+                        if let Some(selection) = editor.selection() {
+                            let inner = selection
+                                .strip_prefix(before)
+                                .and_then(|s| s.strip_suffix(after))
+                                .filter(|s| !s.is_empty());
+                            let text = match inner {
+                                Some(inner) => inner.to_owned(),
+                                None => format!("{before}{selection}{after}"),
+                            };
+                            perform(editor, Action::Edit(Edit::Paste(Arc::new(text))));
+                        }
+                    }
+                    _ => {
+                        let col = cursor.position.column;
+                        if text[col..].starts_with(after) && text[..col].contains(before) {
+                            // On the closing marker: step out instead of
+                            // planting a fresh pair.
+                            for _ in 0..after.chars().count() {
+                                perform(editor, Action::Move(Motion::Right));
+                            }
+                        } else if let Some((ws, we)) = word_bounds(&text, col) {
+                            if wrapped_in(&text, ws, we, format, before, after) {
+                                // Caret in a wrapped word: unwrap it.
+                                let word = text[ws..we].to_owned();
+                                let a = ws - before.len();
+                                replace(editor, a, we + after.len(), &word, (0, 0));
+                                caret_to(editor, col - before.len());
+                            } else {
+                                // Wrap the word under the caret; the caret
+                                // stays on its character.
+                                let wrapped = format!("{before}{}{after}", &text[ws..we]);
+                                replace(editor, ws, we, &wrapped, (0, 0));
+                                caret_to(editor, col + before.len());
+                            }
+                        } else {
+                            // Open air: plant the pair, caret in the middle.
+                            insert_str(editor, before);
+                            insert_str(editor, after);
+                            for _ in 0..after.chars().count() {
+                                perform(editor, Action::Move(Motion::Left));
+                            }
+                        }
                     }
                 }
             }
@@ -3996,6 +4555,19 @@ impl AppModel {
                 perform(editor, Action::Move(Motion::End));
             }
             Format::Tag => insert_str(editor, "#"),
+            Format::Table => {
+                let md = crate::table::Table::starter(3, 2).to_markdown();
+                let cursor = editor.cursor();
+                let line_empty = editor
+                    .line(cursor.position.line)
+                    .is_none_or(|l| l.text.trim().is_empty());
+                perform(editor, Action::Move(Motion::End));
+                if !line_empty {
+                    insert_str(editor, "\n");
+                }
+                insert_str(editor, &md);
+                insert_str(editor, "\n");
+            }
             Format::Rule => {
                 // A rule wants a line of its own; it is drawn as a full-width line.
                 let cursor = editor.cursor();
@@ -4321,10 +4893,49 @@ impl AppModel {
     // ----- blocks & images -----
 
     /// Focus the text block that currently has the caret.
+    /// Write the open cell draft into its table, if any.
+    fn commit_table_edit(&mut self) {
+        if let Some((block, row, col)) = self.table_edit.take() {
+            let draft = std::mem::take(&mut self.table_draft);
+            if self
+                .blocks
+                .table_mut(block)
+                .is_some_and(|t| t.cell(row, col) != draft)
+            {
+                self.record(EditKind::Other);
+                if let Some(t) = self.blocks.table_mut(block) {
+                    t.set_cell(row, col, draft);
+                    self.dirty = true;
+                    self.last_edit = Instant::now();
+                }
+            }
+        }
+    }
+
     fn focus_editor(&self) -> Task<cosmic::Action<Message>> {
-        match self.blocks.focused_id() {
-            Some(id) => widget::text_input::focus(id),
-            None => Task::none(),
+        // Through the shared Content, not a focus operation: an id-targeted
+        // operation unfocuses every non-matching widget, and a stale id
+        // (blocks rebuild, ids drift) turned that into the focused editor
+        // losing its own selection after every dock/menu format action.
+        // Every other editor lets go — exactly one holds the keys.
+        for (i, block) in self.blocks.items.iter().enumerate() {
+            if let Block::Text { content, .. } = block {
+                if i == self.blocks.focused {
+                    content.request_focus();
+                } else {
+                    content.request_unfocus();
+                }
+            }
+        }
+        Task::none()
+    }
+
+    /// No editor holds the keyboard: a table (cell input or selection) does.
+    fn blur_editors(&self) {
+        for block in &self.blocks.items {
+            if let Block::Text { content, .. } = block {
+                content.request_unfocus();
+            }
         }
     }
 
@@ -4368,6 +4979,10 @@ impl AppModel {
             match &items[i] {
                 Block::Text { content, id } => {
                     col = col.push(text_el(i, content, id.clone()));
+                    i += 1;
+                }
+                Block::Table(t) => {
+                    col = col.push(self.table_el(p, i, t));
                     i += 1;
                 }
                 Block::Rule(_) => {
@@ -4542,6 +5157,272 @@ impl AppModel {
                 .on_mark(|| Message::Format(Format::Mark));
         }
         editor.into()
+    }
+
+    /// One table block: a grid of clickable cells, drag handles on every
+    /// column and row edge, and a small toolbar while a cell is open.
+    fn table_el<'a>(
+        &'a self,
+        p: &Palette,
+        block: usize,
+        t: &'a crate::table::Table,
+    ) -> Element<'a, Message> {
+        let editing_here = self
+            .table_edit
+            .filter(|(b, _, _)| *b == block)
+            .map(|(_, r, c)| (r, c));
+        // Formula pointing: while the draft wants a reference, cells are
+        // targets, and the swept range lights up. A pick in flight keeps
+        // the mode on — the ref just written ends the draft with a digit,
+        // which must not switch the cells back mid-sweep.
+        let pointing = editing_here.is_some()
+            && (ref_expected(&self.table_draft)
+                || self.table_pick.as_ref().is_some_and(|p| p.block == block));
+        let picked = self
+            .table_pick
+            .as_ref()
+            .filter(|p| p.block == block)
+            .map(|p| {
+                (
+                    p.anchor.0.min(p.current.0)..=p.anchor.0.max(p.current.0),
+                    p.anchor.1.min(p.current.1)..=p.anchor.1.max(p.current.1),
+                )
+            })
+            .or_else(|| {
+                self.table_fill
+                    .filter(|f| f.block == block)
+                    .and_then(fill_targets)
+            })
+            .or_else(|| {
+                self.table_sel
+                    .filter(|s| s.block == block && s.active)
+                    .map(|s| {
+                        (
+                            s.anchor.0.min(s.current.0)..=s.anchor.0.max(s.current.0),
+                            s.anchor.1.min(s.current.1)..=s.anchor.1.max(s.current.1),
+                        )
+                    })
+            });
+        let filling = self.table_fill.is_some_and(|f| f.block == block);
+        let sel_drag = self.table_sel.is_some_and(|s| s.block == block);
+        let cols = t.cols();
+        let line = |w: f32, h: f32, colour: cosmic::iced::Color| {
+            widget::container(widget::Space::new())
+                .width(Length::Fixed(w))
+                .height(Length::Fixed(h))
+                .class(cosmic::theme::Container::custom(move |_| {
+                    widget::container::Style {
+                        background: Some(cosmic::iced::Background::Color(colour)),
+                        ..Default::default()
+                    }
+                }))
+        };
+        let mut grid = widget::column::with_capacity(t.rows.len() * 2 + 1);
+        for r in 0..t.rows.len() {
+            let row_h = if t.heights[r] > 0.0 { t.heights[r] } else { 32.0 };
+            let mut cells = widget::row::with_capacity(cols * 2);
+            for c in 0..cols {
+                let is_edit = editing_here == Some((r, c));
+                let width = t.widths[c];
+                let inner: Element<'_, Message> = if is_edit {
+                    widget::text_input("", &self.table_draft)
+                        .id(self.table_input.clone())
+                        .on_input(Message::TableDraft)
+                        .on_submit(|_| Message::TableCommit(TableMove::Down))
+                        .style(retro::search_class(p))
+                        .into()
+                } else {
+                    let raw = t.cell(r, c);
+                    let shown = t.display(r, c);
+                    let text = if r == 0 {
+                        retro::accent(p, shown)
+                    } else if shown == "#ERR" {
+                        retro::accent(p, shown)
+                    } else if raw.starts_with('=') {
+                        retro::accent2(p, shown)
+                    } else {
+                        retro::text(p, shown)
+                    };
+                    text.into()
+                };
+                let in_pick = picked
+                    .as_ref()
+                    .is_some_and(|(rs, cs)| rs.contains(&r) && cs.contains(&c));
+                let sel = p.sel;
+                let mut cell = widget::container(inner)
+                    .padding([2, 8])
+                    .align_y(Alignment::Center)
+                    .align_x(match t.align[c] {
+                        crate::table::Align::Left => Alignment::Start,
+                        crate::table::Align::Center => Alignment::Center,
+                        crate::table::Align::Right => Alignment::End,
+                    })
+                    .height(Length::Fixed(row_h))
+                    .width(if width > 0.0 {
+                        Length::Fixed(width)
+                    } else {
+                        Length::Fill
+                    });
+                if in_pick {
+                    cell = cell.class(cosmic::theme::Container::custom(move |_| {
+                        widget::container::Style {
+                            background: Some(cosmic::iced::Background::Color(sel)),
+                            ..Default::default()
+                        }
+                    }));
+                }
+                if is_edit {
+                    // The fill handle: Numbers' little corner dot — drag it
+                    // to replicate this cell down or across, formulas
+                    // translated to suit each row.
+                    let accent = p.accent;
+                    let dot = widget::mouse_area(
+                        widget::container(widget::Space::new())
+                            .width(Length::Fixed(9.0))
+                            .height(Length::Fixed(9.0))
+                            .class(cosmic::theme::Container::custom(move |_| {
+                                widget::container::Style {
+                                    background: Some(cosmic::iced::Background::Color(accent)),
+                                    border: cosmic::iced::Border {
+                                        radius: 2.0.into(),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                }
+                            })),
+                    )
+                    .on_press(Message::TableFillStart(block, r, c))
+                    .interaction(mouse::Interaction::Crosshair);
+                    cells = cells.push(cosmic::iced::widget::stack([
+                        cell.into(),
+                        widget::container(dot)
+                            .align_x(Alignment::End)
+                            .align_y(Alignment::End)
+                            .width(if width > 0.0 {
+                                Length::Fixed(width)
+                            } else {
+                                Length::Fill
+                            })
+                            .height(Length::Fixed(row_h))
+                            .into(),
+                    ]));
+                } else if filling {
+                    cells = cells.push(
+                        widget::mouse_area(cell)
+                            .on_move(move |_| Message::TableFillOver(block, r, c))
+                            .interaction(mouse::Interaction::Crosshair),
+                    );
+                } else if pointing {
+                    let mut area = widget::mouse_area(cell)
+                        .on_press(Message::TablePick(block, r, c))
+                        .interaction(mouse::Interaction::Crosshair);
+                    if self.table_pick.is_some() {
+                        area = area.on_move(move |_| Message::TablePickOver(block, r, c));
+                    }
+                    cells = cells.push(area);
+                } else {
+                    // Press-and-release opens the cell; press-and-sweep
+                    // rubber-bands a selection for Delete to clear.
+                    let mut area = widget::mouse_area(cell)
+                        .on_press(Message::TableSelStart(block, r, c))
+                        .interaction(mouse::Interaction::Text);
+                    if sel_drag {
+                        area = area.on_move(move |_| Message::TableSelOver(block, r, c));
+                    }
+                    cells = cells.push(area);
+                }
+                if c + 1 < cols {
+                    // The column edge: a hairline with a wider grab zone.
+                    let est = if width > 0.0 { width } else { 140.0 };
+                    cells = cells.push(
+                        widget::mouse_area(
+                            widget::container(line(1.0, row_h, p.border))
+                                .width(Length::Fixed(7.0))
+                                .align_x(Alignment::Center),
+                        )
+                        .on_press(Message::TableResizeStart(block, true, c, est))
+                        .interaction(mouse::Interaction::ResizingHorizontally),
+                    );
+                }
+            }
+            grid = grid.push(cells.align_y(Alignment::Center));
+            // The row edge: under the header it doubles as the head rule.
+            let colour = if r == 0 { p.dim } else { p.border };
+            grid = grid.push(
+                widget::mouse_area(
+                    widget::container(
+                        widget::container(widget::Space::new())
+                            .width(Length::Fill)
+                            .height(Length::Fixed(1.0))
+                            .class(cosmic::theme::Container::custom(move |_| {
+                                widget::container::Style {
+                                    background: Some(cosmic::iced::Background::Color(colour)),
+                                    ..Default::default()
+                                }
+                            })),
+                    )
+                    .height(Length::Fixed(5.0))
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::TableResizeStart(block, false, r, row_h))
+                .interaction(mouse::Interaction::ResizingVertically),
+            );
+        }
+        let mut col = widget::column::with_capacity(3).spacing(2);
+        if editing_here.is_some() && !self.config.table_toolbar_off {
+            // Labels only; each explains itself on hover.
+            let tool = |label: String, hint: String, msg: Message| {
+                widget::tooltip(
+                    widget::button::custom(retro::dim(p, label))
+                        .padding([2, 8])
+                        .class(cosmic::theme::Button::Text)
+                        .on_press(msg),
+                    widget::text::body(hint),
+                    widget::tooltip::Position::Top,
+                )
+            };
+            col = col.push(
+                widget::row::with_capacity(6)
+                    .push(tool(
+                        fl!("table-add-row"),
+                        fl!("table-add-row-hint"),
+                        Message::TableAddRow(block),
+                    ))
+                    .push(tool(
+                        fl!("table-add-col"),
+                        fl!("table-add-col-hint"),
+                        Message::TableAddCol(block),
+                    ))
+                    .push(tool(
+                        fl!("table-del-row"),
+                        fl!("table-del-row-hint"),
+                        Message::TableRemoveRow(block),
+                    ))
+                    .push(tool(
+                        fl!("table-del-col"),
+                        fl!("table-del-col-hint"),
+                        Message::TableRemoveCol(block),
+                    ))
+                    .push(tool(
+                        fl!("table-money"),
+                        fl!("table-money-hint"),
+                        Message::TableMoney,
+                    ))
+                    .push(
+                        widget::tooltip(
+                            widget::container(retro::dim(p, fl!("table-fx")))
+                                .padding([2, 8])
+                                .align_y(Alignment::Center),
+                            widget::text::body(fl!("table-hint")),
+                            widget::tooltip::Position::Top,
+                        ),
+                    )
+                    .spacing(2)
+                    .align_y(Alignment::Center),
+            );
+        }
+        col = col.push(retro::bordered(p, grid.into()));
+        widget::container(col).padding([4, 0]).into()
     }
 
     fn image_key(&self, r: &ImageRef) -> Option<(String, PathBuf)> {
@@ -5484,6 +6365,11 @@ impl AppModel {
 
     /// Write pending edits and let go of the current note.
     fn close_current(&mut self) {
+        // An open cell's draft belongs to the note being written out.
+        self.commit_table_edit();
+        self.table_pick = None;
+        self.table_fill = None;
+        self.table_sel = None;
         self.flush();
         self.dragging = None;
         self.resizing = None;
@@ -5643,6 +6529,105 @@ impl AppModel {
                 None => Task::none(),
             },
             Step::Theme(key) => self.update(Message::SetTheme(retro::Theme::from_key(&key))),
+            Step::Pick2(row, col, over) => {
+                let table = self
+                    .blocks
+                    .items
+                    .iter()
+                    .position(|b| matches!(b, Block::Table(_)));
+                if let Some(block) = table {
+                    let _ = self.update(Message::TablePick(block, row, col));
+                    if let Some((r2, c2)) = over {
+                        return self.update(Message::TablePickOver(block, r2, c2));
+                    }
+                }
+                Task::none()
+            }
+            Step::PickOver2(row, col) => {
+                match self.table_pick.as_ref().map(|p| p.block) {
+                    Some(block) => self.update(Message::TablePickOver(block, row, col)),
+                    None => Task::none(),
+                }
+            }
+            Step::PickDone => self.update(Message::MouseReleased),
+            Step::Draft(text) => self.update(Message::TableDraft(text)),
+            Step::TSel(r, c, r2, c2) => {
+                let table = self
+                    .blocks
+                    .items
+                    .iter()
+                    .position(|b| matches!(b, Block::Table(_)));
+                if let Some(block) = table {
+                    let _ = self.update(Message::TableSelStart(block, r, c));
+                    return self.update(Message::TableSelOver(block, r2, c2));
+                }
+                Task::none()
+            }
+            Step::Fill(r, c, r2, c2) => {
+                let table = self
+                    .blocks
+                    .items
+                    .iter()
+                    .position(|b| matches!(b, Block::Table(_)));
+                if let Some(block) = table {
+                    let _ = self.update(Message::TableFillStart(block, r, c));
+                    let _ = self.update(Message::TableFillOver(block, r2, c2));
+                    return self.update(Message::MouseReleased);
+                }
+                Task::none()
+            }
+            Step::EditCell(row, col) => {
+                let table = self
+                    .blocks
+                    .items
+                    .iter()
+                    .position(|b| matches!(b, Block::Table(_)));
+                match table {
+                    Some(block) => self.update(Message::TableEdit(block, row, col)),
+                    None => Task::none(),
+                }
+            }
+            Step::Cell(row, col, text) => {
+                let table = self
+                    .blocks
+                    .items
+                    .iter()
+                    .position(|b| matches!(b, Block::Table(_)));
+                if let Some(block) = table {
+                    if let Some(t) = self.blocks.table_mut(block) {
+                        while t.rows.len() <= row {
+                            t.add_row();
+                        }
+                        while t.cols() <= col {
+                            t.add_col();
+                        }
+                    }
+                    let _ = self.update(Message::TableEdit(block, row, col));
+                    let _ = self.update(Message::TableDraft(text));
+                    return self.update(Message::TableCommit(TableMove::Stay));
+                }
+                Task::none()
+            }
+            Step::Sel(line, col, to) => {
+                if let Some(editor) = self.blocks.focused_text() {
+                    // The anchor is the selection field; the caret the position.
+                    let (position, selection) = match to {
+                        Some((l2, c2)) => (
+                            text_editor::Position {
+                                line: l2,
+                                column: c2,
+                            },
+                            Some(text_editor::Position { line, column: col }),
+                        ),
+                        None => (text_editor::Position { line, column: col }, None),
+                    };
+                    editor.move_to(text_editor::Cursor {
+                        position,
+                        selection,
+                    });
+                }
+                Task::none()
+            }
             Step::Buffet(highlight, dark) => {
                 let _ = self.update(Message::SetBuffetHighlight(retro::Theme::from_key(
                     &highlight,
@@ -5714,6 +6699,7 @@ impl AppModel {
                 "icon" => Section::Icon,
                 "links" => Section::Links,
                 "buffet" => Section::Buffet,
+                "tables" => Section::Tables,
                 _ => Section::Size,
             })),
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
@@ -5892,6 +6878,93 @@ pub enum Section {
     Icon = 4,
     Links = 5,
     Buffet = 6,
+    Tables = 7,
+}
+
+/// Is `line[ws..we]` wrapped in `format`'s markers? Star formats count the
+/// run of `*` on each side, since `*`, `**` and `***` overlap: italic is an
+/// odd run, bold a run of two or more. The rest compare markers directly.
+fn wrapped_in(line: &str, ws: usize, we: usize, format: Format, before: &str, after: &str) -> bool {
+    let star_runs = || {
+        let prefix = line[..ws].chars().rev().take_while(|c| *c == '*').count();
+        let suffix = line[we..].chars().take_while(|c| *c == '*').count();
+        (prefix, suffix)
+    };
+    match format {
+        Format::Bold => {
+            let (p, s) = star_runs();
+            p >= 2 && s >= 2
+        }
+        Format::Italic => {
+            let (p, s) = star_runs();
+            p % 2 == 1 && s % 2 == 1
+        }
+        _ => line[..ws].ends_with(before) && line[we..].starts_with(after),
+    }
+}
+
+/// The cells a fill drag covers: clamped to one axis, whichever the sweep
+/// moved along furthest. `None` when it never left the source cell.
+fn fill_targets(
+    f: TableFill,
+) -> Option<(
+    std::ops::RangeInclusive<usize>,
+    std::ops::RangeInclusive<usize>,
+)> {
+    let dr = f.current.0 as isize - f.from.0 as isize;
+    let dc = f.current.1 as isize - f.from.1 as isize;
+    if dr == 0 && dc == 0 {
+        return None;
+    }
+    if dr.abs() >= dc.abs() {
+        let (a, b) = (f.from.0.min(f.current.0), f.from.0.max(f.current.0));
+        Some((a..=b, f.from.1..=f.from.1))
+    } else {
+        let (a, b) = (f.from.1.min(f.current.1), f.from.1.max(f.current.1));
+        Some((f.from.0..=f.from.0, a..=b))
+    }
+}
+
+/// `(row, col)` → the formula's name for it: `B2`.
+fn cell_ref(row: usize, col: usize) -> String {
+    format!("{}{}", crate::table::col_name(col), row + 1)
+}
+
+/// Does the formula draft want a reference next? True after `=`, an
+/// operator, an opening paren, a separator, or a range colon — the same
+/// moments Excel lets you point at cells.
+fn ref_expected(draft: &str) -> bool {
+    draft.starts_with('=')
+        && draft
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(|c| matches!(c, '=' | '(' | '+' | '-' | '*' | '/' | ',' | ';' | ':'))
+}
+
+/// Byte bounds of the word touching byte `col` in `line` (alphanumerics
+/// plus `_` and `'`; the caret may sit inside or at either edge).
+fn word_bounds(line: &str, col: usize) -> Option<(usize, usize)> {
+    let is_word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '\'');
+    let mut start = 0;
+    let mut in_word = false;
+    for (i, c) in line
+        .char_indices()
+        .chain(std::iter::once((line.len(), ' ')))
+    {
+        if is_word(c) {
+            if !in_word {
+                start = i;
+            }
+            in_word = true;
+        } else {
+            if in_word && start <= col && col <= i {
+                return Some((start, i));
+            }
+            in_word = false;
+        }
+    }
+    None
 }
 
 /// The buffet highlight from config: a minimal theme key, or Tomato.
@@ -6006,6 +7079,54 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     binds
 }
 
+/// Where the caret goes after committing a table cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableMove {
+    Stay,
+    Down,
+    Right,
+    Left,
+}
+
+/// A column or row edge being dragged: which table, which line, and the
+/// pointer position / size when the drag began.
+#[derive(Debug, Clone, Copy)]
+pub struct TableResize {
+    block: usize,
+    col: bool,
+    index: usize,
+    start: f32,
+    size: f32,
+}
+
+/// A reference being picked into a formula: the table, the anchor cell,
+/// and the draft text as it was when the pick began.
+#[derive(Debug, Clone)]
+pub struct TablePick {
+    block: usize,
+    anchor: (usize, usize),
+    current: (usize, usize),
+    base: String,
+}
+
+/// A fill-handle drag: the source cell and where the sweep has reached.
+#[derive(Debug, Clone, Copy)]
+pub struct TableFill {
+    block: usize,
+    from: (usize, usize),
+    current: (usize, usize),
+}
+
+/// A cell-range selection being dragged (`active` once it left the
+/// anchor cell — before that it is just a click waiting to happen).
+#[derive(Debug, Clone, Copy)]
+pub struct TableSel {
+    block: usize,
+    anchor: (usize, usize),
+    current: (usize, usize),
+    active: bool,
+}
+
 /// One undo step: the whole body plus where the caret was.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
@@ -6089,6 +7210,8 @@ pub enum Format {
     Italic,
     /// `==text==`: a highlighter band behind the words.
     Mark,
+    /// Insert a table block at the end of the note.
+    Table,
     Code,
     H1,
     H2,
@@ -6101,11 +7224,12 @@ pub enum Format {
 }
 
 impl Format {
-    pub const ALL: [Format; 12] = [
+    pub const ALL: [Format; 13] = [
         Format::Bold,
         Format::Italic,
         Format::Mark,
         Format::Code,
+        Format::Table,
         Format::H1,
         Format::H2,
         Format::Bullet,
@@ -6128,6 +7252,7 @@ impl Format {
             Format::Link => "link",
             Format::Tag => "tag",
             Format::Mark => "mark",
+            Format::Table => "table",
             Format::Rule => "rule",
             Format::Quote => "quote",
         }
@@ -6147,6 +7272,7 @@ impl Format {
             Format::Rule => "—",
             Format::Quote => "❝",
             Format::Mark => "░",
+            Format::Table => "⊞",
         }
     }
 
@@ -6164,6 +7290,7 @@ impl Format {
             Format::Rule => fl!("dock-rule"),
             Format::Quote => fl!("dock-quote"),
             Format::Mark => fl!("dock-mark"),
+            Format::Table => fl!("dock-table"),
         }
     }
 }

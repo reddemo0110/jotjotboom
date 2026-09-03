@@ -760,3 +760,142 @@ if healthy, Mac/Windows is a 1.x milestone. Known work already:
 - CI proves builds; feel needs real hardware or beta testers per OS.
 Sync (steps 7–8) gains value at the same moment — multi-OS users are the
 ones who want their notes everywhere.
+
+## 2026-09-03 — Formatting became a real toggle (the writer's day)
+- Dogfooded the editor as a writer (harness `sel:` step plays the mouse:
+  places carets and selections by byte position) and found Ctrl+B was a
+  one-way street. Now Bold/Italic/Highlight/Code/[[Link]] toggle like
+  every editor: a selection wraps and stays selected (press again to
+  undo); selecting just the words of a wrapped run — the markers hide, so
+  that is all one *can* select — eats the surrounding markers; with no
+  selection the word under the caret wraps/unwraps, the caret staying on
+  its character; on a closing marker the caret steps out, so Ctrl+B …
+  type … Ctrl+B means "start bold, stop bold"; in open air the old
+  plant-the-pair-caret-inside remains. Star formats count `*` runs so
+  bold and italic nest (`***word***`) instead of eating each other.
+- Root cause of the "selection dies after every format" half of the bug:
+  `focus_editor()` used an id-targeted focus operation, and with the
+  rendered widget's id drifting from `blocks`' stored id the operation
+  *unfocused* the live editor, queueing a ClearSelection right after
+  every dock/menu/keyboard format. Focus now travels through the shared
+  `RichContent` (`request_focus`/`take_focus_request`) — no ids, no
+  side effects on other widgets.
+- Bullet gutter widened to 2.2× the literal `- ` (was 1.5×): the drawn
+  dot now gets a conventional gap before its text in proportional faces.
+- Harness honesty: step args keep trailing spaces (`type:word ` types the
+  space), so scripted flows match real typing.
+
+## 2026-09-03 — Tables, with Keynote formulas
+- Tables are GitHub pipe tables in the file — files stay the truth and
+  render on GitHub/Obsidian — and a live grid in the editor (a new block
+  type beside images/rules/cards; `src/table.rs` is the pure core, fully
+  unit-tested). Insert via Format → Table / dock `⊞`; typing a pipe table
+  by hand converts to a grid the moment the `| --- |` separator row is
+  finished (needs_resplit learned the separator line).
+- Cells: click to edit in place (Enter commits and moves down — growing
+  the table on the bottom row, Keynote style; Tab moves right; Escape
+  drops the draft). While editing, a slim toolbar offers +/− row and
+  column. Backspace at the start of the next block deletes the table like
+  other cards.
+- Formulas, the user's headline ask: a cell starting with `=` computes —
+  `+ - * /`, parens, cell refs (`B2`), ranges in functions, `SUM AVG MIN
+  MAX COUNT` (AVERAGE/MEAN accepted). The grid shows the value (accent2;
+  `#ERR` for bad input and circular refs — cycle detection built in),
+  editing shows the formula. The file keeps the formula text, so nothing
+  is lost outside JotJotBoom.
+- Column and row edges are drag handles (hairlines with a wide grab zone);
+  sizes are presentation, stored in a `<!-- jjb:table cols=… rows=… -->`
+  comment after the table that other renderers hide. Auto columns share
+  the width; a dragged column becomes fixed. Note-list previews render
+  table rows as `a · b · c` and skip separator/size lines.
+- Harness: `cell:row,col,text` (grows the table as needed) and
+  `editcell:row,col` steps.
+
+## 2026-09-03 — Formula pointing (the Excel gesture)
+- While a cell's draft is a formula that wants a reference next (it ends
+  in `=`, an operator, `(`, a separator or `:`), the other cells become
+  targets: a click writes their ref (`B2`) into the draft, a sweep writes
+  a range (`B2:B4`), and the swept cells light up in the selection tint
+  with a crosshair cursor. Release puts the caret back at the end of the
+  formula input. Outside those moments a click still commits-and-moves.
+- `ref_expected()` decides the mode from the draft's last character — the
+  same rule Excel uses; the pick state (anchor, current, the draft as the
+  pick began) lives in `TablePick` so sweeping rewrites one ref cleanly.
+- Harness: `fpick:r,c[,r2,c2]`, `fpickover:r,c`, `pickdone`, `draft:text`
+  steps ("pick" was already taken by the image picker).
+- Post-ship fix from the user's real hands: the pointing gate read the
+  draft each render, and the ref just written ends in a digit — so one
+  frame after the anchor press every cell lost its sweep handler and
+  drag-to-range never worked live. The gate now stays open while a pick
+  is in flight. Lesson recorded: the script harness can inject messages
+  in one step and skip the re-render between them — sweep tests must use
+  separate steps (`fpickover`) so state-dependent view wiring is what is
+  actually exercised.
+
+## 2026-09-03 — Arrows stay in the table
+↑/↓ while a cell is open walk the table's cells (committing each move)
+instead of falling through to the notes-list navigation — the single-line
+cell input ignores vertical arrows, so they were reaching the ↑/↓
+note-hopper and switching documents mid-table. Leaving the table (Escape,
+or Enter walking off the edge) hands keyboard focus back to the editor so
+arrows always mean "move in what I'm writing", never "change document".
+
+## 2026-09-03 — Sideways in the table
+←/→ roam the grid while the open cell is untouched; the first keystroke
+into the draft hands them back to the text caret (the Sheets rule — every
+arrival in a new cell resets to roaming, so cruising the whole table with
+arrows just works). Shift+Tab now tabs left, and sideways moves at an
+edge stay put — arrows never dump focus out of the table. Verified with
+real injected keystrokes end to end (right → type → left-left in text →
+Enter commits below), after the first test tripped over the design
+itself by typing before arrowing.
+
+## 2026-09-03 — Money cells
+Formats without a format picker: money is text, and it spreads. A cell
+like `$42.5` (also € £ ¥, commas fine) still counts as a number, displays
+normalised (`$42.50`, thousands grouped, two decimals), and any formula
+that touches money shows money — so typing one `$` makes the totals come
+out right, Keynote style. A symbol straight after the `=` (`=$SUM(…)`)
+forces the format when inference isn't wanted; the table toolbar's `$ ¤`
+button cycles the open cell plain → $ → € → £ → ¥ → plain by rewriting
+its text. Everything is visible in the file — no per-cell metadata.
+
+## 2026-09-03 — Table UI quieted, and the fill handle
+- The toolbar hints moved into hover tooltips (labels stay: + row,
+  + column, − row, − column, $ ¤, and an `fx` tag holding the formula
+  hint). Clicking back into the note's text commits the open cell and
+  puts the toolbar away; switching notes commits too. Options gained a
+  Tables section with a "Show the table toolbar" toggle
+  (`table_toolbar_off`) for those who want the grid bare.
+- The Numbers fill handle: the open cell wears a little accent dot on its
+  bottom-right corner; drag it down or across and on release the source
+  cell replicates over the swept run — formulas translated relative to
+  each target (`=SUM(C2*C3)` one row down becomes `=SUM(C3*C4)`;
+  `table::translate_formula`, unit-tested, `#REF` past the edge, values
+  copy verbatim, money symbols survive). The sweep is clamped to one
+  axis (whichever moved furthest) and lights up in the selection tint
+  like formula pointing. Harness: `fill:r,c,r2,c2`.
+
+## 2026-09-03 — Select cells, press Delete
+- Press-drag across cells rubber-bands a selection (selection tint, like
+  formula pointing); Delete or Backspace empties every cell in it, Escape
+  or any click drops it. A press that never leaves its cell is still the
+  normal click-to-edit. Harness: `tsel:r,c,r2,c2`, verified with a real
+  injected Delete.
+- Found underneath: `request_focus` never unfocused sibling editors, so
+  several text blocks could hold widget focus at once and a keystroke
+  could be performed by every one of them (two editors both ate a
+  Delete). Contents now carry `request_unfocus` too: `focus_editor()`
+  gives exactly one editor the keys, and any table interaction (cell
+  open, selection) blurs them all.
+
+## 2026-09-03 — The window remembers its size
+Resizes land as `window::Event::Resized` → remembered (maximised sizes
+skipped — that state belongs to the compositor) → written to config by a
+1 s tick that only exists while the remembered size is unwritten, so idle
+runs cost nothing (the first attempt piggybacked on AutosaveTick, which
+only ticks while a note is dirty — resizing dirties nothing, so it never
+fired). `main()` reads `window_width`/`window_height` before the run and
+passes them as the initial `Settings::size`, floored at the 480×320
+minimum. Verified round trip: a run persists its size; a planted 812×624
+config opens an 812×624 window.

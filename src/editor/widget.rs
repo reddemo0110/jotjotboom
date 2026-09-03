@@ -311,6 +311,17 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
         // Keep the app's picture of where this editor sits current even when
         // it is scrolled out of view and never drawn.
         self.content.set_bounds(bounds);
+        // The app asked this editor to take keyboard focus.
+        if self.content.take_focus_request() {
+            state.focus = Some(Focus::now());
+            shell.request_redraw();
+        }
+        // …or to let it go (a sibling editor or a table has the keys).
+        if self.content.take_unfocus_request() && state.focus.is_some() {
+            state.focus = None;
+            state.drag_click = None;
+            shell.request_redraw();
+        }
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 self.content.set_pointer_y(cursor.position().map(|p| p.y));
