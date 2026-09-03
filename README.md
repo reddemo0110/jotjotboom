@@ -4,6 +4,17 @@ Retro-flavoured markdown notes for the COSMIC desktop
 
 ## Installation
 
+The quick way — clone and run the one-shot installer (per-user, into
+`~/.local`; it fetches Rust and build tools if the machine lacks them):
+
+```sh
+git clone https://github.com/reddemo0110/jotjotboom.git
+cd jotjotboom && ./install.sh
+```
+
+Re-run it after a `git pull` to update. Your notes live in
+`~/Documents/JotJotBoom` as plain markdown files.
+
 A [justfile](./justfile) is included by default for the [casey/just][just] command runner.
 
 - `just` builds the application with the default `just build-release` recipe

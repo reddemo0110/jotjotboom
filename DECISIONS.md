@@ -921,3 +921,11 @@ now; they double as minimal themes in the Colour picker as ever.
 The tag-list spacer lines take the same Small/Medium/Large/Family weights
 (config `tag_line_size`, same 1/2/4/8 px ladder as the divider), with
 their own row in Options → Size between the divider and the cards.
+
+## 2026-09-03 — One-shot installer
+`./install.sh` in the repo root: detects the package manager (dnf,
+pacman, apt, zypper) and fetches the C toolchain + libxkbcommon if
+missing, installs rustup per-user when there is no cargo, builds
+release, and performs the per-user install (`~/.local`: binary, icon,
+desktop entry with absolute Exec, metainfo) without needing `just`.
+Re-running after `git pull` updates. README leads with it.
