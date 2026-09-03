@@ -104,6 +104,12 @@ pub struct AppModel {
     /// Delete/Backspace clears them. A press that never leaves its cell
     /// becomes a normal click-to-edit on release.
     table_sel: Option<TableSel>,
+    /// Weight of drawn lines: the divider, and the card border (with its
+    /// own on/off).
+    rule_size: retro::LineSize,
+    card_line: retro::LineSize,
+    tag_line_size: retro::LineSize,
+    card_border: bool,
     /// Live window size, persisted (debounced by the autosave tick).
     win_size: Option<(u32, u32)>,
     /// The Ctrl+Shift+H shortcuts overlay.
@@ -261,6 +267,12 @@ pub enum Message {
     WindowResized(f32, f32),
     /// Ticks only while the remembered size is unwritten; writes it.
     WindowSizeTick,
+    /// Size options for drawn lines: the divider, the card border, and
+    /// whether cards get a border at all.
+    SetRuleSize(retro::LineSize),
+    SetCardLine(retro::LineSize),
+    SetTagLineSize(retro::LineSize),
+    SetCardBorder(bool),
     /// Apply a designer pairing (titles, chrome, note) by key.
     SetPairing(String),
     /// Ctrl+click on a `[[link]]` or `#tag` in the rich editor.
@@ -486,6 +498,10 @@ impl cosmic::Application for AppModel {
         let anim_ease10 = crate::anim::ease_from_key(&config.animation_ease);
         let task_marker = task_marker_from_config(&config.task_marker);
         let measure = retro::Measure::from_key(&config.text_width);
+        let rule_size = retro::LineSize::from_key(&config.rule_size);
+        let card_line = retro::LineSize::from_key(&config.card_line);
+        let tag_line_size = retro::LineSize::from_key(&config.tag_line_size);
+        let card_border = !config.card_border_off;
         let icon_theme =
             (!config.icon_theme.is_empty()).then(|| retro::Theme::from_key(&config.icon_theme));
         let coffee_unlocked = config.coffee_unlocked;
@@ -535,6 +551,10 @@ impl cosmic::Application for AppModel {
             table_pick: None,
             table_fill: None,
             table_sel: None,
+            rule_size,
+            card_line,
+            tag_line_size,
+            card_border,
             win_size: None,
             dragging: None,
             scroll_hover: None,
@@ -2286,6 +2306,43 @@ impl AppModel {
                 }
             }
 
+            Message::SetRuleSize(size) => {
+                self.rule_size = size;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_rule_size(handler, size.key().to_owned())
+                {
+                    tracing::warn!(%why, "could not persist rule size");
+                }
+            }
+
+            Message::SetTagLineSize(size) => {
+                self.tag_line_size = size;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) =
+                        self.config.set_tag_line_size(handler, size.key().to_owned())
+                {
+                    tracing::warn!(%why, "could not persist tag line size");
+                }
+            }
+
+            Message::SetCardLine(size) => {
+                self.card_line = size;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_card_line(handler, size.key().to_owned())
+                {
+                    tracing::warn!(%why, "could not persist card line");
+                }
+            }
+
+            Message::SetCardBorder(on) => {
+                self.card_border = on;
+                if let Some(handler) = &self.config_handler
+                    && let Err(why) = self.config.set_card_border_off(handler, !on)
+                {
+                    tracing::warn!(%why, "could not persist card border");
+                }
+            }
+
             Message::WindowSizeTick => {
                 if let Some((w, h)) = self.win_size
                     && let Some(handler) = &self.config_handler
@@ -2699,6 +2756,10 @@ impl AppModel {
         };
                 self.task_marker = task_marker_from_config(&config.task_marker);
                 self.measure = retro::Measure::from_key(&config.text_width);
+                self.rule_size = retro::LineSize::from_key(&config.rule_size);
+                self.card_line = retro::LineSize::from_key(&config.card_line);
+                self.tag_line_size = retro::LineSize::from_key(&config.tag_line_size);
+                self.card_border = !config.card_border_off;
                 self.config = config;
                 // A theme or buffet change from outside (another instance,
                 // a config edit) repaints a follow-mode icon too.
@@ -3107,7 +3168,8 @@ impl AppModel {
             if entry.is_empty() {
                 // A spacer line: drag it like a tag; right-click removes it.
                 let line = widget::mouse_area(
-                    widget::container(retro::spacer_line(p)).width(Length::Fill),
+                    widget::container(retro::spacer_line(p, self.tag_line_size.rule_px()))
+                        .width(Length::Fill),
                 )
                 .on_press(Message::TagPress(k))
                 .on_right_press(Message::RemoveSpace(k))
@@ -3308,7 +3370,7 @@ impl AppModel {
             // Below the list: an invisible strip that shows a line on hover;
             // clicking it adds a draggable spacer to the tag list.
             let hint: Element<'a, Message> = if self.space_hint {
-                retro::spacer_line(p)
+                retro::spacer_line(p, self.tag_line_size.rule_px())
             } else {
                 widget::Space::new().width(Length::Fill).into()
             };
@@ -4127,6 +4189,50 @@ impl AppModel {
                 ));
             }
             col = col.push(widths);
+
+            // Line weights: the --- divider, and the border around cards.
+            let line_row = |current: retro::LineSize,
+                            msg: fn(retro::LineSize) -> Message| {
+                let mut row = widget::row::with_capacity(4).spacing(6);
+                for s in retro::LineSize::ALL {
+                    row = row.push(
+                        widget::button::custom(widget::text(s.label()))
+                            .padding([4, 10])
+                            .class(if current == s {
+                                cosmic::theme::Button::Suggested
+                            } else {
+                                cosmic::theme::Button::Standard
+                            })
+                            .on_press(msg(s)),
+                    );
+                }
+                row
+            };
+            col = col.push(
+                widget::container(widget::text::heading(fl!("size-rule"))).padding([6, 0, 0, 0]),
+            );
+            col = col.push(widget::text::caption(fl!("size-rule-hint")));
+            col = col.push(line_row(self.rule_size, Message::SetRuleSize));
+            col = col.push(
+                widget::container(widget::text::heading(fl!("size-tag-line")))
+                    .padding([6, 0, 0, 0]),
+            );
+            col = col.push(widget::text::caption(fl!("size-tag-line-hint")));
+            col = col.push(line_row(self.tag_line_size, Message::SetTagLineSize));
+            col = col.push(
+                widget::container(widget::text::heading(fl!("size-card"))).padding([6, 0, 0, 0]),
+            );
+            col = col.push(
+                widget::container(
+                    widget::toggler(self.card_border)
+                        .label(fl!("card-border-toggle"))
+                        .on_toggle(Message::SetCardBorder),
+                )
+                .padding([4, 0]),
+            );
+            if self.card_border {
+                col = col.push(line_row(self.card_line, Message::SetCardLine));
+            }
 
             col = col.push(
                 widget::container(widget::text::heading(fl!("animation"))).padding([6, 0, 0, 0]),
@@ -4986,7 +5092,7 @@ impl AppModel {
                     i += 1;
                 }
                 Block::Rule(_) => {
-                    let rule = retro::rule_block(p);
+                    let rule = retro::rule_block(p, self.rule_size.rule_px());
                     if drag.is_some() {
                         let slot = |line: usize| {
                             widget::mouse_area(
@@ -5836,7 +5942,12 @@ impl AppModel {
         .padding([4, 4, 0, 0]);
         let stacked =
             cosmic::iced::widget::stack([clickable.into(), dots.into()]).width(Length::Fill);
-        let card = widget::container(retro::lifted(p, stacked.into()))
+        let frame = if self.card_border {
+            self.card_line.card_px()
+        } else {
+            0.0
+        };
+        let card = widget::container(retro::lifted(p, stacked.into(), frame))
             .width(Length::Fill)
             .padding([2, 10]);
         if menu_open {
@@ -6048,7 +6159,7 @@ impl AppModel {
             .height(Length::Fill);
         let stacked = cosmic::iced::widget::stack([pic, halves.into()]).width(Length::Fill);
         let el: Element<'a, Message> = if dragged {
-            retro::lifted(p, stacked.into())
+            retro::lifted(p, stacked.into(), 2.0)
         } else {
             stacked.into()
         };

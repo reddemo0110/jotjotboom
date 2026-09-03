@@ -81,10 +81,26 @@ pub enum Theme {
     Mikado,
     /// Apricot orange, #FFAB40.
     Apricot,
+    /// Cyan, #00A6CB.
+    Cyan,
+    /// Hollyhock mauve, #AA89BD.
+    Hollyhock,
+    /// Canyon clay, Pantone 18-1431.
+    CanyonClay,
+    /// Thistle, #D8BFD8.
+    Thistle,
+    /// Fuchsia, #FF0080.
+    Fuchsia,
+    /// Bluestone, Pantone 18-4217.
+    Bluestone,
+    /// Slate blue, #466E88.
+    SlateBlue2,
+    /// Jade, #9CD5C2.
+    Jade,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 27] = [
+    pub const ALL: [Theme; 35] = [
         Theme::Phosphor,
         Theme::Amber,
         Theme::WordPerfect,
@@ -112,6 +128,14 @@ impl Theme {
         Theme::Azure,
         Theme::Mikado,
         Theme::Apricot,
+        Theme::Cyan,
+        Theme::Fuchsia,
+        Theme::Jade,
+        Theme::Hollyhock,
+        Theme::Thistle,
+        Theme::CanyonClay,
+        Theme::SlateBlue2,
+        Theme::Bluestone,
     ];
 
     /// The minimal family shares one charcoal base; only its light colour
@@ -135,6 +159,14 @@ impl Theme {
             Theme::Azure => hex(0x0099ff),
             Theme::Mikado => hex(0xffc40c),
             Theme::Apricot => hex(0xffab40),
+            Theme::Cyan => hex(0x00a6cb),
+            Theme::Hollyhock => hex(0xaa89bd),
+            Theme::CanyonClay => hex(0xcf8578),
+            Theme::Thistle => hex(0xd8bfd8),
+            Theme::Fuchsia => hex(0xff0080),
+            Theme::Bluestone => hex(0x587284),
+            Theme::SlateBlue2 => hex(0x466e88),
+            Theme::Jade => hex(0x9cd5c2),
             // Exhaustive on purpose: a new variant must declare its side
             // here, or `palette()`'s catch-all would panic at runtime.
             Theme::Phosphor
@@ -187,6 +219,14 @@ impl Theme {
             Theme::Azure => "azure",
             Theme::Mikado => "mikado",
             Theme::Apricot => "apricot",
+            Theme::Cyan => "cyan",
+            Theme::Hollyhock => "hollyhock",
+            Theme::CanyonClay => "canyonclay",
+            Theme::Thistle => "thistle",
+            Theme::Fuchsia => "fuchsia",
+            Theme::Bluestone => "bluestone",
+            Theme::SlateBlue2 => "slateblue2",
+            Theme::Jade => "jade",
         }
     }
 
@@ -230,6 +270,14 @@ impl Theme {
             Theme::Azure => "Azure",
             Theme::Mikado => "Mikado",
             Theme::Apricot => "Apricot",
+            Theme::Cyan => "Cyan",
+            Theme::Hollyhock => "Hollyhock",
+            Theme::CanyonClay => "Canyon Clay",
+            Theme::Thistle => "Thistle",
+            Theme::Fuchsia => "Fuchsia",
+            Theme::Bluestone => "Bluestone",
+            Theme::SlateBlue2 => "Slate Blue",
+            Theme::Jade => "Jade",
         }
     }
 
@@ -264,6 +312,14 @@ impl Theme {
             Theme::Azure => "the clear sky, where web colours began",
             Theme::Mikado => "the emperor's colour",
             Theme::Apricot => "#FFAB40, ripe off the tree",
+            Theme::Cyan => "#00A6CB — the C in CMYK",
+            Theme::Hollyhock => "dyed by the hollyhock",
+            Theme::CanyonClay => "Pantone 18-1431. Softer than it sounds.",
+            Theme::Thistle => "Scotland's national flower",
+            Theme::Fuchsia => "a flower flashy enough to wear as an earring",
+            Theme::Bluestone => "Pantone 18-4217, quarried blue-grey",
+            Theme::SlateBlue2 => "slate grey's friend",
+            Theme::Jade => "jade goes by many colour names",
         }
     }
 
@@ -1601,6 +1657,71 @@ impl DockSize {
 }
 
 /// Body text in the panel colour scheme.
+/// Pizza-scale weight for drawn lines: the `---` divider and the border
+/// around link/file cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LineSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+    Family,
+}
+
+impl LineSize {
+    pub const ALL: [LineSize; 4] = [
+        LineSize::Small,
+        LineSize::Medium,
+        LineSize::Large,
+        LineSize::Family,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            LineSize::Small => "small",
+            LineSize::Medium => "medium",
+            LineSize::Large => "large",
+            LineSize::Family => "family",
+        }
+    }
+
+    pub fn from_key(key: &str) -> LineSize {
+        LineSize::ALL
+            .into_iter()
+            .find(|s| s.key() == key)
+            .unwrap_or_default()
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LineSize::Small => "Small",
+            LineSize::Medium => "Medium",
+            LineSize::Large => "Large",
+            LineSize::Family => "Family",
+        }
+    }
+
+    /// Thickness of the `---` divider.
+    pub fn rule_px(self) -> f32 {
+        match self {
+            LineSize::Small => 1.0,
+            LineSize::Medium => 2.0,
+            LineSize::Large => 4.0,
+            LineSize::Family => 8.0,
+        }
+    }
+
+    /// Border width of a link/file card.
+    pub fn card_px(self) -> f32 {
+        match self {
+            LineSize::Small => 1.0,
+            LineSize::Medium => 2.0,
+            LineSize::Large => 4.0,
+            LineSize::Family => 6.0,
+        }
+    }
+}
+
 pub fn text<'a>(p: &Palette, s: impl Into<std::borrow::Cow<'a, str>> + 'a) -> Text<'a> {
     widget::text(s)
         .font(mono())
@@ -1697,16 +1818,16 @@ pub fn pane_el<'a, M: 'static>(
 }
 
 /// A horizontal rule in the note: a full-width line in the muted colour.
-pub fn rule_block<'a, M: 'static>(p: &Palette) -> Element<'a, M> {
+pub fn rule_block<'a, M: 'static>(p: &Palette, px: f32) -> Element<'a, M> {
     let mute = p.mute;
     widget::container(
-        widget::container(widget::Space::new().width(Length::Fill).height(2))
+        widget::container(widget::Space::new().width(Length::Fill).height(px))
             .width(Length::Fill)
             .class(theme::Container::custom(move |_| {
                 widget::container::Style {
                     background: Some(Background::Color(mute)),
                     border: Border {
-                        radius: 1.0.into(),
+                        radius: (px / 2.0).into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -2162,10 +2283,10 @@ pub fn comic<'a, M: 'static>(
 /// The drop indicator while a picture is dragged: an accent rule with a tag,
 /// drawn exactly where the picture will land.
 /// A thin dim line: the sidebar's spacer between tag groups.
-pub fn spacer_line<'a, M: 'static>(p: &Palette) -> Element<'a, M> {
+pub fn spacer_line<'a, M: 'static>(p: &Palette, px: f32) -> Element<'a, M> {
     let dim = p.dim;
     widget::container(
-        widget::container(widget::Space::new().width(Length::Fill).height(2))
+        widget::container(widget::Space::new().width(Length::Fill).height(px))
             .width(Length::Fill)
             .class(theme::Container::custom(move |_| widget::container::Style {
                 background: Some(Background::Color(dim)),
@@ -2244,7 +2365,7 @@ pub fn drop_line<'a, M: 'static>(p: &Palette, label: String) -> Element<'a, M> {
 }
 
 /// The picture being dragged: outlined in the accent so it reads as lifted.
-pub fn lifted<'a, M: 'static>(p: &Palette, content: Element<'a, M>) -> Element<'a, M> {
+pub fn lifted<'a, M: 'static>(p: &Palette, content: Element<'a, M>, width: f32) -> Element<'a, M> {
     let accent = p.accent;
     widget::container(content)
         .width(Length::Fill)
@@ -2252,7 +2373,7 @@ pub fn lifted<'a, M: 'static>(p: &Palette, content: Element<'a, M>) -> Element<'
             widget::container::Style {
                 border: Border {
                     color: accent,
-                    width: 2.0,
+                    width,
                     radius: 3.0.into(),
                 },
                 ..Default::default()

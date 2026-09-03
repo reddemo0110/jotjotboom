@@ -899,3 +899,25 @@ fired). `main()` reads `window_width`/`window_height` before the run and
 passes them as the initial `Settings::size`, floored at the 480×320
 minimum. Verified round trip: a run persists its size; a planted 812×624
 config opens an 812×624 window.
+
+## 2026-09-03 — Line weights, pizza-sized
+Options → Size grew two controls on a Small / Medium / Large / Family
+scale (`retro::LineSize`; Medium is today's look): the `---` divider
+(1/2/4/8 px) and the border around link/file cards (1/2/4/6 px), plus a
+"Draw a border around cards" toggle whose off state hides the weight row
+and renders cards frameless. Config: `rule_size`, `card_line`,
+`card_border_off`. The image mid-drag lift keeps its fixed 2 px.
+
+## 2026-09-03 — Eight more highlights
+From the user's colour cards: Cyan #00A6CB, Hollyhock #AA89BD, Canyon
+Clay (Pantone 18-1431, sampled #CF8578), Thistle #D8BFD8, Fuchsia
+#FF0080, Bluestone (Pantone 18-4217, #587284), Slate Blue #466E88
+(`slateblue2` — the CSS-named `steelblue` key was already taken by the
+day-one minimal), and Jade #9CD5C2. The ninth card, Shamrock Green
+15-6432, was already in the buffet and was skipped. Nineteen highlights
+now; they double as minimal themes in the Colour picker as ever.
+
+## 2026-09-03 — Sidebar spacers join the pizza scale
+The tag-list spacer lines take the same Small/Medium/Large/Family weights
+(config `tag_line_size`, same 1/2/4/8 px ladder as the divider), with
+their own row in Options → Size between the divider and the cards.

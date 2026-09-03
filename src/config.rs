@@ -76,6 +76,14 @@ pub struct Config {
     /// Hide the table toolbar (+/− row/column, money). (Inverted so the
     /// default is shown.)
     pub table_toolbar_off: bool,
+    /// Weight of the `---` divider: small, medium, large, family.
+    pub rule_size: String,
+    /// Border weight of link/file cards, same scale.
+    pub card_line: String,
+    /// Weight of the sidebar's tag spacer lines, same scale.
+    pub tag_line_size: String,
+    /// Draw no border around link/file cards. (Inverted so the default is on.)
+    pub card_border_off: bool,
     /// Last window size in logical pixels; 0 = let the compositor choose.
     pub window_width: u32,
     pub window_height: u32,
