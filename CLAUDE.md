@@ -18,7 +18,7 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
 - Visual check without a human: `tools/xshot.py out.png [--script ...]`
   runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (`step:arg` form, e.g. `--script 'new;type:Hello;wait:1000'`; steps:
   new, type, search, select, pin, trash, folder, format, selectall, dock,
-  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, linkdrag, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, iconset, attach, tagdrag, tagmove, addspace, weight, fontfor, buffet, sel, cell, editcell, fpick, fpickover, pickdone, draft, fill, tsel, quit, wait, exit; `;` separates steps — write `\;` inside text),
+  themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, linkdrag, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, iconset, attach, tagdrag, tagmove, addspace, weight, fontfor, buffet, sel, cell, editcell, fpick, fpickover, pickdone, draft, fill, tsel, sync, syncnow, quit, wait, exit; `;` separates steps — write `\;` inside text),
   and captures the window with X auto-repeat switched off. It runs against a
   fresh scratch notes dir (`JJB_NOTES_DIR`); pass `--notes-dir ~/Documents/JotJotBoom`
   only when the real notes are needed for the picture — steps like `new`/`type`/`attach` write files. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
@@ -49,7 +49,15 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
 - `src/icon.rs` — the launcher icon generated from a palette and written into
   the user's hicolor theme.
 - `src/config.rs` — cosmic-config entry (`notes_dir`, `device_id`).
-- `src/secrets.rs` — keyring wrapper; unused until sync, deliberately present.
+- `src/secrets.rs` — keyring wrapper; holds the sync token.
+- `src/sync.rs` — PocketBase client and one blocking sync cycle (`run`):
+  refresh token, pull since cursor, push; `Envelope` is the opaque payload
+  (file text + trashed/deleted). `src/store/sync.rs` is the store's half:
+  `sync_pending` (hash diff vs `sync_state`), `apply_remote` (adopt /
+  delete / conflict copy), `apply_outcome`. `server/` has the PocketBase
+  migration + revision hook and a setup README. The two-device
+  integration test runs only with `JJB_PB_URL=http://127.0.0.1:8090`
+  pointing at a PocketBase started from `server/pocketbase/`.
 
 ## Rules that matter
 
@@ -61,3 +69,8 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
   stock COSMIC.
 - Autosave is debounced (`AUTOSAVE_DELAY`); anything that switches or
   drops the current note must call `close_current()` / `flush()` first.
+- Sync never clobbers: both-sides-changed becomes a conflict copy, edit
+  beats delete, the open note auto-updates to the server version. Test
+  runs that sign in write the token into the real keyring
+  (`secret-tool clear application jotjotboom key sync-token` afterwards)
+  and must set `XDG_DATA_HOME` too, since `sync_state` lives in index.db.

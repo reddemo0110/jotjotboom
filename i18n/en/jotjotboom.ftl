@@ -211,3 +211,52 @@ animation-hint = The drag drop line and friends. Time is the whole trip; landing
 anim-time = time
 anim-landing = landing
 anim-off = off
+
+# Options → Sync
+section-sync = Sync
+sync-hint = Keep these notes on every machine through your own server. Notes travel as sealed packages the server never reads.
+sync-url = Server
+sync-url-placeholder = https://notes.example.com
+sync-email = Email
+sync-email-placeholder = you@example.com
+sync-password = Password
+sync-password-placeholder = at least 8 characters
+sync-sign-in = Sign in
+sync-create-account = Create account
+sync-sign-out = Sign out
+sync-now = Sync now
+sync-signing-in = Signing in…
+sync-signed-in = Signed in as { $email } on { $url }
+sync-signed-out = Signed out — sign in again to keep syncing.
+sync-syncing = Syncing…
+sync-waiting = Waiting for the first sync.
+sync-last = Synced { $ago }.
+sync-error = Could not sync: { $error }
+sync-pending = { $n ->
+    [one] One note waiting to go up.
+   *[other] { $n } notes waiting to go up.
+}
+sync-moved = { $down ->
+    [0] Nothing new from other devices
+    [one] One note came down
+   *[other] { $down } notes came down
+}, { $up ->
+    [0] nothing sent up.
+    [one] one sent up.
+   *[other] { $up } sent up.
+}
+sync-conflicts = { $n ->
+    [one] One note changed here and elsewhere: your version is kept beside it as "(conflict, { $device })".
+   *[other] { $n } notes changed here and elsewhere: your versions are kept beside them as "(conflict, { $device })".
+}
+sync-server-hint = Any PocketBase server with the JotJotBoom collection will do — see server/README.md in the source for a five-minute setup.
+ago-now = just now
+ago-seconds = { $n } s ago
+ago-minutes = { $n ->
+    [one] a minute ago
+   *[other] { $n } min ago
+}
+ago-hours = { $n ->
+    [one] an hour ago
+   *[other] { $n } h ago
+}

@@ -7,8 +7,10 @@
 
 mod db;
 mod fs;
+mod sync;
 
 pub use db::View;
+pub use sync::Applied;
 
 use crate::note::{self, Note, NoteSummary};
 use anyhow::{Context, Result};
@@ -29,6 +31,8 @@ pub struct Store {
 }
 
 const FOLDERS_FILE: &str = ".folders";
+/// Every install's welcome note shares this id (see `create_welcome_note`).
+const WELCOME_ID: &str = "00000000-0000-7000-8000-000000000001";
 
 impl Store {
     pub fn open(notes_dir: PathBuf, index_path: &Path, device_id: String) -> Result<Self> {
@@ -289,23 +293,35 @@ impl Store {
         } else {
             self.dir.root().to_owned()
         };
+        let new_path = self.place(n, &dir);
+        if new_path != n.path {
+            if n.path.exists() {
+                self.dir.rename(&n.path, &new_path)?;
+            }
+            n.path = new_path;
+        }
+        self.write(n)
+    }
+
+    /// Where `n` belongs inside `dir`: its current file while the title
+    /// still matches it (so "Title (2).md" stays stable), otherwise a free
+    /// name for the title.
+    fn place(&self, n: &Note, dir: &Path) -> PathBuf {
         let current_stem = n.path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         let wanted_stem = note::slug_filename(&n.title);
-        // Keep "Title (2).md" stable while the title is unchanged.
         let keep = current_stem == wanted_stem
             || (current_stem.starts_with(&wanted_stem)
                 && current_stem[wanted_stem.len()..].starts_with(" (")
                 && current_stem.ends_with(')'));
-        if !keep || n.path.parent() != Some(dir.as_path()) {
-            let new_path = self.dir.unique_path(&dir, &n.title, Some(&n.path));
-            if new_path != n.path {
-                if n.path.exists() {
-                    self.dir.rename(&n.path, &new_path)?;
-                }
-                n.path = new_path;
-            }
+        if keep && n.path.parent() == Some(dir) {
+            return n.path.clone();
         }
-        self.write(n)
+        let current = if n.path.as_os_str().is_empty() {
+            None
+        } else {
+            Some(n.path.as_path())
+        };
+        self.dir.unique_path(dir, &n.title, current)
     }
 
     fn write(&mut self, n: &mut Note) -> Result<()> {
@@ -392,10 +408,24 @@ impl Store {
         Ok(())
     }
 
+    /// The welcome note is the same bytes on every install — fixed id and
+    /// creation time — so two devices syncing agree on it without a copy.
     fn create_welcome_note(&mut self) -> Result<()> {
-        let mut n = self.create().context("creating welcome note")?;
-        n.body = WELCOME.to_owned();
-        self.save(&mut n)
+        let created = chrono::DateTime::parse_from_rfc3339("2026-08-29T00:00:00Z")
+            .map(|d| d.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        let mut n = Note {
+            id: WELCOME_ID.to_owned(),
+            title: note::UNTITLED.to_owned(),
+            body: WELCOME.to_owned(),
+            created,
+            modified: created,
+            pinned: false,
+            trashed: false,
+            extra_frontmatter: vec![],
+            path: PathBuf::new(),
+        };
+        self.save(&mut n).context("creating welcome note")
     }
 }
 

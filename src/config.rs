@@ -84,6 +84,10 @@ pub struct Config {
     pub tag_line_size: String,
     /// Draw no border around link/file cards. (Inverted so the default is on.)
     pub card_border_off: bool,
+    /// Sync server address (a PocketBase instance, see `server/`). Empty = off.
+    pub sync_url: String,
+    /// Account email on that server. The token lives in the keyring.
+    pub sync_email: String,
     /// Last window size in logical pixels; 0 = let the compositor choose.
     pub window_width: u32,
     pub window_height: u32,

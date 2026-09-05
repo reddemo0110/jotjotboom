@@ -8,7 +8,8 @@ use crate::images::{self, Align, FrameStyle, ImageRef, PickerEntry, Processed, U
 use crate::markdown;
 use crate::note::{self, Note, NoteSummary};
 use crate::retro::{self, Palette};
-use crate::store::{Store, View};
+use crate::store::{Applied, Store, View};
+use crate::sync::{self, Session};
 use chrono::{DateTime, Datelike, Local, Utc};
 use cosmic::Application as _;
 use cosmic::app::context_drawer;
@@ -27,6 +28,10 @@ const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const APP_ICON: &[u8] = include_bytes!("../resources/icons/hicolor/scalable/apps/icon.svg");
 /// How long after the last keystroke we write the note to disk.
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(600);
+/// Sync this long after the last local change.
+const SYNC_AFTER_SAVE: Duration = Duration::from_secs(3);
+/// And at least this often while signed in, to pick up other devices.
+const SYNC_INTERVAL: Duration = Duration::from_secs(60);
 /// Undo steps kept per open note.
 const UNDO_DEPTH: usize = 200;
 /// Typing separated by less than this is one undo step.
@@ -78,7 +83,9 @@ pub struct AppModel {
     /// Launcher icon: a theme's colours, or `None` to follow the theme.
     icon_theme: Option<retro::Theme>,
     /// Which sections of the Appearance drawer are unfolded.
-    appearance_open: [bool; 8],
+    appearance_open: [bool; 9],
+    /// Cloud sync: the account, the form, and the cycle in flight.
+    sync: SyncUi,
     /// Processed images keyed by path|mtime|style|theme.
     image_cache: HashMap<String, ImageState>,
     /// Block index of the image whose ⋯ menu is open.
@@ -314,6 +321,20 @@ pub enum Message {
     RefreshPreview(String),
     OpenFile(String),
     SetLinkPreviews(bool),
+    SyncUrl(String),
+    SyncEmail(String),
+    SyncPassword(String),
+    SyncShowPassword,
+    SyncSignIn,
+    SyncSignUp,
+    /// Sign-in, sign-up or a restored token came back.
+    SyncAuth(Result<Session, String>),
+    SyncSignOut,
+    SyncNow,
+    SyncTick,
+    /// The keyring gave up its token (or had none).
+    SyncTokenLoaded(Option<String>),
+    SyncDone(Arc<sync::Outcome>),
     PickerNavigate(PathBuf),
     PickerChoose(PathBuf),
     /// A picker thumbnail finished decoding.
@@ -509,6 +530,11 @@ impl cosmic::Application for AppModel {
         let icon_set = crate::glyph::IconSet::from_key(&config.icon_set);
         let link_previews = !config.link_previews_off;
         let collapsed: HashSet<String> = config.collapsed_tags.iter().cloned().collect();
+        let sync_ui = SyncUi {
+            url: config.sync_url.clone(),
+            email: config.sync_email.clone(),
+            ..SyncUi::default()
+        };
         let mut app = AppModel {
             core,
             context_page: ContextPage::default(),
@@ -539,7 +565,8 @@ impl cosmic::Application for AppModel {
             task_marker,
             measure,
             icon_theme,
-            appearance_open: [false; 8],
+            appearance_open: [false; 9],
+            sync: sync_ui,
             image_cache: HashMap::new(),
             image_menu: None,
             resizing: None,
@@ -637,7 +664,26 @@ impl cosmic::Application for AppModel {
         let title = app.update_title();
         // Fonts are (re)loaded on `window::Event::Opened` too: a LoadFont
         // action issued before the compositor exists is silently dropped.
-        (app, Task::batch([load_fonts(), title]))
+        // A remembered account: fetch the token and pick up where we left off.
+        let restore = if !app.sync.url.trim().is_empty() && !app.sync.email.trim().is_empty() {
+            app.sync.restoring = true;
+            Task::perform(
+                async {
+                    match crate::secrets::get(sync::TOKEN_KEY).await {
+                        Ok(Some(bytes)) => String::from_utf8(bytes).ok(),
+                        Ok(None) => None,
+                        Err(err) => {
+                            tracing::warn!(%err, "reading the sync token from the keyring");
+                            None
+                        }
+                    }
+                },
+                |token| cosmic::Action::App(Message::SyncTokenLoaded(token)),
+            )
+        } else {
+            Task::none()
+        };
+        (app, Task::batch([load_fonts(), title, restore]))
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
@@ -962,6 +1008,11 @@ impl cosmic::Application for AppModel {
                     .map(|_| Message::WindowSizeTick),
             );
         }
+        if self.sync.session.is_some() {
+            subscriptions.push(
+                cosmic::iced::time::every(Duration::from_millis(1000)).map(|_| Message::SyncTick),
+            );
+        }
         if self.coffee.is_some() {
             subscriptions.push(
                 cosmic::iced::time::every(Duration::from_millis(170)).map(|_| Message::CoffeeTick),
@@ -1146,6 +1197,224 @@ impl AppModel {
                         tracing::warn!(%err, "opening attached file");
                     }
                 }
+            }
+
+            Message::SyncUrl(v) => self.sync.url = v,
+            Message::SyncEmail(v) => self.sync.email = v,
+            Message::SyncPassword(v) => self.sync.password = v,
+            Message::SyncShowPassword => self.sync.show_password = !self.sync.show_password,
+
+            Message::SyncSignIn | Message::SyncSignUp => {
+                if self.sync.busy {
+                    return Task::none();
+                }
+                let signup = matches!(message, Message::SyncSignUp);
+                let (url, email, password) = (
+                    self.sync.url.clone(),
+                    self.sync.email.clone(),
+                    self.sync.password.clone(),
+                );
+                self.sync.busy = true;
+                self.sync.error = None;
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            if signup {
+                                sync::sign_up(&url, &email, &password)
+                            } else {
+                                sync::sign_in(&url, &email, &password)
+                            }
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r.map_err(|e| format!("{e:#}")))
+                    },
+                    |result| cosmic::Action::App(Message::SyncAuth(result)),
+                );
+            }
+
+            Message::SyncTokenLoaded(token) => {
+                self.sync.restoring = false;
+                let Some(token) = token else {
+                    self.sync.error = Some(fl!("sync-signed-out"));
+                    return Task::none();
+                };
+                let session = Session {
+                    url: self.sync.url.trim().trim_end_matches('/').to_owned(),
+                    token,
+                    user_id: String::new(),
+                    email: self.sync.email.clone(),
+                };
+                self.sync.busy = true;
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || sync::refresh(&session))
+                            .await
+                            .map_err(|e| e.to_string())
+                            .and_then(|r| r.map_err(|e| format!("{e:#}")))
+                            .and_then(|s| s.ok_or_else(|| fl!("sync-signed-out")))
+                    },
+                    |result| cosmic::Action::App(Message::SyncAuth(result)),
+                );
+            }
+
+            Message::SyncAuth(result) => {
+                self.sync.busy = false;
+                match result {
+                    Ok(session) => {
+                        self.sync.password.clear();
+                        self.sync.error = None;
+                        self.sync.url.clone_from(&session.url);
+                        self.sync.email.clone_from(&session.email);
+                        if let Some(handler) = &self.config_handler {
+                            if let Err(why) = self.config.set_sync_url(handler, session.url.clone()) {
+                                tracing::warn!(%why, "saving sync server");
+                            }
+                            if let Err(why) = self.config.set_sync_email(handler, session.email.clone()) {
+                                tracing::warn!(%why, "saving sync email");
+                            }
+                        }
+                        if let Some(store) = self.store.as_mut()
+                            && let Err(err) = store.set_sync_account(&session.account())
+                        {
+                            tracing::error!(%err, "binding sync state to the account");
+                        }
+                        let token = session.token.clone();
+                        self.sync.session = Some(session);
+                        self.sync.due = Some(Instant::now());
+                        return Task::perform(
+                            async move {
+                                if let Err(err) =
+                                    crate::secrets::store(sync::TOKEN_KEY, "JotJotBoom sync", token.as_bytes())
+                                        .await
+                                {
+                                    tracing::warn!(%err, "keeping the sync token in the keyring");
+                                }
+                            },
+                            |()| cosmic::Action::None,
+                        );
+                    }
+                    Err(err) => self.sync.error = Some(err),
+                }
+            }
+
+            Message::SyncSignOut => {
+                self.sync.session = None;
+                self.sync.error = None;
+                self.sync.last_ok = None;
+                self.sync.summary = None;
+                return Task::perform(
+                    async {
+                        if let Err(err) = crate::secrets::delete(sync::TOKEN_KEY).await {
+                            tracing::warn!(%err, "removing the sync token from the keyring");
+                        }
+                    },
+                    |()| cosmic::Action::None,
+                );
+            }
+
+            Message::SyncNow => {
+                self.sync.due = Some(Instant::now());
+                return self.start_sync();
+            }
+
+            Message::SyncTick => {
+                let due = self.sync.due.is_some_and(|t| t <= Instant::now());
+                let stale = self
+                    .sync
+                    .last_run
+                    .is_none_or(|t| t.elapsed() >= SYNC_INTERVAL);
+                if due || stale {
+                    return self.start_sync();
+                }
+            }
+
+            Message::SyncDone(out) => {
+                self.sync.busy = false;
+                if out.unauthorized {
+                    let task = self.update(Message::SyncSignOut);
+                    self.sync.error = Some(fl!("sync-signed-out"));
+                    return task;
+                }
+                let mut token_task = Task::none();
+                if let (Some(fresh), Some(session)) = (&out.session, self.sync.session.as_mut())
+                    && fresh.token != session.token
+                {
+                    session.token.clone_from(&fresh.token);
+                    session.user_id = fresh.user_id.clone();
+                    let token = fresh.token.clone();
+                    token_task = Task::perform(
+                        async move {
+                            if let Err(err) =
+                                crate::secrets::store(sync::TOKEN_KEY, "JotJotBoom sync", token.as_bytes())
+                                    .await
+                            {
+                                tracing::warn!(%err, "keeping the sync token in the keyring");
+                            }
+                        },
+                        |()| cosmic::Action::None,
+                    );
+                }
+                let current_id = self.current.as_ref().map(|n| n.id.clone());
+                let touches_open = current_id
+                    .as_ref()
+                    .is_some_and(|id| out.incoming.iter().any(|r| &r.note_id == id));
+                if touches_open {
+                    // Unsaved typing becomes a local change first, so it is
+                    // kept (as a conflict copy if need be) rather than lost.
+                    self.commit_table_edit();
+                    self.flush();
+                }
+                let device = sync::device_name();
+                let applied = match self.store.as_mut() {
+                    Some(store) => store.apply_outcome(&out, &device),
+                    None => Vec::new(),
+                };
+                let conflicts = applied
+                    .iter()
+                    .filter(|(_, a)| matches!(a, Applied::Conflict { .. }))
+                    .count();
+                let changed = applied
+                    .iter()
+                    .filter(|(_, a)| !matches!(a, Applied::Unchanged))
+                    .count();
+                if let Some(id) = current_id
+                    && let Some((_, what)) = applied.iter().find(|(nid, _)| *nid == id)
+                {
+                    match what {
+                        Applied::Deleted => {
+                            self.current = None;
+                            self.blocks = Blocks::default();
+                        }
+                        // The open note follows the server: reload it in place.
+                        Applied::Adopted | Applied::Conflict { .. } => self.open_note(&id),
+                        Applied::Unchanged => {}
+                    }
+                }
+                if changed > 0 || !out.pushed.is_empty() {
+                    self.after_store_change();
+                }
+                self.sync.last_run = Some(Instant::now());
+                self.sync.due = None;
+                if out.errors.is_empty() {
+                    self.sync.error = None;
+                    self.sync.last_ok = Some(Instant::now());
+                } else {
+                    tracing::warn!(errors = ?out.errors, "sync cycle had errors");
+                    self.sync.error = Some(out.errors[0].clone());
+                }
+                self.sync.summary = if conflicts > 0 {
+                    Some(fl!("sync-conflicts", n = conflicts, device = device))
+                } else if changed > 0 || !out.pushed.is_empty() {
+                    Some(fl!("sync-moved", down = changed, up = out.pushed.len()))
+                } else {
+                    None
+                };
+                // Conflict copies are new notes: send them straight up.
+                if conflicts > 0 {
+                    self.sync.due = Some(Instant::now() + Duration::from_secs(1));
+                }
+                return Task::batch([token_task, self.update_title()]);
             }
 
             Message::SetLinkPreviews(on) => {
@@ -2524,6 +2793,7 @@ impl AppModel {
                         Err(err) => tracing::error!(%err, "pinning note"),
                     }
                 }
+                self.sync_soon();
                 self.refresh_list();
             }
 
@@ -4454,7 +4724,104 @@ impl AppModel {
             col = col.push(widget::text::caption(fl!("link-previews-hint")));
             col = col.push(widget::text::caption(fl!("attach-hint")));
         }
+
+        // Sync: the account on a self-hosted server.
+        col = col.push(
+            widget::container(header(fl!("section-sync"), Section::Sync)).padding([8, 0, 0, 0]),
+        );
+        if self.appearance_open[Section::Sync as usize] {
+            col = col.push(self.sync_section());
+        }
         self.hover_scroll(ScrollArea::Options, widget::scrollable(col))
+    }
+
+    /// Options → Sync: the sign-in form, or the account and its status.
+    fn sync_section(&self) -> Element<'_, Message> {
+        let mut col = widget::column::with_capacity(10).spacing(8);
+        let status = |text: String| widget::text::caption(text);
+        match &self.sync.session {
+            Some(session) => {
+                col = col.push(widget::text::body(fl!(
+                    "sync-signed-in",
+                    email = session.email.clone(),
+                    url = session.url.clone()
+                )));
+                let line = if self.sync.busy {
+                    fl!("sync-syncing")
+                } else if let Some(err) = &self.sync.error {
+                    fl!("sync-error", error = err.clone())
+                } else if let Some(at) = self.sync.last_ok {
+                    fl!("sync-last", ago = ago(at.elapsed()))
+                } else {
+                    fl!("sync-waiting")
+                };
+                col = col.push(status(line));
+                if let Some(summary) = &self.sync.summary {
+                    col = col.push(status(summary.clone()));
+                }
+                let pending = self.store.as_ref().map_or(0, Store::sync_pending_count);
+                if pending > 0 && !self.sync.busy {
+                    col = col.push(status(fl!("sync-pending", n = pending)));
+                }
+                col = col.push(
+                    widget::row::with_capacity(2)
+                        .spacing(8)
+                        .push(
+                            widget::button::suggested(fl!("sync-now"))
+                                .on_press_maybe((!self.sync.busy).then_some(Message::SyncNow)),
+                        )
+                        .push(widget::button::standard(fl!("sync-sign-out")).on_press(Message::SyncSignOut)),
+                );
+            }
+            None => {
+                col = col.push(widget::text::caption(fl!("sync-hint")));
+                col = col.push(
+                    widget::text_input(fl!("sync-url-placeholder"), &self.sync.url)
+                        .label(fl!("sync-url"))
+                        .on_input(Message::SyncUrl),
+                );
+                col = col.push(
+                    widget::text_input(fl!("sync-email-placeholder"), &self.sync.email)
+                        .label(fl!("sync-email"))
+                        .on_input(Message::SyncEmail),
+                );
+                col = col.push(
+                    widget::secure_input(
+                        fl!("sync-password-placeholder"),
+                        &self.sync.password,
+                        Some(Message::SyncShowPassword),
+                        !self.sync.show_password,
+                    )
+                    .label(fl!("sync-password"))
+                    .on_input(Message::SyncPassword)
+                    .on_submit(|_| Message::SyncSignIn),
+                );
+                let ready = !self.sync.busy
+                    && !self.sync.restoring
+                    && !self.sync.url.trim().is_empty()
+                    && !self.sync.email.trim().is_empty()
+                    && !self.sync.password.is_empty();
+                col = col.push(
+                    widget::row::with_capacity(2)
+                        .spacing(8)
+                        .push(
+                            widget::button::suggested(fl!("sync-sign-in"))
+                                .on_press_maybe(ready.then_some(Message::SyncSignIn)),
+                        )
+                        .push(
+                            widget::button::standard(fl!("sync-create-account"))
+                                .on_press_maybe(ready.then_some(Message::SyncSignUp)),
+                        ),
+                );
+                if self.sync.busy || self.sync.restoring {
+                    col = col.push(status(fl!("sync-signing-in")));
+                } else if let Some(err) = &self.sync.error {
+                    col = col.push(status(fl!("sync-error", error = err.clone())));
+                }
+                col = col.push(widget::text::caption(fl!("sync-server-hint")));
+            }
+        }
+        col.into()
     }
 
     /// Apply a dock format action to the editor buffer.
@@ -6412,6 +6779,48 @@ impl AppModel {
     // ----- state -----
 
     /// Reload the tag tree and view counts from the store.
+    /// A local change: sync once typing settles.
+    fn sync_soon(&mut self) {
+        if self.sync.session.is_some() {
+            let at = Instant::now() + SYNC_AFTER_SAVE;
+            self.sync.due = Some(self.sync.due.map_or(at, |d| d.min(at)));
+        }
+    }
+
+    /// Run one cycle in the background, unless one is already going.
+    fn start_sync(&mut self) -> Task<cosmic::Action<Message>> {
+        if self.sync.busy {
+            return Task::none();
+        }
+        let (Some(store), Some(session)) = (self.store.as_ref(), self.sync.session.clone()) else {
+            return Task::none();
+        };
+        let job = match store.sync_job(session, self.config.device_id.clone()) {
+            Ok(job) => job,
+            Err(err) => {
+                tracing::error!(%err, "gathering sync work");
+                self.sync.error = Some(format!("{err:#}"));
+                self.sync.last_run = Some(Instant::now());
+                self.sync.due = None;
+                return Task::none();
+            }
+        };
+        self.sync.busy = true;
+        self.sync.due = None;
+        Task::perform(
+            async move {
+                match tokio::task::spawn_blocking(move || sync::run(job)).await {
+                    Ok(out) => out,
+                    Err(err) => sync::Outcome {
+                        errors: vec![err.to_string()],
+                        ..Default::default()
+                    },
+                }
+            },
+            |out| cosmic::Action::App(Message::SyncDone(Arc::new(out))),
+        )
+    }
+
     fn refresh_tags(&mut self) {
         let Some(store) = &self.store else { return };
         let tags = store.tags().unwrap_or_default();
@@ -6442,6 +6851,7 @@ impl AppModel {
 
     /// Tags or trash membership may have changed: rebuild nav + list.
     fn after_store_change(&mut self) {
+        self.sync_soon();
         self.refresh_tags();
         self.refresh_list();
         if self.current.is_none()
@@ -6524,6 +6934,7 @@ impl AppModel {
         if note.title != old_title {
             self.backlinks = store.backlinks(&note.title).unwrap_or_default();
         }
+        self.sync_soon();
         // Tags may have changed; keep nav + list in step.
         self.refresh_tags();
         self.refresh_list();
@@ -6797,6 +7208,13 @@ impl AppModel {
                 _ => Pane::Editor,
             })),
             Step::Quit => self.update(Message::Quit),
+            Step::Sync(url, email, password, new) => {
+                self.sync.url = url;
+                self.sync.email = email;
+                self.sync.password = password;
+                self.update(if new { Message::SyncSignUp } else { Message::SyncSignIn })
+            }
+            Step::SyncNow => self.update(Message::SyncNow),
             Step::RenameTag(old, new) => {
                 self.tag_rename = Some((old, new));
                 self.update(Message::TagRenameCommit)
@@ -6811,6 +7229,7 @@ impl AppModel {
                 "links" => Section::Links,
                 "buffet" => Section::Buffet,
                 "tables" => Section::Tables,
+                "sync" => Section::Sync,
                 _ => Section::Size,
             })),
             Step::Marker(mark) => self.update(Message::SetTaskMarker(mark)),
@@ -6935,6 +7354,21 @@ fn format_date(when: DateTime<Utc>) -> String {
     }
 }
 
+/// "just now", "2 min ago", "3 h ago".
+fn ago(d: Duration) -> String {
+    let secs: u64 = d.as_secs();
+    let (mins, hours): (u64, u64) = (secs / 60, secs / 3600);
+    if secs < 10 {
+        fl!("ago-now")
+    } else if secs < 60 {
+        fl!("ago-seconds", n = secs)
+    } else if secs < 3600 {
+        fl!("ago-minutes", n = mins)
+    } else {
+        fl!("ago-hours", n = hours)
+    }
+}
+
 fn format_time(when: DateTime<Utc>) -> String {
     when.with_timezone(&Local).format("%H:%M").to_string()
 }
@@ -6979,6 +7413,28 @@ pub enum Pane {
     Editor,
 }
 
+/// Cloud sync, as the app sees it.
+#[derive(Debug, Default)]
+struct SyncUi {
+    url: String,
+    email: String,
+    password: String,
+    show_password: bool,
+    /// Signed in. The token is kept in the keyring, not config.
+    session: Option<Session>,
+    /// A cycle (or a sign-in) is in flight.
+    busy: bool,
+    /// Still asking the keyring for a remembered token.
+    restoring: bool,
+    /// Run a cycle at this time (a local change settling).
+    due: Option<Instant>,
+    last_run: Option<Instant>,
+    last_ok: Option<Instant>,
+    error: Option<String>,
+    /// What the last cycle did, for the status line.
+    summary: Option<String>,
+}
+
 /// Foldable sections of the Appearance drawer (index into `appearance_open`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
@@ -6990,6 +7446,7 @@ pub enum Section {
     Links = 5,
     Buffet = 6,
     Tables = 7,
+    Sync = 8,
 }
 
 /// Is `line[ws..we]` wrapped in `format`'s markers? Star formats count the

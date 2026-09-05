@@ -70,6 +70,11 @@ pub enum Step {
     FontFor(String),
     /// Quit through the File menu's path (flush, close the window).
     Quit,
+    /// Sign in to a sync server (`sync:url,email,password`), creating the
+    /// account when `,new` is appended.
+    Sync(String, String, String, bool),
+    /// Run a sync cycle now.
+    SyncNow,
     /// Move the n-th image to sit before body line `line`: `imgmove:n:line`.
     ImgMove(usize, usize),
     /// Set the caption of the n-th image: `imgcaption:n:text`.
@@ -330,6 +335,15 @@ pub fn parse(script: &str) -> Vec<Step> {
                 "weight" => Step::Weight(arg.trim().parse().ok()?),
                 "fontfor" => Step::FontFor(arg.trim().to_owned()),
                 "quit" => Step::Quit,
+                "sync" => {
+                    let parts: Vec<&str> = arg.trim().split(',').map(str::trim).collect();
+                    match parts.as_slice() {
+                        [u, e, p] => Step::Sync((*u).to_owned(), (*e).to_owned(), (*p).to_owned(), false),
+                        [u, e, p, "new"] => Step::Sync((*u).to_owned(), (*e).to_owned(), (*p).to_owned(), true),
+                        _ => return None,
+                    }
+                }
+                "syncnow" => Step::SyncNow,
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
                 "exit" => Step::Exit,
                 other => {

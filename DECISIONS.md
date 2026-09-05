@@ -929,3 +929,34 @@ missing, installs rustup per-user when there is no cargo, builds
 release, and performs the per-user install (`~/.local`: binary, icon,
 desktop entry with absolute Exec, metainfo) without needing `just`.
 Re-running after `git pull` updates. README leads with it.
+
+## 2026-09-05 — Sync v1: PocketBase, opaque envelopes, conflict copies
+- Backend as locked in the handover: self-hosted PocketBase. `server/`
+  carries the migration (a `notes` collection: owner, note id, revision,
+  device, modified, `blob`) and a hook that owns the revision counter —
+  an update must quote the revision it was based on or is refused (409).
+- The blob is an `Envelope`: the whole file text plus `trashed`/`deleted`
+  flags, JSON today, ciphertext later. Trash state and tombstones live
+  inside it so the server learns nothing new. `.folders` and `assets/`
+  do not sync yet (next step: a `files` collection for assets).
+- Local sync state (`sync_state`: per note record id, revision, synced
+  hash, trashed; `sync_meta`: cursor, account) lives in index.db under
+  the oplog exemption. Losing it is safe: identical text is re-adopted
+  silently, differing text becomes a conflict copy. Pending pushes are
+  found by comparing the indexed hash with the synced hash — so edits
+  made outside the app sync too, not just saves through the editor.
+- Cycle = refresh token (a dead token otherwise reads as an empty
+  account), pull since cursor, push; runs in `spawn_blocking`, the store
+  applies results on the app thread. Triggers: 3 s after a save, every
+  60 s, on sign-in, Options → Sync → Sync now.
+- Conflicts (both sides changed since the last agreed revision): the
+  server's copy keeps the note's id and file; the local text becomes a
+  new note "Title (conflict, <hostname>)" and is pushed as its own note.
+  Edit vs delete: the edit wins and the note comes back. Same text on
+  both sides: adopted quietly.
+- The user's call (the plane scenario, 2026-09-05): the open note
+  auto-updates to the server version when a conflict or plain change
+  lands; the editor never switches to the copy, so the user keeps
+  writing on the synced line and does not breed further conflicts.
+- Token in the keyring (`sync-token`); server address and email in
+  cosmic-config. No keyring = sign-in lasts for the session only.

@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 pub struct Db {
     conn: Connection,
@@ -37,6 +37,19 @@ pub struct NoteRow {
     pub pinned: bool,
     pub trashed: bool,
     pub revision: i64,
+    /// Content hash of the file as indexed.
+    pub hash: String,
+}
+
+/// What we last agreed with the server about a note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncState {
+    pub note_id: String,
+    pub record_id: String,
+    pub revision: i64,
+    /// Hash of the text at that point; empty when the server holds a tombstone.
+    pub hash: String,
+    pub trashed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +142,20 @@ impl Db {
                 device_id   TEXT NOT NULL,
                 hash        TEXT NOT NULL,
                 synced      INTEGER NOT NULL DEFAULT 0
+            );
+            -- What the server holds for each note, as of our last sync.
+            -- Survives an index rebuild (it is not derived from disk); losing
+            -- it only costs a reconcile pass.
+            CREATE TABLE IF NOT EXISTS sync_state (
+                note_id   TEXT PRIMARY KEY,
+                record_id TEXT NOT NULL,
+                revision  INTEGER NOT NULL,
+                hash      TEXT NOT NULL,
+                trashed   INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS sync_meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );",
         )?;
         self.conn
@@ -256,7 +283,7 @@ impl Db {
     pub fn get(&self, id: &str) -> Result<Option<NoteRow>> {
         self.conn
             .query_row(
-                "SELECT id, path, title, created, modified, pinned, trashed, revision FROM notes WHERE id = ?1",
+                "SELECT id, path, title, created, modified, pinned, trashed, revision, hash FROM notes WHERE id = ?1",
                 params![id],
                 row_to_note,
             )
@@ -378,6 +405,77 @@ impl Db {
             .map_err(Into::into)
     }
 
+    /// Every note, trash included, for the sync diff.
+    pub fn all_rows(&self) -> Result<Vec<NoteRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, path, title, created, modified, pinned, trashed, revision, hash FROM notes",
+        )?;
+        let rows = stmt.query_map([], row_to_note)?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn sync_state(&self, note_id: &str) -> Result<Option<SyncState>> {
+        self.conn
+            .query_row(
+                "SELECT note_id, record_id, revision, hash, trashed FROM sync_state WHERE note_id = ?1",
+                params![note_id],
+                row_to_sync,
+            )
+            .optional()
+            .context("reading sync state")
+    }
+
+    pub fn all_sync_state(&self) -> Result<Vec<SyncState>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT note_id, record_id, revision, hash, trashed FROM sync_state")?;
+        let rows = stmt.query_map([], row_to_sync)?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn set_sync_state(&mut self, s: &SyncState) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sync_state (note_id, record_id, revision, hash, trashed) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(note_id) DO UPDATE SET record_id = excluded.record_id, revision = excluded.revision,
+                hash = excluded.hash, trashed = excluded.trashed",
+            params![s.note_id, s.record_id, s.revision, s.hash, s.trashed as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_sync_state(&mut self, note_id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM sync_state WHERE note_id = ?1", params![note_id])?;
+        Ok(())
+    }
+
+    /// Forget everything about the server (new account, new server).
+    pub fn clear_sync(&mut self) -> Result<()> {
+        self.conn
+            .execute_batch("DELETE FROM sync_state; DELETE FROM sync_meta;")?;
+        Ok(())
+    }
+
+    pub fn sync_meta(&self, key: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT value FROM sync_meta WHERE key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("reading sync meta")
+    }
+
+    pub fn set_sync_meta(&mut self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sync_meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     pub fn count(&self) -> Result<usize> {
         Ok(self
             .conn
@@ -426,6 +524,17 @@ fn row_to_note(r: &rusqlite::Row<'_>) -> rusqlite::Result<NoteRow> {
         pinned: r.get::<_, i64>(5)? != 0,
         trashed: r.get::<_, i64>(6)? != 0,
         revision: r.get(7)?,
+        hash: r.get(8)?,
+    })
+}
+
+fn row_to_sync(r: &rusqlite::Row<'_>) -> rusqlite::Result<SyncState> {
+    Ok(SyncState {
+        note_id: r.get(0)?,
+        record_id: r.get(1)?,
+        revision: r.get(2)?,
+        hash: r.get(3)?,
+        trashed: r.get::<_, i64>(4)? != 0,
     })
 }
 

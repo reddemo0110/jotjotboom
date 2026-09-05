@@ -19,6 +19,7 @@ mod probe;
 mod retro;
 mod secrets;
 mod store;
+mod sync;
 
 fn main() -> cosmic::iced::Result {
     tracing_subscriber::fmt()
