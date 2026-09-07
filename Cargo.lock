@@ -2913,6 +2913,7 @@ dependencies = [
  "ureq",
  "uuid",
  "xdgen",
+ "zbus",
 ]
 
 [[package]]

@@ -96,9 +96,16 @@ def main():
         log("scratch notes dir:", args.notes_dir)
     env["JJB_NOTES_DIR"] = args.notes_dir
     env.setdefault("RUST_LOG", "jotjotboom=info,warn")
+    # The app is single-instance: without this a real JotJotBoom already
+    # running would be handed our launch and the scratch run would never
+    # open a window.
+    env["COSMIC_SINGLE_INSTANCE"] = "false"
+    # XSHOT_LOG=path keeps the app's log (tracing writes to stdout).
+    env["XSHOT_LOG"] = env.get("XSHOT_LOG", "")
     if args.script:
         env["JJB_SCRIPT"] = args.script
-    proc = subprocess.Popen([args.binary], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log_file = open(env["XSHOT_LOG"], "wb") if env["XSHOT_LOG"] else subprocess.DEVNULL
+    proc = subprocess.Popen([args.binary], env=env, stdout=log_file, stderr=subprocess.STDOUT)
     # A key left held on the X server (e.g. by a broken injection tool) would
     # auto-repeat into our window; switch X auto-repeat off while we capture.
     kb = None

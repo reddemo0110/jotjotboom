@@ -229,9 +229,117 @@ pub struct AppModel {
     script: Option<debug_script::Runner>,
 }
 
+/// What the command line asked for. A second launch hands these to the
+/// running instance over D-Bus (libcosmic's single-instance activation)
+/// instead of opening another window.
+#[derive(Debug, Default, Clone)]
+pub struct Flags {
+    /// Files to open: notes in the folder open in place, anything else is
+    /// imported as a copy. Absolute paths or `file://` URIs.
+    pub open: Vec<String>,
+    /// Text to put in the search box (GNOME's "search in app" arrow).
+    pub search: Option<String>,
+    /// Start on a fresh note (the launcher's "New note" action).
+    pub new_note: bool,
+}
+
+/// The activation actions a second launch can forward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchAction {
+    Open,
+    Search,
+    NewNote,
+}
+
+impl std::fmt::Display for LaunchAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            LaunchAction::Open => "open",
+            LaunchAction::Search => "search",
+            LaunchAction::NewNote => "new-note",
+        })
+    }
+}
+
+impl Flags {
+    /// Parse the process arguments. Returns `None` for a mode that is not
+    /// the GUI at all (`--search-provider`).
+    pub fn from_args(args: impl IntoIterator<Item = String>) -> Option<Flags> {
+        let mut flags = Flags::default();
+        let mut args = args.into_iter();
+        while let Some(a) = args.next() {
+            match a.as_str() {
+                "--search-provider" => return None,
+                "--new" | "--new-note" => flags.new_note = true,
+                "--search" => flags.search = Some(args.by_ref().collect::<Vec<_>>().join(" ")),
+                "--" => flags.open.extend(args.by_ref()),
+                _ if a.starts_with("--") => tracing::warn!(arg = a, "unknown option ignored"),
+                _ => flags.open.push(a),
+            }
+        }
+        Some(flags)
+    }
+
+    fn action(&self) -> Option<LaunchAction> {
+        if !self.open.is_empty() {
+            Some(LaunchAction::Open)
+        } else if self.search.is_some() {
+            Some(LaunchAction::Search)
+        } else if self.new_note {
+            Some(LaunchAction::NewNote)
+        } else {
+            None
+        }
+    }
+
+    /// The message that carries out what was asked, once the store is up.
+    fn message(&self) -> Option<Message> {
+        match self.action()? {
+            LaunchAction::Open => Some(Message::OpenPaths(self.open.clone())),
+            LaunchAction::Search => Some(Message::SearchFromOutside(
+                self.search.clone().unwrap_or_default(),
+            )),
+            LaunchAction::NewNote => Some(Message::NewNote),
+        }
+    }
+}
+
+impl cosmic::app::CosmicFlags for Flags {
+    type SubCommand = LaunchAction;
+    type Args = Vec<String>;
+
+    fn action(&self) -> Option<&LaunchAction> {
+        // The running instance gets the action name plus args; a plain
+        // launch just raises it.
+        static OPEN: LaunchAction = LaunchAction::Open;
+        static SEARCH: LaunchAction = LaunchAction::Search;
+        static NEW: LaunchAction = LaunchAction::NewNote;
+        match Flags::action(self)? {
+            LaunchAction::Open => Some(&OPEN),
+            LaunchAction::Search => Some(&SEARCH),
+            LaunchAction::NewNote => Some(&NEW),
+        }
+    }
+
+    fn args(&self) -> Vec<&str> {
+        match Flags::action(self) {
+            Some(LaunchAction::Open) => self.open.iter().map(String::as_str).collect(),
+            Some(LaunchAction::Search) => self.search.iter().map(String::as_str).collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     LaunchUrl(String),
+    /// Open (or import) files named on the command line, dropped on the
+    /// launcher, or picked from the GNOME Shell overview search.
+    OpenPaths(Vec<String>),
+    /// Fill the search box from outside (the shell's "search in app").
+    SearchFromOutside(String),
+    /// Something outside asked for the window: raise it.
+    Raise,
     ToggleContextPage(ContextPage),
     UpdateConfig(Config),
     Key(keyboard::Modifiers, keyboard::Key, Physical),
@@ -425,7 +533,7 @@ pub enum Message {
 
 impl cosmic::Application for AppModel {
     type Executor = cosmic::executor::Default;
-    type Flags = ();
+    type Flags = Flags;
     type Message = Message;
 
     const APP_ID: &'static str = "io.github.jotjotboom.JotJotBoom";
@@ -440,7 +548,7 @@ impl cosmic::Application for AppModel {
 
     fn init(
         core: cosmic::Core,
-        _flags: Self::Flags,
+        flags: Self::Flags,
     ) -> (Self, Task<cosmic::Action<Self::Message>>) {
         let config_handler = cosmic_config::Config::new(Self::APP_ID, Config::VERSION).ok();
         let mut config = config_handler
@@ -683,7 +791,46 @@ impl cosmic::Application for AppModel {
         } else {
             Task::none()
         };
-        (app, Task::batch([load_fonts(), title, restore]))
+        // Whatever the command line asked for, now that the store is up.
+        let asked = match flags.message() {
+            Some(msg) => app.update(msg),
+            None => Task::none(),
+        };
+        (app, Task::batch([load_fonts(), title, restore, asked]))
+    }
+
+    /// A second launch, or the GNOME Shell search provider, reached the
+    /// running instance over D-Bus.
+    fn dbus_activation(
+        &mut self,
+        msg: cosmic::dbus_activation::Message,
+    ) -> Task<cosmic::Action<Self::Message>> {
+        use cosmic::dbus_activation::Details;
+        tracing::info!(details = ?msg.msg, token = msg.activation_token.is_some(), "activated over D-Bus");
+        // libcosmic raises the window itself when the caller brought an
+        // activation token; without one (a plain second launch, the
+        // search provider) we ask the compositor ourselves.
+        let raise = if msg.activation_token.is_none() {
+            self.update(Message::Raise)
+        } else {
+            Task::none()
+        };
+        let action = match msg.msg {
+            Details::Activate => Task::none(),
+            Details::Open { url } => self.update(Message::OpenPaths(
+                url.into_iter().map(|u| u.to_string()).collect(),
+            )),
+            Details::ActivateAction { action, args } => match action.as_str() {
+                "open" => self.update(Message::OpenPaths(args)),
+                "search" => self.update(Message::SearchFromOutside(args.join(" "))),
+                "new-note" => self.update(Message::NewNote),
+                other => {
+                    tracing::warn!(action = other, "unknown activation action");
+                    Task::none()
+                }
+            },
+        };
+        Task::batch([raise, action])
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
@@ -691,6 +838,10 @@ impl cosmic::Application for AppModel {
     }
 
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
+        // On GNOME the fonts/buttons come from the portal, and libcosmic
+        // replaces its toolkit config underneath us when its own config
+        // subscription reports; putting ours back here is cheap.
+        crate::desktop::reassert();
         let view_items = vec![
             menu::Item::CheckBox(fl!("show-nav"), None, self.show_nav, MenuAction::ToggleNav),
             menu::Item::CheckBox(
@@ -2370,7 +2521,78 @@ impl AppModel {
 
             Message::FontLoaded => {}
 
-            Message::LoadFonts => return load_fonts(),
+            Message::LoadFonts => {
+                crate::desktop::reassert();
+                return load_fonts();
+            }
+
+            Message::OpenPaths(paths) => {
+                let mut opened = None;
+                for raw in paths {
+                    let path = match images::path_from_arg(&raw) {
+                        Some(p) => p,
+                        None => {
+                            tracing::warn!(arg = raw, "not a file path");
+                            continue;
+                        }
+                    };
+                    let Some(store) = self.store.as_mut() else {
+                        break;
+                    };
+                    match store.find_by_path(&path) {
+                        Ok(Some(id)) => {
+                            tracing::info!(path = %path.display(), "opening");
+                            opened = Some(id);
+                        }
+                        Ok(None) => match store.import(&path) {
+                            Ok(note) => {
+                                tracing::info!(from = %path.display(), to = %note.path.display(), "imported");
+                                opened = Some(note.id);
+                            }
+                            Err(err) => {
+                                tracing::error!(%err, path = %path.display(), "importing");
+                                self.save_error = Some(format!("{err:#}"));
+                            }
+                        },
+                        Err(err) => tracing::error!(%err, path = %path.display(), "looking up"),
+                    }
+                }
+                let Some(id) = opened else {
+                    return Task::none();
+                };
+                // An imported note is new to the list; a note in the trash
+                // needs that view to be visible at all.
+                self.refresh_tags();
+                self.refresh_list();
+                if !self.notes.iter().any(|n| n.id == id) {
+                    self.query.clear();
+                    self.view = View::All;
+                    self.refresh_list();
+                    if !self.notes.iter().any(|n| n.id == id) {
+                        self.view = View::Trash;
+                        self.refresh_list();
+                    }
+                }
+                return self.update(Message::Select(id));
+            }
+
+            Message::SearchFromOutside(text) => {
+                tracing::info!(text, "search handed in from outside");
+                if matches!(self.view, View::Trash) {
+                    self.view = View::All;
+                }
+                let search = self.update(Message::Search(text));
+                return Task::batch([search, self.update(Message::FocusSearch)]);
+            }
+
+            Message::Raise => {
+                if let Some(id) = self.core.main_window_id() {
+                    return Task::batch([
+                        window::minimize(id, false),
+                        window::gain_focus(id),
+                    ]);
+                }
+            }
 
             Message::SetTheme(theme) => {
                 self.theme = theme;

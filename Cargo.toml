@@ -3,8 +3,8 @@ name = "jotjotboom"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
-description = "Retro-flavoured markdown notes for the COSMIC desktop"
-repository = "https://github.com/jotjotboom/jotjotboom"
+description = "Retro-flavoured markdown notes for the COSMIC and GNOME desktops"
+repository = "https://github.com/reddemo0110/jotjotboom"
 
 [dependencies]
 i18n-embed = { version = "0.16", features = [
@@ -38,6 +38,11 @@ serde_json = "1"
 
 # Secrets live in the system keyring from day one (sync tokens later).
 secret-service = { version = "5", features = ["rt-tokio-crypto-rust"] }
+
+# Desktop integration beyond COSMIC: the GNOME Shell search provider and the
+# portal Settings reads (fonts, icon theme, button layout) speak D-Bus
+# directly. Same zbus libcosmic already builds.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [build-dependencies]
 xdgen = "0.1"

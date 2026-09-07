@@ -382,6 +382,28 @@ impl TryFrom<(Vec<u8>, String)> for UriList {
     }
 }
 
+/// A file named on the command line or over D-Bus: a `file://` URI or a
+/// path, made absolute. `None` for other URI schemes.
+pub fn path_from_arg(raw: &str) -> Option<PathBuf> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let path = if let Some(rest) = raw.strip_prefix("file://") {
+        let decoded = percent_decode(rest);
+        PathBuf::from(decoded.strip_prefix("localhost").unwrap_or(&decoded))
+    } else if raw.contains("://") {
+        return None;
+    } else {
+        PathBuf::from(raw)
+    };
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        std::env::current_dir().ok().map(|cwd| cwd.join(path))
+    }
+}
+
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -849,6 +871,22 @@ mod tests {
             ]
         );
         assert!(UriList::try_from((vec![], "text/plain".to_owned())).is_err());
+    }
+
+    #[test]
+    fn arg_to_path() {
+        assert_eq!(
+            path_from_arg("file:///home/me/a%20b.md"),
+            Some(PathBuf::from("/home/me/a b.md"))
+        );
+        assert_eq!(
+            path_from_arg("file://localhost/tmp/c.md"),
+            Some(PathBuf::from("/tmp/c.md"))
+        );
+        assert_eq!(path_from_arg("/x/y.md"), Some(PathBuf::from("/x/y.md")));
+        assert!(path_from_arg("notes.md").is_some_and(|p| p.is_absolute()));
+        assert_eq!(path_from_arg("https://example.com/a.md"), None);
+        assert_eq!(path_from_arg("  "), None);
     }
 
     #[test]

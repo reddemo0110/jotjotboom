@@ -4,33 +4,75 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
   <name>JotJotBoom</name>
-  <summary>Retro-flavoured markdown notes for the COSMIC desktop</summary>
+  <summary>Retro-flavoured markdown notes</summary>
+  <description>
+    <p>
+      Plain markdown files in a folder you own, shown the way a good editor
+      shows them: headings, emphasis, tasks, tables, images and link cards
+      are drawn in place while the markup stays a keystroke away. Notes are
+      organised with #tags, linked with [[wiki links]], searched as you type
+      and, optionally, synced between machines through a small server you
+      run yourself.
+    </p>
+    <p>
+      The editor wears one of a set of retro colour themes (phosphor
+      terminals, paper, a colour buffet of your own) and its own font
+      choices; the window chrome follows your desktop, including light and
+      dark mode and the accent colour. Built for COSMIC, and at home on
+      GNOME, where notes also turn up in the Activities overview search.
+    </p>
+  </description>
+  <developer id="io.github.jotjotboom">
+    <name>Andrew Kneebone</name>
+  </developer>
   <icon type="remote" width="64" height="64" scale="1">
-    https://github.com/jotjotboom/jotjotboom/raw/main/resources/icons/hicolor/scalable/apps/icon.svg
+    https://github.com/reddemo0110/jotjotboom/raw/main/resources/icons/hicolor/scalable/apps/icon.svg
   </icon>
-  <url type="vcs-browser">https://github.com/jotjotboom/jotjotboom</url>
+  <url type="homepage">https://github.com/reddemo0110/jotjotboom</url>
+  <url type="vcs-browser">https://github.com/reddemo0110/jotjotboom</url>
+  <url type="bugtracker">https://github.com/reddemo0110/jotjotboom/issues</url>
   <launchable type="desktop-id">io.github.jotjotboom.JotJotBoom.desktop</launchable>
   <provides>
     <id>com.system76.CosmicApplication</id>
     <binaries>
       <binary>jotjotboom</binary>
     </binaries>
+    <dbus type="session">io.github.jotjotboom.JotJotBoom.SearchProvider</dbus>
   </provides>
   <requires>
     <display_length compare="ge">360</display_length>
   </requires>
-  <supports>
+  <recommends>
     <control>keyboard</control>
     <control>pointing</control>
+  </recommends>
+  <supports>
     <control>touch</control>
   </supports>
+  <branding>
+    <color type="primary" scheme_preference="light">#b9f2bf</color>
+    <color type="primary" scheme_preference="dark">#0f3a1c</color>
+  </branding>
   <categories>
     <category>Office</category>
+    <category>Utility</category>
+    <category>TextEditor</category>
     <category>COSMIC</category>
   </categories>
   <keywords>
+    <keyword>notes</keyword>
+    <keyword>markdown</keyword>
+    <keyword>retro</keyword>
     <keyword>COSMIC</keyword>
+    <keyword>GNOME</keyword>
   </keywords>
   <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-09-07">
+      <description>
+        <p>First release: the rich editor, tags, links, images, tables, sync,
+        and desktop integration for COSMIC and GNOME.</p>
+      </description>
+    </release>
+  </releases>
 </component>
-

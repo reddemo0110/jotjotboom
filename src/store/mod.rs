@@ -30,6 +30,32 @@ pub struct Store {
     folders: Vec<String>,
 }
 
+/// A read-only view of the index for processes that are not the app: the
+/// GNOME Shell search provider answers overview searches from it without
+/// taking the notes directory or racing the app's writes. It reflects the
+/// last time the app ran, which is the nature of a derived index.
+pub struct Index {
+    db: Db,
+}
+
+impl Index {
+    /// `None` when there is no index yet (the app has never run) or it is
+    /// from another schema version.
+    pub fn open(index_path: &Path) -> Result<Option<Self>> {
+        Ok(Db::open_read_only(index_path)?.map(|db| Self { db }))
+    }
+
+    /// Full-text search across the notes that are not in the trash.
+    pub fn search(&self, query: &str) -> Result<Vec<NoteSummary>> {
+        self.db.search(query, &View::All)
+    }
+
+    /// Where the note with `id` lives on disk.
+    pub fn path(&self, id: &str) -> Result<Option<PathBuf>> {
+        Ok(self.db.get(id)?.map(|row| row.path))
+    }
+}
+
 const FOLDERS_FILE: &str = ".folders";
 /// Every install's welcome note shares this id (see `create_welcome_note`).
 const WELCOME_ID: &str = "00000000-0000-7000-8000-000000000001";
@@ -55,6 +81,55 @@ impl Store {
 
     pub fn notes_dir(&self) -> &Path {
         self.dir.root()
+    }
+
+    /// The note kept at `path`, if it is one of ours. Symlinks and `..` are
+    /// resolved first so a path handed in from the shell matches the index.
+    pub fn find_by_path(&self, path: &Path) -> Result<Option<String>> {
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        if let Some(id) = self.db.id_for_path(&canonical)? {
+            return Ok(Some(id));
+        }
+        self.db.id_for_path(path)
+    }
+
+    /// Bring a markdown file from outside the notes folder in as a new note
+    /// (a copy — the original is left alone) and return its id.
+    pub fn import(&mut self, path: &Path) -> Result<Note> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let (fm, body) = note::parse_document(&text);
+        let now = Utc::now();
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned);
+        let title = {
+            let derived = note::derive_title(body);
+            if derived == note::UNTITLED {
+                stem.clone().unwrap_or(derived)
+            } else {
+                derived
+            }
+        };
+        let mut n = Note {
+            // A fresh id: the copy is a different note from wherever the
+            // file came from, even if that was another JotJotBoom folder.
+            id: note::new_id(),
+            title,
+            body: body.to_owned(),
+            created: fm.created.unwrap_or(now),
+            modified: now,
+            pinned: false,
+            trashed: false,
+            extra_frontmatter: fm.extra,
+            path: PathBuf::new(),
+        };
+        let name = stem.as_deref().unwrap_or(&n.title);
+        n.path = self.dir.unique_path(self.dir.root(), name, None);
+        self.write(&mut n)?;
+        Ok(n)
     }
 
     /// Bring the index in line with the files on disk. Returns how many
@@ -465,6 +540,40 @@ mod tests {
         )
         .unwrap();
         (store, tmp)
+    }
+
+    #[test]
+    fn find_by_path_import_and_readonly_index() {
+        let (mut store, tmp) = temp_store();
+        let mut n = store.create().unwrap();
+        n.body = "# Meeting notes\n\nDiscussed the roadmap #work".into();
+        store.save(&mut n).unwrap();
+
+        // A note in the folder is found by its path; a stranger is not.
+        assert_eq!(store.find_by_path(&n.path).unwrap().as_deref(), Some(n.id.as_str()));
+        let outside = tmp.path().join("elsewhere.md");
+        std::fs::write(&outside, "Just a body line\n\nwith #ideas").unwrap();
+        assert_eq!(store.find_by_path(&outside).unwrap(), None);
+
+        // Importing copies it in under its own filename and leaves the original.
+        let imported = store.import(&outside).unwrap();
+        assert!(imported.path.starts_with(store.notes_dir()));
+        assert!(imported.path.ends_with("elsewhere.md"), "{}", imported.path.display());
+        assert_eq!(imported.title, "Just a body line");
+        assert!(outside.exists());
+        assert_eq!(
+            store.find_by_path(&imported.path).unwrap().as_deref(),
+            Some(imported.id.as_str())
+        );
+        assert_eq!(store.list(&View::Tag("ideas".into())).unwrap().len(), 1);
+
+        // The read-only index the search provider uses sees the same notes.
+        let index = Index::open(&tmp.path().join("index.db")).unwrap().unwrap();
+        let hits = index.search("roadmap").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, n.id);
+        assert_eq!(index.path(&n.id).unwrap().as_deref(), Some(n.path.as_path()));
+        assert!(Index::open(&tmp.path().join("missing.db")).unwrap().is_none());
     }
 
     #[test]

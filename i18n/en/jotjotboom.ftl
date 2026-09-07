@@ -1,6 +1,6 @@
 app-title = JotJotBoom
-app-comment = Retro-flavoured markdown notes for the COSMIC desktop
-app-keywords = notes;markdown;retro
+app-comment = Retro-flavoured markdown notes
+app-keywords = notes;markdown;retro;COSMIC
 about = About
 repository = Repository
 view = View

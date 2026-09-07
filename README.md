@@ -1,6 +1,6 @@
 # Jotjotboom
 
-Retro-flavoured markdown notes for the COSMIC desktop
+Retro-flavoured markdown notes for the COSMIC desktop — and for GNOME.
 
 ## Installation
 
@@ -24,6 +24,22 @@ A [justfile](./justfile) is included by default for the [casey/just][just] comma
 - `just build-vendored` compiles with vendored dependencies from that tarball
 - `just check` runs clippy on the project to check for linter warnings
 - `just check-json` can be used by IDEs that support LSP
+
+## On GNOME
+
+The same build runs on GNOME (Wayland or Xorg) and borrows what the
+desktop already knows:
+
+- Light/dark mode and the accent colour follow the system setting.
+- Interface and monospace fonts, the icon theme, and which title-bar
+  buttons are shown come from GNOME's settings.
+- Notes turn up in the Activities overview search; pick one to open it,
+  or press the arrow to search inside the app. (Log in again after
+  installing for the shell to notice the provider.)
+- "Open With → JotJotBoom" on a `.md` file in Files imports a copy into
+  your notes; a file already in the notes folder just opens.
+- The launcher's right-click menu has "New note"; launching the app again
+  raises the window instead of opening a second one.
 
 ## Sync between machines
 

@@ -76,6 +76,42 @@ impl Db {
         Ok(db)
     }
 
+    /// Open an existing index without touching it: no pragmas, no
+    /// migration. For readers outside the app (the GNOME Shell search
+    /// provider) that must not race the app's writes. `None` when there is
+    /// no index yet or it is from another schema version.
+    pub fn open_read_only(path: &Path) -> Result<Option<Self>> {
+        use rusqlite::OpenFlags;
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .with_context(|| format!("opening {} read-only", path.display()))?;
+        conn.busy_timeout(std::time::Duration::from_millis(500))?;
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap_or(0);
+        if version != SCHEMA_VERSION {
+            return Ok(None);
+        }
+        Ok(Some(Self { conn }))
+    }
+
+    /// The id of the note stored at `path` (absolute, as indexed).
+    pub fn id_for_path(&self, path: &Path) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT id FROM notes WHERE path = ?1",
+                params![path_str(path)],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     fn migrate(&mut self) -> Result<()> {
         let version: i64 = self
             .conn

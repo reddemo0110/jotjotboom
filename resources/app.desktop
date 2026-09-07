@@ -1,11 +1,17 @@
 [Desktop Entry]
 Name=JotJotBoom
-Comment=Retro-flavoured markdown notes for the COSMIC desktop
+Comment=Retro-flavoured markdown notes
 Type=Application
 Icon=io.github.jotjotboom.JotJotBoom
 Exec=jotjotboom %F
 Terminal=false
 StartupNotify=true
-Categories=Office;COSMIC;
-Keywords=COSMIC
-MimeType=
+SingleMainWindow=true
+Categories=Office;TextEditor;COSMIC;GNOME;
+Keywords=notes;markdown;retro;COSMIC;
+MimeType=text/markdown;text/x-markdown;
+Actions=new-note;
+
+[Desktop Action new-note]
+Name=New note
+Exec=jotjotboom --new

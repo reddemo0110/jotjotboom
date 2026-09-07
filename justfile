@@ -16,6 +16,10 @@ appdata := appid + '.metainfo.xml'
 desktop := appid + '.desktop'
 # Application's icon.
 icon-svg := appid + '.svg'
+# GNOME Shell search provider: the shell reads the .ini, D-Bus activates the
+# .service. Harmless on other desktops.
+search-ini := appid + '.search-provider.ini'
+search-service := appid + '.SearchProvider.service'
 
 # Install destinations
 base-dir := absolute_path(clean(rootdir / prefix))
@@ -24,6 +28,8 @@ bin-dst := base-dir / 'bin' / name
 desktop-dst := base-dir / 'share' / 'applications' / desktop
 icons-dst := base-dir / 'share' / 'icons' / 'hicolor'
 icon-svg-dst := icons-dst / 'scalable' / 'apps' / icon-svg
+search-ini-dst := base-dir / 'share' / 'gnome-shell' / 'search-providers' / search-ini
+search-service-dst := base-dir / 'share' / 'dbus-1' / 'services' / search-service
 
 # Default recipe which runs `just build-release`
 default: build-release
@@ -66,10 +72,13 @@ install:
     install -Dm0644 {{ 'target' / 'xdgen' / 'app.desktop' }} {{desktop-dst}}
     install -Dm0644 {{ 'target' / 'xdgen' / 'app.metainfo.xml' }} {{appdata-dst}}
     install -Dm0644 {{ 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'icon.svg' }} {{icon-svg-dst}}
+    install -Dm0644 {{ 'resources' / 'search-provider.ini' }} {{search-ini-dst}}
+    mkdir -p {{ parent_directory(search-service-dst) }}
+    sed 's|^Exec=.*|Exec={{bin-dst}} --search-provider|' {{ 'resources' / 'search-provider.service' }} > {{search-service-dst}}
 
 # Uninstalls installed files
 uninstall:
-    rm {{bin-dst}} {{desktop-dst}} {{icon-svg-dst}}
+    rm {{bin-dst}} {{desktop-dst}} {{icon-svg-dst}} {{search-ini-dst}} {{search-service-dst}}
 
 # Per-user install (no sudo): ~/.local/bin, launcher entry, icon.
 # The desktop entry gets an absolute Exec so it works even if ~/.local/bin
@@ -79,14 +88,19 @@ install-user: build-release
     install -Dm0755 {{ cargo-target-dir / 'release' / name }} {{ user-base / 'bin' / name }}
     install -Dm0644 {{ 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'icon.svg' }} {{ user-base / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / icon-svg }}
     install -Dm0644 {{ 'target' / 'xdgen' / 'app.metainfo.xml' }} {{ user-base / 'share' / 'metainfo' / appdata }}
-    sed 's|^Exec=.*|Exec={{ user-base / 'bin' / name }} %F|' {{ 'target' / 'xdgen' / 'app.desktop' }} > {{ user-base / 'share' / 'applications' / desktop }}
+    sed 's|^Exec=jotjotboom\(.*\)|Exec={{ user-base / 'bin' / name }}\1|' {{ 'target' / 'xdgen' / 'app.desktop' }} > {{ user-base / 'share' / 'applications' / desktop }}
+    install -Dm0644 {{ 'resources' / 'search-provider.ini' }} {{ user-base / 'share' / 'gnome-shell' / 'search-providers' / search-ini }}
+    mkdir -p {{ user-base / 'share' / 'dbus-1' / 'services' }}
+    sed 's|^Exec=.*|Exec={{ user-base / 'bin' / name }} --search-provider|' {{ 'resources' / 'search-provider.service' }} > {{ user-base / 'share' / 'dbus-1' / 'services' / search-service }}
     -update-desktop-database {{ user-base / 'share' / 'applications' }}
     -gtk-update-icon-cache -q -t -f {{ user-base / 'share' / 'icons' / 'hicolor' }}
     @echo "Installed. Find JotJotBoom in the app library; right-click it in the dock to pin."
+    @echo "On GNOME, notes appear in the Activities overview search after the next login (or a shell restart)."
 
 # Removes the per-user install
 uninstall-user:
     rm -f {{ user-base / 'bin' / name }} {{ user-base / 'share' / 'applications' / desktop }} {{ user-base / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / icon-svg }} {{ user-base / 'share' / 'metainfo' / appdata }}
+    rm -f {{ user-base / 'share' / 'gnome-shell' / 'search-providers' / search-ini }} {{ user-base / 'share' / 'dbus-1' / 'services' / search-service }}
     -update-desktop-database {{ user-base / 'share' / 'applications' }}
 
 # Vendor dependencies locally

@@ -1,6 +1,6 @@
 # JotJotBoom — agent notes
 
-Hybrid-markdown notes app for the COSMIC desktop, in Rust + libcosmic.
+Hybrid-markdown notes app for the COSMIC desktop (and GNOME), in Rust + libcosmic.
 Read `Project Handover — …md` for the locked architecture and
 `DECISIONS.md` for how the open questions were settled and why.
 `RICH-EDITOR-PLAN.md` is the plan for build step 3 (the cosmic-text editor).
@@ -16,7 +16,7 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
   launcher entry with absolute Exec, icon, metainfo); `just uninstall-user`
 - `RUST_LOG=jotjotboom=debug cargo run` for tracing output
 - Visual check without a human: `tools/xshot.py out.png [--script ...]`
-  runs the app on Xwayland, drives it via the `JJB_SCRIPT` hook (`step:arg` form, e.g. `--script 'new;type:Hello;wait:1000'`; steps:
+  runs the app on Xwayland (`XSHOT_LOG=path` keeps its log), drives it via the `JJB_SCRIPT` hook (`step:arg` form, e.g. `--script 'new;type:Hello;wait:1000'`; steps:
   new, type, search, select, pin, trash, folder, format, selectall, dock,
   themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, linkdrag, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, iconset, attach, tagdrag, tagmove, addspace, weight, fontfor, buffet, sel, cell, editcell, fpick, fpickover, pickdone, draft, fill, tsel, sync, syncnow, quit, wait, exit; `;` separates steps — write `\;` inside text),
   and captures the window with X auto-repeat switched off. It runs against a
@@ -49,6 +49,18 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
 - `src/icon.rs` — the launcher icon generated from a palette and written into
   the user's hicolor theme.
 - `src/config.rs` — cosmic-config entry (`notes_dir`, `device_id`).
+- `src/desktop.rs` — which desktop we are on; off COSMIC, fonts / icon theme /
+  title-bar buttons are read from the portal (`org.gnome.desktop.*`) and
+  pushed into libcosmic's `COSMIC_TK` by `reassert()` (called from the
+  header/view because libcosmic overwrites that struct on its config update).
+- `src/search_provider.rs` — `jotjotboom --search-provider`: the headless
+  GNOME Shell search service (`org.gnome.Shell.SearchProvider2`), answering
+  from `store::Index` (read-only index.db) and launching the app to open a
+  hit. `resources/search-provider.{ini,service}` are installed by the
+  justfile / install.sh. The app is single-instance: `app::Flags` carries
+  files / `--search` / `--new` to the running instance over D-Bus
+  (`dbus_activation`); set `COSMIC_SINGLE_INSTANCE=false` to bypass
+  (xshot does).
 - `src/secrets.rs` — keyring wrapper; holds the sync token.
 - `src/sync.rs` — PocketBase client and one blocking sync cycle (`run`):
   refresh token, pull since cursor, push; `Envelope` is the opaque payload
@@ -66,7 +78,8 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
 - The sync payload will be the full file text; title/body/tags must stay
   inside it. Server-visible metadata is id/revision/timestamp/device only.
 - Retro styling belongs to the editor surface and themes only. Chrome stays
-  stock COSMIC.
+  stock COSMIC (which, on GNOME, means stock libcosmic wearing GNOME's fonts
+  and icons — never GTK, never a second toolkit).
 - Autosave is debounced (`AUTOSAVE_DELAY`); anything that switches or
   drops the current note must call `close_current()` / `flush()` first.
 - Sync never clobbers: both-sides-changed becomes a conflict copy, edit
