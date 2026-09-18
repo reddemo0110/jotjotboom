@@ -1058,8 +1058,9 @@ impl cosmic::Application for AppModel {
             .height(Length::Fill);
         if !self.backlinks.is_empty() {
             editor_col = editor_col.push(retro::hrule(&p)).push(
+                // Pane padding + title bar + one row of chips + scrollbar.
                 widget::container(self.backlinks_frame(&p))
-                    .height(Length::Fixed(58.0))
+                    .height(Length::Fixed(88.0))
                     .width(Length::Fill),
             );
         }
@@ -1704,7 +1705,14 @@ impl AppModel {
                     if let Some(id) = found {
                         return self.update(Message::Select(id));
                     }
-                    tracing::info!(title, "no note with that title");
+                    // A link to a note that does not exist yet creates it,
+                    // the way every wiki does; the link then resolves.
+                    let title = title.trim();
+                    if title.is_empty() || self.current.as_ref().is_some_and(|n| n.trashed) {
+                        return Task::none();
+                    }
+                    tracing::info!(title, "no note with that title; creating it");
+                    return self.create_note(format!("# {title}"), true);
                 }
                 crate::editor::widget::Link::Tag(tag) => {
                     if let Some(tag) = note::normalize_tag(tag.trim_start_matches('#')) {
@@ -2951,39 +2959,14 @@ impl AppModel {
                 if matches!(self.view, View::Trash) {
                     self.view = View::All;
                 }
-                self.close_current();
                 self.query.clear();
-                // A note started inside a folder carries that tag from the outset.
                 // Every note opens as a heading; a note started inside a
                 // folder also carries that tag from the outset.
                 let body = match &self.view {
                     View::Tag(t) => format!("# \n\n#{t}\n"),
                     _ => "# ".to_owned(),
                 };
-                let created = self.store.as_mut().and_then(|s| match s.create() {
-                    Ok(mut note) => {
-                        note.body = body;
-                        if let Err(err) = s.save(&mut note) {
-                            tracing::error!(%err, "pre-filling new note");
-                        }
-                        Some(note)
-                    }
-                    Err(err) => {
-                        tracing::error!(%err, "creating note");
-                        None
-                    }
-                });
-                if let Some(note) = created {
-                    self.refresh_tags();
-                    self.refresh_list();
-                    self.open_note(&note.id);
-                    // Caret after the `# `, ready for the title.
-                    if let Some(c) = self.blocks.focused_text() {
-                        c.perform(text_editor::Action::Move(text_editor::Motion::End));
-                    }
-                    return Task::batch([self.update_title(), self.focus_editor()]);
-                }
-                return self.update_title();
+                return self.create_note(body, false);
             }
 
             Message::TrashCurrent => {
@@ -7109,6 +7092,40 @@ impl AppModel {
         {
             self.open_note(&first);
         }
+    }
+
+    /// Make a note with `body`, open it and focus the editor; the caret
+    /// lands after the title line, or on a fresh paragraph below it when
+    /// `below_title`.
+    fn create_note(&mut self, body: String, below_title: bool) -> Task<cosmic::Action<Message>> {
+        self.close_current();
+        let created = self.store.as_mut().and_then(|s| match s.create() {
+            Ok(mut note) => {
+                note.body = body;
+                if let Err(err) = s.save(&mut note) {
+                    tracing::error!(%err, "pre-filling new note");
+                }
+                Some(note)
+            }
+            Err(err) => {
+                tracing::error!(%err, "creating note");
+                None
+            }
+        });
+        if let Some(note) = created {
+            self.refresh_tags();
+            self.refresh_list();
+            self.open_note(&note.id);
+            if let Some(c) = self.blocks.focused_text() {
+                c.perform(text_editor::Action::Move(text_editor::Motion::End));
+                if below_title {
+                    c.perform(text_editor::Action::Edit(text_editor::Edit::Enter));
+                    c.perform(text_editor::Action::Edit(text_editor::Edit::Enter));
+                }
+            }
+            return Task::batch([self.update_title(), self.focus_editor()]);
+        }
+        self.update_title()
     }
 
     fn open_note(&mut self, id: &str) {
