@@ -960,3 +960,46 @@ Re-running after `git pull` updates. README leads with it.
   writing on the synced line and does not breed further conflicts.
 - Token in the keyring (`sync-token`); server address and email in
   cosmic-config. No keyring = sign-in lasts for the session only.
+
+## 2026-09-18 — Bug sweep: the writer's paper cuts
+Dogfooded through the harness (scripted writer flows, file inspection,
+captures) plus a read of the user's own notes. Fixed, in order found:
+- Enter on a list line now carries the list on — `- `, `* `, `1.` (counts
+  up), `- [ ] ` (a ticked box comes back open), indent kept — and Enter
+  on an empty item ends the list by clearing its marker, the convention
+  everywhere. `note::list_continuation` is the pure part;
+  `blocks::continue_list` drives the buffer; the app only intercepts
+  `Edit::Enter`, so pastes and the format actions are untouched.
+- `[]` → `- [ ] ` used to leave two spaces once the writer typed the
+  habitual one; the keystroke after the expansion swallows a single space
+  at exactly that spot (`task_space`), anything else clears the hint.
+- Opening a note parked the caret at byte 0, before the hidden `# `, so
+  the first keystroke turned "Alpha" into "x# Alpha". The caret now
+  starts at the end of the title line; the view stays at the top.
+- `Blocks::remove_block` refused tables, so Backspace at the start of the
+  block after a table (which the app already routed there) did nothing.
+  Removing any card also threw the caret to the end of the merged text;
+  it now sits at the seam.
+- Ctrl+click on `[[Title]]` with no such note was a dead click. It now
+  creates the note (`# Title` and a fresh paragraph) and opens it, like
+  every wiki; `create_note()` is shared with Ctrl+N. The trash view is
+  excluded.
+- The "linked from" pane was 58 px tall since the flat-pane switch — its
+  own title bar and padding used that up, so the chips drew under the
+  clip. 88 px.
+- **Caret scroll-into-view**, the plan's known gap: typing or arrowing
+  past the top or bottom edge left the caret out of sight. Mechanism:
+  the app flags the focused content after an edit or caret motion
+  (`request_reveal`); the widget, on its next event (after layout, so the
+  buffer is shaped), reports the caret line's rectangle via `on_caret`;
+  the app runs a widget `Operation` against the editor scrollable (which
+  now has an id) that reads the viewport and translation and scrolls
+  just enough, with a two-line margin. Opening a note reveals the title,
+  so the view starts at the top. Clicks and drags don't trigger it.
+- List previews were cut at 90 characters mid-word with no ellipsis;
+  `note::clip_words` ends on a word.
+- Harness: `key:name[:times]` step for backspace / delete / enter / tab /
+  arrows / home / end, needed to drive the deletion edge cases.
+Seen and left alone: the user's own note asks about bullet alignment
+(dated before the 2.2× gutter change); text wrapped beside a floated
+image breaks a heading mid-word when the column is under ~100 px.
