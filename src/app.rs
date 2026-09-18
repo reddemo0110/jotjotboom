@@ -7653,7 +7653,7 @@ fn note_row<'a>(
         .spacing(3)
         .width(Length::Fill);
     if !note.preview.is_empty() {
-        let preview: String = note.preview.chars().take(90).collect();
+        let preview = note::clip_words(&note.preview, 90);
         column = column.push(retro::dim(p, preview).font(ui).size(size - 1.0));
     }
     column.into()

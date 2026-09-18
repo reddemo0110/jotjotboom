@@ -235,6 +235,26 @@ pub fn preview(body: &str) -> String {
     }
 }
 
+/// The first `max` characters of `s`, cut back to a word boundary and
+/// finished with an ellipsis when anything was dropped.
+pub fn clip_words(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_owned();
+    }
+    let head: String = s.chars().take(max).collect();
+    let whole_word = s.chars().nth(max).is_some_and(char::is_whitespace);
+    let cut = if whole_word {
+        head.len()
+    } else {
+        head.rfind(char::is_whitespace)
+            .filter(|&i| i > max / 2)
+            .unwrap_or(head.len())
+    };
+    let mut out = head[..cut].trim_end().to_owned();
+    out.push('…');
+    out
+}
+
 fn strip_block_markup(line: &str) -> String {
     let mut s = line;
     loop {
@@ -596,6 +616,14 @@ pub fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clip_words_ends_on_a_word() {
+        assert_eq!(clip_words("short one", 20), "short one");
+        assert_eq!(clip_words("the quick brown fox jumps", 15), "the quick brown…");
+        assert_eq!(clip_words("the quick brown fox jumps", 14), "the quick…");
+        assert_eq!(clip_words("supercalifragilistic word", 10), "supercalif…");
+    }
 
     #[test]
     fn list_continuation_knows_bullets_numbers_and_boxes() {
