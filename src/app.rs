@@ -15,7 +15,9 @@ use cosmic::Application as _;
 use cosmic::app::context_drawer;
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
 use cosmic::iced::keyboard::{self, key::Physical};
-use cosmic::iced::{Alignment, Event, Length, Point, Subscription, event, mouse, window};
+use cosmic::iced::{
+    Alignment, Event, Length, Point, Rectangle, Subscription, Vector, event, mouse, window,
+};
 use cosmic::prelude::*;
 use cosmic::widget::menu::action::MenuAction as _;
 use cosmic::widget::{self, about::About, icon, menu, nav_bar, text_editor};
@@ -205,6 +207,7 @@ pub struct AppModel {
     query: String,
     search_id: widget::Id,
     notes_scroll_id: widget::Id,
+    editor_scroll_id: widget::Id,
     /// The dock's `+` is expanded, showing new-note / new-folder.
     dock_open: bool,
     new_folder: String,
@@ -395,6 +398,9 @@ pub enum Message {
     SetPairing(String),
     /// Ctrl+click on a `[[link]]` or `#tag` in the rich editor.
     FollowLink(crate::editor::widget::Link),
+    /// The focused editor reports its caret line (layout coordinates) so
+    /// the note can scroll to keep it in view.
+    RevealCaret(Rectangle),
     RestoreFonts,
     /// Grow (+) or shrink (−) one pane's text, in px.
     SizeStep(Pane, i16),
@@ -744,6 +750,7 @@ impl cosmic::Application for AppModel {
             query: String::new(),
             search_id: widget::Id::unique(),
             notes_scroll_id: widget::Id::unique(),
+            editor_scroll_id: widget::Id::unique(),
             dock_open: false,
             new_folder: String::new(),
             folder_id: widget::Id::unique(),
@@ -1694,6 +1701,13 @@ impl AppModel {
                 if let Some(Err(why)) = saved {
                     tracing::warn!(%why, "saving font choice");
                 }
+            }
+
+            Message::RevealCaret(rect) => {
+                let margin = f32::from(self.font_size) * 2.0;
+                return cosmic::iced::runtime::task::effect(cosmic::iced::runtime::Action::widget(
+                    reveal_in_scrollable(self.editor_scroll_id.clone(), rect, margin),
+                ));
             }
 
             Message::FollowLink(link) => match link {
@@ -2780,6 +2794,8 @@ impl AppModel {
                     };
                     self.record(kind);
                 }
+                let moves_caret =
+                    is_edit || matches!(action, Action::Move(_) | Action::Select(_));
                 // Enter on a list line carries the list on (or ends it).
                 let listed = editable
                     && matches!(action, Action::Edit(Edit::Enter))
@@ -2789,6 +2805,12 @@ impl AppModel {
                         .is_some_and(crate::blocks::continue_list);
                 if !listed && let Some(content) = self.blocks.text_mut(block) {
                     content.perform(action);
+                }
+                // Typing and caret motion keep the caret in view; a click
+                // or drag is already where the pointer is.
+                if moves_caret && let Some(content) = self.blocks.text(block)
+                {
+                    content.request_reveal();
                 }
                 if is_edit && editable {
                     self.dirty = true;
@@ -5821,6 +5843,7 @@ impl AppModel {
         self.hover_scroll(
             ScrollArea::Editor,
             widget::scrollable(col)
+                .id(self.editor_scroll_id.clone())
                 .height(Length::Fill)
                 .width(Length::Fill),
         )
@@ -5860,6 +5883,7 @@ impl AppModel {
             editor = editor
                 .on_action(move |a| Message::Editor(block, a))
                 .on_link(Message::FollowLink)
+                .on_caret(Message::RevealCaret)
                 .on_mark(|| Message::Format(Format::Mark));
         }
         editor.into()
@@ -7139,6 +7163,7 @@ impl AppModel {
                 // there breaks the title. Start after the title instead.
                 if let Some(content) = self.blocks.focused_text() {
                     content.perform(text_editor::Action::Move(text_editor::Motion::End));
+                    content.request_reveal();
                 }
                 self.image_menu = None;
                 self.undo.clear();
@@ -8235,5 +8260,61 @@ mod tests {
                 ("zed/a/b".to_string(), 1),
             ]
         );
+    }
+}
+
+/// Scroll the scrollable `target` just enough that `rect` (layout
+/// coordinates, as a child of that scrollable sees them) sits inside its
+/// viewport with `margin` above or below; no-op when it already does.
+fn reveal_in_scrollable(
+    target: widget::Id,
+    rect: Rectangle,
+    margin: f32,
+) -> impl cosmic::iced::advanced::widget::Operation<()> {
+    use cosmic::iced::advanced::widget::{Operation, operation::Scrollable};
+    use cosmic::iced::widget::scrollable::AbsoluteOffset;
+    struct Reveal {
+        target: widget::Id,
+        rect: Rectangle,
+        margin: f32,
+    }
+    impl Operation<()> for Reveal {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<()>)) {
+            operate(self);
+        }
+        fn scrollable(
+            &mut self,
+            id: Option<&widget::Id>,
+            bounds: Rectangle,
+            content_bounds: Rectangle,
+            translation: Vector,
+            state: &mut dyn Scrollable,
+        ) {
+            if id != Some(&self.target) {
+                return;
+            }
+            // Where the caret line sits in the (unscrolled) content.
+            let top = self.rect.y - bounds.y;
+            let bottom = top + self.rect.height;
+            let view_top = translation.y;
+            let view_bottom = translation.y + bounds.height;
+            let max = (content_bounds.height - bounds.height).max(0.0);
+            let y = if top - self.margin < view_top {
+                (top - self.margin).max(0.0)
+            } else if bottom + self.margin > view_bottom {
+                (bottom + self.margin - bounds.height).min(max)
+            } else {
+                return;
+            };
+            state.scroll_to(AbsoluteOffset {
+                x: None,
+                y: Some(y),
+            });
+        }
+    }
+    Reveal {
+        target,
+        rect,
+        margin,
     }
 }

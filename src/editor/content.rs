@@ -48,6 +48,9 @@ struct Inner {
     /// widget takes it on its next event — id-free, unlike a focus
     /// operation, so no other widget gets unfocused along the way.
     focus_requested: bool,
+    /// The app moved or edited at the caret: once laid out, the widget
+    /// should report where the caret's line sits so the note scrolls to it.
+    reveal_requested: bool,
     /// The app asked this editor to let go of keyboard focus (a sibling
     /// took it, or a table took the keys).
     unfocus_requested: bool,
@@ -116,6 +119,7 @@ impl RichContent {
             pointer_y: None,
             drop_marker: None,
             focus_requested: false,
+            reveal_requested: false,
             unfocus_requested: false,
         }))
     }
@@ -188,6 +192,21 @@ impl RichContent {
 
     pub fn request_focus(&self) {
         self.0.borrow_mut().focus_requested = true;
+    }
+
+    pub fn request_reveal(&self) {
+        self.0.borrow_mut().reveal_requested = true;
+    }
+
+    pub fn take_reveal_request(&self) -> bool {
+        std::mem::take(&mut self.0.borrow_mut().reveal_requested)
+    }
+
+    /// Top and height of the caret's line in buffer coordinates (valid
+    /// after a layout).
+    pub fn caret_line_span(&self) -> (f32, f32) {
+        let line = self.cursor().position.line;
+        (self.line_top(line), self.line_height_at_cursor())
     }
 
     pub fn take_focus_request(&self) -> bool {

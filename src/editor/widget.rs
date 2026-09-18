@@ -50,6 +50,9 @@ pub struct RichEditor<'a, Message> {
     on_link: Option<Box<dyn Fn(Link) -> Message + 'a>>,
     /// Fired when a middle-drag finishes over a selection: the highlighter.
     on_mark: Option<Box<dyn Fn() -> Message + 'a>>,
+    /// Fired with the caret line's rectangle (layout coordinates) after
+    /// the app asked for the caret to be revealed.
+    on_caret: Option<Box<dyn Fn(Rectangle) -> Message + 'a>>,
     /// Label on the drop indicator ("picture drops here").
     drop_label: String,
     /// Trip time (seconds) and landing exponent for the drop marker's
@@ -73,6 +76,7 @@ impl<'a, Message> RichEditor<'a, Message> {
             on_action: None,
             on_link: None,
             on_mark: None,
+            on_caret: None,
             drop_label: String::new(),
             drop_anim: None,
         }
@@ -90,6 +94,11 @@ impl<'a, Message> RichEditor<'a, Message> {
 
     pub fn on_link(mut self, f: impl Fn(Link) -> Message + 'a) -> Self {
         self.on_link = Some(Box::new(f));
+        self
+    }
+
+    pub fn on_caret(mut self, f: impl Fn(Rectangle) -> Message + 'a) -> Self {
+        self.on_caret = Some(Box::new(f));
         self
     }
 
@@ -321,6 +330,19 @@ impl<Message> Widget<Message, cosmic::Theme, cosmic::Renderer> for RichEditor<'_
             state.focus = None;
             state.drag_click = None;
             shell.request_redraw();
+        }
+        // The app edited or moved the caret; now that the buffer is laid
+        // out, tell it where the caret's line is so the note can scroll.
+        if let Some(on_caret) = &self.on_caret
+            && self.content.take_reveal_request()
+        {
+            let (top, height) = self.content.caret_line_span();
+            shell.publish(on_caret(Rectangle {
+                x: bounds.x,
+                y: bounds.y + self.padding.top + top,
+                width: bounds.width,
+                height,
+            }));
         }
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
