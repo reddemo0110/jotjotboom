@@ -233,31 +233,42 @@ impl Blocks {
     pub fn remove_block(&mut self, block: usize) {
         if !matches!(
             self.items.get(block),
-            Some(Block::Image(_) | Block::Rule(_) | Block::Link(_))
+            Some(Block::Image(_) | Block::Rule(_) | Block::Link(_) | Block::Table(_))
         ) {
             return;
         }
         let mut segs = self.segments();
         segs.remove(block);
-        // Merge the two text segments that now touch.
+        // Merge the two text segments that now touch; the caret goes to the
+        // seam (the start of the text that followed the removed block).
+        let mut cursor = None;
         if block > 0
             && block < segs.len()
             && let (Segment::Text(a), Segment::Text(b)) = (&segs[block - 1], &segs[block])
         {
-            let merged = if a.is_empty() {
-                b.clone()
+            let (merged, line) = if a.is_empty() {
+                (b.clone(), Some(0))
             } else if b.is_empty() {
-                a.clone()
+                (a.clone(), None) // nothing followed: the end of `a`
             } else {
-                format!("{a}\n{b}")
+                (format!("{a}\n{b}"), Some(a.split('\n').count()))
             };
+            cursor = line.map(|line| text_editor::Cursor {
+                position: text_editor::Position { line, column: 0 },
+                selection: None,
+            });
             segs.splice(block - 1..=block, [Segment::Text(merged)]);
         }
         let body = images::join(&segs);
         let focus = block.saturating_sub(1);
-        self.rebuild(&body, focus, None);
-        if let Some(content) = self.focused_text() {
-            content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+        self.rebuild(&body, focus, cursor);
+        let motion = if self.focused < block {
+            text_editor::Motion::DocumentEnd
+        } else {
+            text_editor::Motion::DocumentStart
+        };
+        if let (None, Some(content)) = (cursor, self.focused_text()) {
+            content.perform(text_editor::Action::Move(motion));
         }
     }
     /// Body line at which each block starts. Empty text blocks own no line
@@ -471,6 +482,49 @@ pub fn expand_task_shorthand(content: &mut Content) -> bool {
     true
 }
 
+/// Enter on a list line carries the list on: the new line starts with the
+/// same marker (`1.` counts up, a ticked box comes back empty), and Enter
+/// on an item with nothing after its marker ends the list by clearing the
+/// marker instead. Returns false when Enter should behave as usual (not a
+/// list line, a selection, or the caret inside the marker).
+pub fn continue_list(content: &mut Content) -> bool {
+    use crate::note::list_continuation;
+    use text_editor::{Action, Cursor, Edit, Motion, Position};
+    let cursor = content.cursor();
+    if cursor.selection.is_some() {
+        return false;
+    }
+    let Some(line) = content.line(cursor.position.line) else {
+        return false;
+    };
+    let text = line.text.to_string();
+    let Some((marker_len, next)) = list_continuation(&text) else {
+        return false;
+    };
+    let column = cursor.position.column.min(text.len());
+    if column < marker_len {
+        return false;
+    }
+    if text[marker_len..].trim().is_empty() {
+        // An empty item: Enter ends the list here.
+        content.move_to(Cursor {
+            position: Position {
+                line: cursor.position.line,
+                column: 0,
+            },
+            selection: None,
+        });
+        content.perform(Action::Select(Motion::End));
+        content.perform(Action::Edit(Edit::Paste(std::sync::Arc::new(String::new()))));
+        return true;
+    }
+    content.perform(Action::Edit(Edit::Enter));
+    for c in next.chars() {
+        content.perform(Action::Edit(Edit::Insert(c)));
+    }
+    true
+}
+
 /// `Content::text()` appends a trailing newline; drop it so joins stay exact.
 fn content_text(content: &Content) -> String {
     let mut t = content.text();
@@ -544,6 +598,68 @@ mod tests {
         assert!(!expand_task_shorthand(b.text_mut(2).unwrap()));
         b.remove_block(1);
         assert_eq!(b.body(), "one\n- [ ] milk\n- [ ] eggs\n  - [ ] bread\n");
+        // The caret sits at the seam, not at the end of the merged text.
+        let c = b.focused_text().unwrap();
+        assert_eq!((c.cursor().position.line, c.cursor().position.column), (1, 0));
+    }
+
+    #[test]
+    fn removing_a_table_or_a_last_block_places_the_caret_sensibly() {
+        let mut b = Blocks::from_body("intro\n| a | b |\n| --- | --- |\n| 1 | 2 |\nafter\n");
+        assert!(matches!(b.items.get(1), Some(Block::Table(_))));
+        b.remove_block(1);
+        assert_eq!(b.body(), "intro\nafter\n");
+        let c = b.focused_text().unwrap();
+        assert_eq!((c.cursor().position.line, c.cursor().position.column), (1, 0));
+        let mut b = Blocks::from_body("intro\n---\n");
+        b.remove_block(1);
+        assert_eq!(b.body(), "intro\n");
+        let c = b.focused_text().unwrap();
+        assert_eq!((c.cursor().position.line, c.cursor().position.column), (0, 5));
+    }
+
+    #[test]
+    fn enter_carries_lists_on_and_an_empty_item_ends_them() {
+        use text_editor::{Action, Edit, Motion};
+        let mut b = Blocks::from_body("- milk\n");
+        let c = b.focused_text().unwrap();
+        c.perform(Action::Move(Motion::DocumentEnd));
+        assert!(continue_list(c));
+        for ch in "eggs".chars() {
+            c.perform(Action::Edit(Edit::Insert(ch)));
+        }
+        assert_eq!(b.body(), "- milk\n- eggs\n");
+        // Enter, Enter: the second one sees an empty item and ends the list.
+        assert!(continue_list(b.focused_text().unwrap()));
+        assert_eq!(b.body(), "- milk\n- eggs\n- \n");
+        assert!(continue_list(b.focused_text().unwrap()));
+        let c = b.focused_text().unwrap();
+        assert_eq!(c.line_count(), 3);
+        assert_eq!(c.line(2).unwrap().text.to_string(), "");
+        // Numbers count up; a ticked box comes back open; indent survives.
+        let mut b = Blocks::from_body("  3. c\n- [x] done\n");
+        let c = b.focused_text().unwrap();
+        c.perform(Action::Move(Motion::End));
+        assert!(continue_list(c));
+        assert_eq!(b.body(), "  3. c\n  4. \n- [x] done\n");
+        let c = b.focused_text().unwrap();
+        c.perform(Action::Move(Motion::DocumentEnd));
+        assert!(continue_list(c));
+        assert_eq!(b.body(), "  3. c\n  4. \n- [x] done\n- [ ] \n");
+        // Not a list line, or the caret inside the marker: plain Enter.
+        let mut b = Blocks::from_body("plain\n- item\n");
+        let c = b.focused_text().unwrap();
+        c.perform(Action::Move(Motion::End));
+        assert!(!continue_list(c));
+        c.perform(Action::Move(Motion::Down));
+        c.perform(Action::Move(Motion::Home));
+        assert!(!continue_list(c));
+        // Mid-item Enter splits the text and carries the marker.
+        c.perform(Action::Move(Motion::End));
+        c.perform(Action::Move(Motion::Left));
+        c.perform(Action::Move(Motion::Left));
+        assert!(continue_list(c));
+        assert_eq!(b.body(), "plain\n- it\n- em\n");
     }
 
     #[test]

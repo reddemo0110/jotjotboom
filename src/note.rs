@@ -495,6 +495,45 @@ pub fn list_marker(s: &str) -> Option<usize> {
     (s.starts_with("- ") || s.starts_with("* ") || s.starts_with("+ ")).then_some(2)
 }
 
+/// Length of a numbered marker (`1. `, `12) `) at the start of `s`, with
+/// its number.
+pub fn numbered_marker(s: &str) -> Option<(usize, u32)> {
+    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits > 9 {
+        return None;
+    }
+    let rest = &s[digits..];
+    if !(rest.starts_with(". ") || rest.starts_with(") ")) {
+        return None;
+    }
+    Some((digits + 2, s[..digits].parse().ok()?))
+}
+
+/// What Enter should do on a list line: the byte length of the indent +
+/// marker (+ task box) that opens `line`, and the prefix the next line
+/// should start with (`1. ` becomes `2. `, a ticked box comes back open).
+/// `None` when the line is not a list item.
+pub fn list_continuation(line: &str) -> Option<(usize, String)> {
+    let indent_len = line.len() - line.trim_start().len();
+    let indent = &line[..indent_len];
+    let body = &line[indent_len..];
+    if let Some(n) = list_marker(body) {
+        let marker = &body[..n];
+        if let Some((box_len, _)) = task_box(&body[n..]) {
+            // `- [x]` at the very end of the line has no trailing space yet.
+            let len = n + box_len;
+            return Some((indent_len + len, format!("{indent}{marker}[ ] ")));
+        }
+        return Some((indent_len + n, format!("{indent}{marker}")));
+    }
+    let (n, number) = numbered_marker(body)?;
+    let punct = &body[n - 2..n - 1];
+    Some((
+        indent_len + n,
+        format!("{indent}{}{punct} ", number.saturating_add(1)),
+    ))
+}
+
 fn is_tag_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '-' | '/')
 }
@@ -557,6 +596,23 @@ pub fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_continuation_knows_bullets_numbers_and_boxes() {
+        assert_eq!(list_continuation("- milk"), Some((2, "- ".into())));
+        assert_eq!(list_continuation("* milk"), Some((2, "* ".into())));
+        assert_eq!(list_continuation("  - milk"), Some((4, "  - ".into())));
+        assert_eq!(list_continuation("- [ ] milk"), Some((6, "- [ ] ".into())));
+        assert_eq!(list_continuation("- [x] milk"), Some((6, "- [ ] ".into())));
+        assert_eq!(list_continuation("- [🦆] milk"), Some((9, "- [ ] ".into())));
+        assert_eq!(list_continuation("- [ ]"), Some((5, "- [ ] ".into())));
+        assert_eq!(list_continuation("3. eggs"), Some((3, "4. ".into())));
+        assert_eq!(list_continuation("  12) eggs"), Some((6, "  13) ".into())));
+        assert_eq!(list_continuation("eggs"), None);
+        assert_eq!(list_continuation("-milk"), None);
+        assert_eq!(list_continuation("1.5 litres"), None);
+        assert_eq!(list_continuation("---"), None);
+    }
 
     #[test]
     fn roundtrip_document() {

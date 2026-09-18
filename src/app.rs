@@ -90,6 +90,9 @@ pub struct AppModel {
     image_cache: HashMap<String, ImageState>,
     /// Block index of the image whose ⋯ menu is open.
     image_menu: Option<usize>,
+    /// Where `[]` just became `- [ ] `: (block, line, column). The space
+    /// a writer types next is the one the expansion already added.
+    task_space: Option<(usize, usize, usize)>,
     /// Drag-resize in progress.
     resizing: Option<Resize>,
     /// Table cell being edited (block, row, col) and its raw draft text.
@@ -677,6 +680,7 @@ impl cosmic::Application for AppModel {
             sync: sync_ui,
             image_cache: HashMap::new(),
             image_menu: None,
+            task_space: None,
             resizing: None,
             table_edit: None,
             table_draft: String::new(),
@@ -2689,6 +2693,21 @@ impl AppModel {
 
                 self.image_menu = None;
                 let editable = self.current.as_ref().is_some_and(|n| !n.trashed);
+                // `[]` expanded to `- [ ] ` a keystroke ago: the space the
+                // writer types out of habit is already there, so eat it.
+                if claims_focus
+                    && let Some((b, line, col)) = self.task_space.take()
+                    && b == block
+                    && matches!(action, Action::Edit(Edit::Insert(' ')))
+                    && self.blocks.text(block).is_some_and(|c| {
+                        let cur = c.cursor();
+                        cur.selection.is_none()
+                            && cur.position.line == line
+                            && cur.position.column == col
+                    })
+                {
+                    return Task::none();
+                }
                 // Edges of a block: step over images, or delete the one above.
                 if let Some(content) = self.blocks.text(block) {
                     let cursor = content.cursor();
@@ -2753,7 +2772,14 @@ impl AppModel {
                     };
                     self.record(kind);
                 }
-                if let Some(content) = self.blocks.text_mut(block) {
+                // Enter on a list line carries the list on (or ends it).
+                let listed = editable
+                    && matches!(action, Action::Edit(Edit::Enter))
+                    && self
+                        .blocks
+                        .text_mut(block)
+                        .is_some_and(crate::blocks::continue_list);
+                if !listed && let Some(content) = self.blocks.text_mut(block) {
                     content.perform(action);
                 }
                 if is_edit && editable {
@@ -2773,6 +2799,8 @@ impl AppModel {
                 {
                     // A fresh task box renders at once; no raw `- [ ] ` first.
                     content.render_now();
+                    let cur = content.cursor();
+                    self.task_space = Some((block, cur.position.line, cur.position.column));
                 }
                 // Clicking a task box ticks / unticks it.
                 if is_click && editable {
@@ -7090,6 +7118,11 @@ impl AppModel {
         match store.load(id) {
             Ok(Some(note)) => {
                 self.blocks = Blocks::from_body(&note.body);
+                // Byte 0 sits before the title's hidden `# `; a keystroke
+                // there breaks the title. Start after the title instead.
+                if let Some(content) = self.blocks.focused_text() {
+                    content.perform(text_editor::Action::Move(text_editor::Motion::End));
+                }
                 self.image_menu = None;
                 self.undo.clear();
                 self.redo.clear();
@@ -7482,6 +7515,27 @@ impl AppModel {
             }
             Step::Trash => self.update(Message::TrashCurrent),
             Step::Wait(_) => Task::none(),
+            Step::Key(name, times) => {
+                use text_editor::{Action, Edit, Motion};
+                let action = match name.as_str() {
+                    "backspace" => Action::Edit(Edit::Backspace),
+                    "delete" => Action::Edit(Edit::Delete),
+                    "enter" => Action::Edit(Edit::Enter),
+                    "tab" => Action::Edit(Edit::Indent),
+                    "left" => Action::Move(Motion::Left),
+                    "right" => Action::Move(Motion::Right),
+                    "up" => Action::Move(Motion::Up),
+                    "down" => Action::Move(Motion::Down),
+                    "home" => Action::Move(Motion::Home),
+                    "end" => Action::Move(Motion::End),
+                    _ => return Task::none(),
+                };
+                let mut task = Task::none();
+                for _ in 0..times {
+                    task = self.update(Message::Editor(self.blocks.focused, action.clone()));
+                }
+                task
+            }
             Step::Exit => {
                 self.close_current();
                 std::process::exit(0);

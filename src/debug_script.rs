@@ -141,6 +141,10 @@ pub enum Step {
     ToggleBox(usize, usize),
     /// Rename a tag everywhere: `renametag:old:new`.
     RenameTag(String, String),
+    /// Press a named key in the focused editor, optionally several times:
+    /// `key:backspace`, `key:left:3` (backspace, delete, enter, tab,
+    /// left, right, up, down, home, end).
+    Key(String, usize),
     /// Pause for the given milliseconds (lets autosave run).
     Wait(u64),
     /// Flush and quit.
@@ -345,6 +349,13 @@ pub fn parse(script: &str) -> Vec<Step> {
                 }
                 "syncnow" => Step::SyncNow,
                 "wait" => Step::Wait(arg.trim().parse().ok()?),
+                "key" => {
+                    let arg = arg.trim();
+                    let (name, times) = arg
+                        .split_once(':')
+                        .map_or((arg, 1), |(n, t)| (n, t.trim().parse().unwrap_or(1)));
+                    Step::Key(name.to_owned(), times)
+                }
                 "exit" => Step::Exit,
                 other => {
                     tracing::warn!(step = other, "unknown JJB_SCRIPT step");
