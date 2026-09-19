@@ -86,6 +86,9 @@ pub enum Step {
     /// Select `sel:line,col,line2,col2` in the focused editor (byte cols);
     /// with two args just places the caret.
     Sel(usize, usize, Option<(usize, usize)>),
+    /// The highlighter pen over `sweep:line,col,line2,col2`: what a
+    /// middle-button drag between those two points does.
+    Sweep(usize, usize, usize, usize),
     /// Set a cell of the first table block: `cell:row,col,text`.
     Cell(usize, usize, String),
     /// Open a cell for editing (and leave it open): `editcell:row,col`.
@@ -279,6 +282,18 @@ pub fn parse(script: &str) -> Vec<Step> {
                     match nums.as_slice() {
                         [l, c] => Step::Sel(*l, *c, None),
                         [l, c, l2, c2] => Step::Sel(*l, *c, Some((*l2, *c2))),
+                        _ => return None,
+                    }
+                }
+                "sweep" => {
+                    let nums: Vec<usize> = arg
+                        .trim()
+                        .split(',')
+                        .map(|n| n.trim().parse())
+                        .collect::<Result<_, _>>()
+                        .ok()?;
+                    match nums.as_slice() {
+                        [l, c, l2, c2] => Step::Sweep(*l, *c, *l2, *c2),
                         _ => return None,
                     }
                 }

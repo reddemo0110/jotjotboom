@@ -391,6 +391,107 @@ pub fn style_for(kind: Kind, settings: &Settings) -> Highlight {
     }
 }
 
+// ---------- the highlighter pen ----------
+
+/// The rendered `==marks==` on a line, markers included.
+fn marks(line: &str) -> Vec<Range<usize>> {
+    scan_line(line, false)
+        .0
+        .into_iter()
+        .filter(|s| s.kind == Kind::Mark)
+        .map(|s| s.range.start - 2..s.range.end + 2)
+        .collect()
+}
+
+/// `start..end` without the whitespace at either end; `None` when nothing
+/// is left. Markers only render hugging their text, so they must not wrap
+/// a space.
+pub fn trim_range(line: &str, start: usize, end: usize) -> Option<Range<usize>> {
+    let chosen = line.get(start..end)?;
+    let a = start + (chosen.len() - chosen.trim_start().len());
+    let b = a + chosen.trim().len();
+    (a < b).then_some(a..b)
+}
+
+/// The mark `start..end` lies wholly inside, if any: sweeping over
+/// highlighted text rubs it out.
+pub fn mark_around(line: &str, start: usize, end: usize) -> Option<Range<usize>> {
+    // A bare caret (`start == end`) asks about the mark it sits in.
+    let r = trim_range(line, start, end).or((start == end).then_some(start..end))?;
+    marks(line)
+        .into_iter()
+        .find(|m| m.start <= r.start && r.end <= m.end)
+}
+
+/// Take the markers off the mark at `mark` (as `mark_around` found it).
+/// Returns the new line and where the freed text now sits.
+pub fn unmark(line: &str, mark: Range<usize>) -> (String, Range<usize>) {
+    let inner = &line[mark.start + 2..mark.end - 2];
+    let out = format!("{}{inner}{}", &line[..mark.start], &line[mark.end..]);
+    (out, mark.start..mark.start + inner.len())
+}
+
+/// Highlight `start..end`: one clean `==…==` pair, whatever was there.
+/// Marks the range overlaps or touches are merged into it and any stray
+/// `==` inside is dropped, so markers never nest or pile up. Returns the
+/// new line and where the marked text sits, or `None` when there is
+/// nothing to mark.
+pub fn mark(line: &str, start: usize, end: usize) -> Option<(String, Range<usize>)> {
+    let Range { start: mut lo, end: mut hi } = trim_range(line, start, end)?;
+    // A mark a space away counts as touching: the band should run on.
+    let near_lo = line[..lo].trim_end().len();
+    let near_hi = hi + (line[hi..].len() - line[hi..].trim_start().len());
+    for m in marks(line) {
+        if m.start <= near_hi && m.end >= near_lo {
+            lo = lo.min(m.start);
+            hi = hi.max(m.end);
+        }
+    }
+    // A loose `==` right against the range would turn ours into `====`.
+    while line[..lo].ends_with("==") {
+        lo -= 2;
+    }
+    while line[hi..].starts_with("==") {
+        hi += 2;
+    }
+    // Old markers may have hugged spaces the new pair must not: those
+    // stay in the line, outside it.
+    let freed = line[lo..hi].replace("==", "");
+    let inner = freed.trim();
+    if inner.is_empty() {
+        return None;
+    }
+    let pad_l = &freed[..freed.len() - freed.trim_start().len()];
+    let pad_r = &freed[freed.trim_end().len()..];
+    let head = format!("{}{pad_l}==", &line[..lo]);
+    let out = format!("{head}{inner}=={pad_r}{}", &line[hi..]);
+    Some((out, head.len()..head.len() + inner.len()))
+}
+
+/// A swept range pulled out to whole words, the way a highlighter pen is
+/// used: the start always reaches back to its word's first letter (the
+/// button tends to land a little into the sweep), the end goes to
+/// whichever edge of its word is nearer.
+pub fn snap_to_words(line: &str, start: usize, end: usize) -> Range<usize> {
+    let is_word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '\'' | '’');
+    let back = |mut i: usize| {
+        while let Some(c) = line[..i].chars().next_back().filter(|c| is_word(*c)) {
+            i -= c.len_utf8();
+        }
+        i
+    };
+    let forward = |mut i: usize| {
+        while let Some(c) = line[i..].chars().next().filter(|c| is_word(*c)) {
+            i += c.len_utf8();
+        }
+        i
+    };
+    let a = back(start);
+    let (ws, we) = (back(end), forward(end));
+    let b = if end - ws >= we - end || ws <= a { we } else { ws };
+    a..b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,5 +610,63 @@ mod tests {
                 assert!(line.is_char_boundary(s.range.start) && line.is_char_boundary(s.range.end));
             }
         }
+    }
+    #[test]
+    fn marking_wraps_trims_and_merges() {
+        // Spaces stay outside the markers, or the mark would not render.
+        assert_eq!(
+            mark("• A drop down calendar", 3, 24).unwrap().0,
+            "• ==A drop down calendar=="
+        );
+        assert_eq!(mark("a  b", 1, 3), None);
+        // Over an existing mark and beyond: one pair, not nested ones.
+        let (line, at) = mark("oh yeah that's fi==xed!==", 2, 25).unwrap();
+        assert_eq!(line, "oh ==yeah that's fixed!==");
+        assert_eq!(&line[at], "yeah that's fixed!");
+        // Touching marks join up; hidden markers at the seam don't pile up.
+        assert_eq!(mark("==one== two", 7, 11).unwrap().0, "==one two==");
+        assert_eq!(mark("one ==two==", 0, 4).unwrap().0, "==one two==");
+        // A line an older build mangled heals on the next sweep.
+        assert_eq!(
+            mark("oh== yeah that's fi==xed!====", 0, 29).unwrap().0,
+            "==oh yeah that's fixed!=="
+        );
+        // Every result renders as a single mark.
+        for l in ["==one two==", "oh ==yeah that's fixed!=="] {
+            assert_eq!(marks(l).len(), 1, "{l}");
+        }
+    }
+
+    #[test]
+    fn sweeping_inside_a_mark_rubs_it_out() {
+        let line = "a ==marked run== b";
+        let m = mark_around(line, 6, 10).unwrap();
+        assert_eq!(m, 2..16);
+        let (out, at) = unmark(line, m);
+        assert_eq!(out, "a marked run b");
+        assert_eq!(&out[at], "marked run");
+        // The hidden markers may come along in the selection.
+        assert_eq!(mark_around(line, 2, 16), Some(2..16));
+        assert_eq!(mark_around(line, 0, 10), None);
+    }
+
+    #[test]
+    fn sweeps_snap_to_whole_words() {
+        let l = "• Dock repositioning up, down, side";
+        let at = |s: &str| l.find(s).unwrap();
+        // Landed mid-word: back to the word's start.
+        let r = snap_to_words(l, at("ioning"), at(", side"));
+        assert_eq!(&l[r], "repositioning up, down");
+        // The end goes to the nearer edge of its word.
+        let r = snap_to_words(l, at("Dock"), at("ositioning"));
+        assert_eq!(&l[r], "Dock ");
+        let r = snap_to_words(l, at("Dock"), at("ning"));
+        assert_eq!(&l[r], "Dock repositioning");
+        // A sweep inside one word takes the word.
+        let r = snap_to_words(l, at("posit"), at("sitioning"));
+        assert_eq!(&l[r], "repositioning");
+        // Markers are not word characters: snapping stops at them.
+        let m = "a ==bcd== e";
+        assert_eq!(snap_to_words(m, 5, 6), 4..7);
     }
 }

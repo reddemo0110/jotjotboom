@@ -532,6 +532,8 @@ pub enum Message {
     Search(String),
     FocusSearch,
     Format(Format),
+    /// A middle-button sweep over text: the highlighter pen.
+    MarkSweep,
     ToggleDock,
     NewFolderName(String),
     CreateFolder,
@@ -3072,7 +3074,14 @@ impl AppModel {
 
             Message::Format(format) => {
                 if self.current.as_ref().is_some_and(|n| !n.trashed) {
-                    self.apply_format(format);
+                    self.apply_format(format, false);
+                    return self.focus_editor();
+                }
+            }
+
+            Message::MarkSweep => {
+                if self.current.as_ref().is_some_and(|n| !n.trashed) {
+                    self.apply_format(Format::Mark, true);
                     return self.focus_editor();
                 }
             }
@@ -5080,7 +5089,9 @@ impl AppModel {
     }
 
     /// Apply a dock format action to the editor buffer.
-    fn apply_format(&mut self, format: Format) {
+    /// `sweep` is the highlighter pen (a middle-button drag): the swept
+    /// range snaps to whole words and leaves no selection behind.
+    fn apply_format(&mut self, format: Format, sweep: bool) {
         use text_editor::{Action, Edit, Motion};
         tracing::debug!(
             ?format,
@@ -5106,6 +5117,8 @@ impl AppModel {
         };
 
         match format {
+            // The highlighter has its own rules: marks merge, never nest.
+            Format::Mark if mark_selection(editor, sweep) => {}
             Format::Bold | Format::Italic | Format::Mark | Format::Code | Format::Link => {
                 let (before, after) = match format {
                     Format::Bold => ("**", "**"),
@@ -5164,7 +5177,13 @@ impl AppModel {
                     )
                 });
                 match one_line {
-                    Some((start, end)) if start != end => {
+                    Some((start, end))
+                        if markdown::trim_range(&text, start, end).is_some() =>
+                    {
+                        // Markers only render hugging their text: a space
+                        // swept up at either end stays outside them.
+                        let std::ops::Range { start, end } =
+                            markdown::trim_range(&text, start, end).unwrap_or(start..end);
                         let selected = text[start..end].to_owned();
                         let stripped = selected
                             .strip_prefix(before)
@@ -5884,7 +5903,7 @@ impl AppModel {
                 .on_action(move |a| Message::Editor(block, a))
                 .on_link(Message::FollowLink)
                 .on_caret(Message::RevealCaret)
-                .on_mark(|| Message::Format(Format::Mark));
+                .on_mark(|| Message::MarkSweep);
         }
         editor.into()
     }
@@ -7447,6 +7466,10 @@ impl AppModel {
                 }
                 Task::none()
             }
+            Step::Sweep(line, col, l2, c2) => {
+                let _ = self.run_step(Step::Sel(line, col, Some((l2, c2))));
+                self.update(Message::MarkSweep)
+            }
             Step::Buffet(highlight, dark) => {
                 let _ = self.update(Message::SetBuffetHighlight(retro::Theme::from_key(
                     &highlight,
@@ -7875,6 +7898,122 @@ fn task_marker_from_config(s: &str) -> String {
     }
 }
 
+/// Where a line's own text starts: past a heading's hashes, a quote or
+/// list marker, a task box, or a typed `•` bullet. Highlights begin here.
+fn lead_in(line: &str) -> usize {
+    let t = line.trim_start();
+    let indent = line.len() - t.len();
+    let hashes = t.bytes().take_while(|b| *b == b'#').count();
+    if (1..=6).contains(&hashes) && t[hashes..].starts_with(' ') {
+        return indent + hashes + 1;
+    }
+    if let Some((len, _)) = line_prefix(line) {
+        return len;
+    }
+    match t.chars().next() {
+        Some(c) if matches!(c, '•' | '◦' | '▪' | '‣' | '–') && t[c.len_utf8()..].starts_with(' ') => {
+            indent + c.len_utf8() + 1
+        }
+        _ => 0,
+    }
+}
+
+/// The highlighter: mark the selection (each line gets its own `==…==`,
+/// since a mark cannot span lines), or rub the highlight out when all of
+/// it is already marked. A lone caret inside a mark rubs that mark out.
+/// `false` when there was nothing for it to do, so the caller's plain
+/// caret handling (wrap the word, plant a pair) takes over.
+fn mark_selection(editor: &mut crate::editor::Content, sweep: bool) -> bool {
+    use text_editor::{Action, Cursor, Edit, Position};
+    let cursor = editor.cursor();
+    let pos = cursor.position;
+    let text_of = |editor: &crate::editor::Content, l: usize| {
+        editor.line(l).map(|t| t.text.into_owned()).unwrap_or_default()
+    };
+    let replace_line = |editor: &mut crate::editor::Content, l: usize, old: &str, new: String| {
+        editor.move_to(Cursor {
+            position: Position { line: l, column: old.len() },
+            selection: Some(Position { line: l, column: 0 }),
+        });
+        editor.perform(Action::Edit(Edit::Paste(Arc::new(new))));
+    };
+    let Some(anchor) = cursor.selection else {
+        let text = text_of(editor, pos.line);
+        let Some(m) = markdown::mark_around(&text, pos.column, pos.column) else {
+            return false;
+        };
+        let (new, freed) = markdown::unmark(&text, m);
+        replace_line(editor, pos.line, &text, new);
+        editor.move_to(Cursor {
+            position: Position {
+                line: pos.line,
+                column: pos.column.saturating_sub(2).clamp(freed.start, freed.end),
+            },
+            selection: None,
+        });
+        return true;
+    };
+    let (from, to) = if (anchor.line, anchor.column) <= (pos.line, pos.column) {
+        (anchor, pos)
+    } else {
+        (pos, anchor)
+    };
+    // What to mark on each line the selection touches.
+    let mut parts = Vec::new();
+    for l in from.line..=to.line {
+        let text = text_of(editor, l);
+        let mut a = if l == from.line { from.column.min(text.len()) } else { 0 };
+        let mut b = if l == to.line { to.column.min(text.len()) } else { text.len() };
+        if sweep && a < b {
+            let snapped = markdown::snap_to_words(&text, a, b);
+            if l == from.line {
+                a = snapped.start;
+            }
+            if l == to.line {
+                b = snapped.end;
+            }
+        }
+        a = a.max(lead_in(&text));
+        if let Some(r) = markdown::trim_range(&text, a, b) {
+            parts.push((l, text, r));
+        }
+    }
+    let rub_out = parts
+        .iter()
+        .all(|(_, text, r)| markdown::mark_around(text, r.start, r.end).is_some());
+    let mut last = None;
+    for (l, text, r) in parts {
+        let done = if rub_out {
+            markdown::mark_around(&text, r.start, r.end).map(|m| markdown::unmark(&text, m))
+        } else {
+            markdown::mark(&text, r.start, r.end)
+        };
+        if let Some((new, at)) = done {
+            replace_line(editor, l, &text, new);
+            last = Some((l, at));
+        }
+    }
+    let one_line = from.line == to.line;
+    match last {
+        // From the keyboard the words stay selected, so the same keys
+        // toggle straight back; the pen just moves on.
+        Some((l, at)) if one_line && !sweep => editor.move_to(Cursor {
+            position: Position { line: l, column: at.end },
+            selection: Some(Position { line: l, column: at.start }),
+        }),
+        // Past the closing marker: what is typed next is not highlighted.
+        Some((l, at)) => editor.move_to(Cursor {
+            position: Position {
+                line: l,
+                column: if rub_out { at.end } else { at.end + 2 },
+            },
+            selection: None,
+        }),
+        None => editor.perform(Action::ClearSelection),
+    }
+    true
+}
+
 /// The block prefix a line already carries and the dock action that makes
 /// it: `# ` (H1), `## ` (H2), `- ` (bullet), `- [ ] ` / `- [✓] ` (to-do).
 fn line_prefix(line: &str) -> Option<(usize, Format)> {
@@ -8241,6 +8380,58 @@ impl menu::action::MenuAction for MenuAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn swept(text: &str, from: (usize, &str), to: (usize, &str), sweep: bool) -> String {
+        use text_editor::{Cursor, Position};
+        let mut c = crate::editor::Content::with_text(text);
+        let lines: Vec<&str> = text.lines().collect();
+        let col = |(l, needle): (usize, &str)| match needle {
+            "$" => lines[l].len(),
+            n => lines[l].find(n).expect("needle on the line"),
+        };
+        c.move_to(Cursor {
+            position: Position { line: to.0, column: col(to) },
+            selection: Some(Position { line: from.0, column: col(from) }),
+        });
+        assert!(mark_selection(&mut c, sweep));
+        c.text()
+    }
+
+    #[test]
+    fn the_pen_marks_whole_words_and_never_nests() {
+        // Landed mid-word, overshot into a space: whole words, no spaces.
+        assert_eq!(
+            swept("• Minimalism mode today", (0, "malism"), (0, " today"), true),
+            "• ==Minimalism mode== today\n"
+        );
+        // From the gutter: the typed bullet and list marker stay outside.
+        assert_eq!(swept("• A drop down", (0, "•"), (0, "$"), true), "• ==A drop down==\n");
+        assert_eq!(swept("- [ ] milk", (0, "-"), (0, "$"), true), "- [ ] ==milk==\n");
+        assert_eq!(swept("## Plans", (0, "#"), (0, "$"), true), "## ==Plans==\n");
+        // Across lines: a pair per line, blank lines left alone.
+        assert_eq!(
+            swept("just basic functions\n\n• A calendar", (0, "asic"), (2, "$"), true),
+            "just ==basic functions==\n\n• ==A calendar==\n"
+        );
+        // Widening an existing highlight merges with it.
+        assert_eq!(
+            swept("oh yeah that's fi==xed!==", (0, "yeah"), (0, "$"), true),
+            "oh ==yeah that's fixed!==\n"
+        );
+        // Sweeping highlighted text again rubs it out.
+        assert_eq!(
+            swept("a ==marked run== b", (0, "arked"), (0, " run"), true),
+            "a marked run b\n"
+        );
+        // Right to left is the same sweep.
+        assert_eq!(swept("one two three", (0, " three"), (0, "wo"), true), "one ==two== three\n");
+    }
+
+    #[test]
+    fn marking_from_the_keyboard_keeps_the_exact_selection() {
+        assert_eq!(swept("unhappy", (0, "happy"), (0, "$"), false), "un==happy==\n");
+        assert_eq!(swept("a word here", (0, " word"), (0, "here"), false), "a ==word== here\n");
+    }
 
     #[test]
     fn tag_tree_inserts_parents() {

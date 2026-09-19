@@ -604,7 +604,31 @@ impl RichContent {
                         )
                     })
                 };
-                if let Some((r, _, _)) = span_rect(META_CODE) {
+                // One band per unbroken stretch: two marks on a row are two
+                // strokes, not one across the words between them.
+                let stretches = |meta: usize| -> Vec<Rectangle> {
+                    let mut out: Vec<Rectangle> = Vec::new();
+                    let mut open = false;
+                    for g in run.glyphs.iter() {
+                        if g.metadata != meta {
+                            open = false;
+                        } else if let Some(r) = out.last_mut().filter(|_| open) {
+                            let x1 = (r.x + r.width).max(g.x + g.w);
+                            r.x = r.x.min(g.x);
+                            r.width = x1 - r.x;
+                        } else {
+                            open = true;
+                            out.push(Rectangle {
+                                x: g.x,
+                                y: run.line_top,
+                                width: g.w,
+                                height: run.line_height,
+                            });
+                        }
+                    }
+                    out
+                };
+                for r in stretches(META_CODE) {
                     let h = size * 1.25;
                     o.code_bgs.push(Rectangle {
                         x: r.x - 3.0,
@@ -613,7 +637,7 @@ impl RichContent {
                         height: h,
                     });
                 }
-                if let Some((r, _, _)) = span_rect(META_MARK) {
+                for r in stretches(META_MARK) {
                     // A little taller than the glyphs, like a marker stroke.
                     let h = size * 1.35;
                     o.marks.push(Rectangle {
@@ -945,5 +969,20 @@ mod tests {
         assert_eq!(o.boxes.len(), 1);
         assert_eq!(o.boxes[0].mark, "✓");
         assert!(o.boxes[0].rect.y > 20.0, "box on the second line");
+    }
+    #[test]
+    fn each_mark_on_a_row_gets_its_own_band() {
+        let c = RichContent::with_text("==one== two ==three==");
+        let settings = markdown::Settings {
+            palette: crate::retro::Theme::Phosphor.palette(&cosmic::Theme::default()),
+            show_markers: false,
+            font: cosmic::font::mono(),
+            tag_icons: Default::default(),
+            icon_set: Default::default(),
+        };
+        c.update(600.0, cosmic::font::mono(), 15.0, 22.5, &settings, None);
+        let o = c.overlays();
+        assert_eq!(o.marks.len(), 2);
+        assert!(o.marks[0].x + o.marks[0].width < o.marks[1].x, "a gap over `two`");
     }
 }
