@@ -126,14 +126,12 @@ pub fn span_attrs(
             if active {
                 styled()
             } else {
-                // More than double the literal `- ` so the drawn dot gets a
+                // Spread the literal `- ` out so the drawn dot gets a
                 // conventional gutter before the text — proportional faces
                 // shape the hyphen-space pair far too narrow for that.
-                let m = base
-                    .metrics_opt
-                    .map_or(Metrics::new(14.0, line_height), Metrics::from);
-                transparent(META_BULLET)
-                    .metrics(Metrics::new(m.font_size * 2.2, m.line_height))
+                // Spacing (in ems), not a bigger font: taller glyphs would
+                // push the whole line's baseline down, away from the dot.
+                transparent(META_BULLET).letter_spacing(0.36)
             }
         }
         Kind::TaskBox => {
