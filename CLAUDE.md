@@ -66,7 +66,11 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
   refresh token, pull since cursor, push; `Envelope` is the opaque payload
   (file text + trashed/deleted). `src/store/sync.rs` is the store's half:
   `sync_pending` (hash diff vs `sync_state`), `apply_remote` (adopt /
-  delete / conflict copy), `apply_outcome`. `server/` has the PocketBase
+  delete / conflict copy), `apply_outcome`. `src/sync/files.rs` is the
+  other half of the folder (`assets/`, `.folders`) through a `files`
+  collection: it moves the bytes itself from the blocking thread; the
+  store only records `sync_files`, repoints notes at renamed files and
+  merges `.folders`. `server/` has the PocketBase
   migration + revision hook and a setup README. The two-device
   integration test runs only with `JJB_PB_URL=http://127.0.0.1:8090`
   pointing at a PocketBase started from `server/pocketbase/`.
@@ -76,14 +80,17 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
 - Files on disk are the source of truth; `index.db` is derived and disposable.
   Never add state that lives only in SQLite (except the sync oplog).
 - The sync payload will be the full file text; title/body/tags must stay
-  inside it. Server-visible metadata is id/revision/timestamp/device only.
+  inside it. Server-visible metadata is id/revision/timestamp/device only
+  (for files: a hash of the path, never the name).
 - Retro styling belongs to the editor surface and themes only. Chrome stays
   stock COSMIC (which, on GNOME, means stock libcosmic wearing GNOME's fonts
   and icons — never GTK, never a second toolkit).
 - Autosave is debounced (`AUTOSAVE_DELAY`); anything that switches or
   drops the current note must call `close_current()` / `flush()` first.
 - Sync never clobbers: both-sides-changed becomes a conflict copy, edit
-  beats delete, the open note auto-updates to the server version. Test
+  beats delete, the open note auto-updates to the server version; a
+  different file of the same name makes the local one step aside
+  (`name-2.ext`) and its notes follow. Test
   runs that sign in write the token into the real keyring
   (`secret-tool clear application jotjotboom key sync-token` afterwards)
   and must set `XDG_DATA_HOME` too, since `sync_state` lives in index.db.

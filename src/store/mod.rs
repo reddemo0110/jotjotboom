@@ -505,11 +505,12 @@ impl Store {
 }
 
 fn read_folders(path: &Path) -> Vec<String> {
-    let mut out: Vec<String> = std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(note::normalize_tag)
-        .collect();
+    parse_folders(&std::fs::read_to_string(path).unwrap_or_default())
+}
+
+/// The folder list as written in `.folders`: one tag per line.
+fn parse_folders(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = text.lines().filter_map(note::normalize_tag).collect();
     out.sort();
     out.dedup();
     out

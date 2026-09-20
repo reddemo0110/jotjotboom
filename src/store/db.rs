@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 use crate::note::{Note, NoteSummary};
+use crate::sync::files::FileState;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -117,6 +118,19 @@ impl Db {
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap_or(0);
+        // Not derived from disk, so it rides outside the schema version:
+        // adding it must not cost an index rebuild.
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sync_files (
+                path       TEXT PRIMARY KEY,
+                record_id  TEXT NOT NULL,
+                revision   INTEGER NOT NULL,
+                hash       TEXT NOT NULL,
+                local_hash TEXT NOT NULL,
+                size       INTEGER NOT NULL,
+                mtime      INTEGER NOT NULL
+            );",
+        )?;
         if version == SCHEMA_VERSION {
             return Ok(());
         }
@@ -488,8 +502,60 @@ impl Db {
     /// Forget everything about the server (new account, new server).
     pub fn clear_sync(&mut self) -> Result<()> {
         self.conn
-            .execute_batch("DELETE FROM sync_state; DELETE FROM sync_meta;")?;
+            .execute_batch("DELETE FROM sync_state; DELETE FROM sync_meta; DELETE FROM sync_files;")?;
         Ok(())
+    }
+
+    /// What we know about `assets/` and `.folders`, for the files cycle.
+    pub fn all_sync_files(&self) -> Result<Vec<FileState>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path, record_id, revision, hash, local_hash, size, mtime FROM sync_files")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(FileState {
+                path: r.get(0)?,
+                record_id: r.get(1)?,
+                revision: r.get(2)?,
+                hash: r.get(3)?,
+                local_hash: r.get(4)?,
+                size: r.get::<_, i64>(5)?.max(0) as u64,
+                mtime: r.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn set_sync_files(&mut self, states: &[FileState]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for s in states {
+            tx.execute(
+                "INSERT INTO sync_files (path, record_id, revision, hash, local_hash, size, mtime)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(path) DO UPDATE SET record_id = excluded.record_id, revision = excluded.revision,
+                    hash = excluded.hash, local_hash = excluded.local_hash, size = excluded.size,
+                    mtime = excluded.mtime",
+                params![
+                    s.path,
+                    s.record_id,
+                    s.revision,
+                    s.hash,
+                    s.local_hash,
+                    i64::try_from(s.size).unwrap_or(i64::MAX),
+                    s.mtime
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Files seen on disk that the server has not agreed to yet.
+    pub fn sync_files_pending(&self) -> Result<usize> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM sync_files WHERE local_hash != hash AND local_hash != ''",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as usize)
     }
 
     pub fn sync_meta(&self, key: &str) -> Result<Option<String>> {

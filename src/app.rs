@@ -1521,9 +1521,12 @@ impl AppModel {
                     );
                 }
                 let current_id = self.current.as_ref().map(|n| n.id.clone());
-                let touches_open = current_id
-                    .as_ref()
-                    .is_some_and(|id| out.incoming.iter().any(|r| &r.note_id == id));
+                // A renamed file rewrites the notes that show it — maybe
+                // this one.
+                let touches_open = !out.files.renamed.is_empty()
+                    || current_id
+                        .as_ref()
+                        .is_some_and(|id| out.incoming.iter().any(|r| &r.note_id == id));
                 if touches_open {
                     // Unsaved typing becomes a local change first, so it is
                     // kept (as a conflict copy if need be) rather than lost.
@@ -1541,32 +1544,44 @@ impl AppModel {
                     .count();
                 let changed = applied
                     .iter()
-                    .filter(|(_, a)| !matches!(a, Applied::Unchanged))
+                    .filter(|(_, a)| !matches!(a, Applied::Unchanged | Applied::Repointed))
                     .count();
-                if let Some(id) = current_id
-                    && let Some((_, what)) = applied.iter().find(|(nid, _)| *nid == id)
-                {
-                    match what {
-                        Applied::Deleted => {
-                            self.current = None;
-                            self.blocks = Blocks::default();
+                let repointed = applied.iter().any(|(_, a)| matches!(a, Applied::Repointed));
+                if let Some(id) = current_id {
+                    for (_, what) in applied.iter().filter(|(nid, _)| *nid == id) {
+                        match what {
+                            Applied::Deleted => {
+                                self.current = None;
+                                self.blocks = Blocks::default();
+                            }
+                            // The open note follows the server (or its
+                            // renamed picture): reload it in place.
+                            Applied::Adopted | Applied::Conflict { .. } | Applied::Repointed => {
+                                self.open_note(&id);
+                            }
+                            Applied::Unchanged => {}
                         }
-                        // The open note follows the server: reload it in place.
-                        Applied::Adopted | Applied::Conflict { .. } => self.open_note(&id),
-                        Applied::Unchanged => {}
                     }
                 }
-                if changed > 0 || !out.pushed.is_empty() {
+                if changed > 0 || repointed || !out.pushed.is_empty() || out.files.folders_remote.is_some() {
                     self.after_store_change();
+                }
+                // A picture that was missing when its note opened may be
+                // here now: give the failures another go.
+                let mut image_tasks = Vec::new();
+                if out.files.down > 0 {
+                    self.image_cache.retain(|_, state| !matches!(state, ImageState::Failed(_)));
+                    image_tasks = self.image_loads();
                 }
                 self.sync.last_run = Some(Instant::now());
                 self.sync.due = None;
-                if out.errors.is_empty() {
+                let first_error = out.errors.first().or_else(|| out.files.errors.first());
+                if let Some(err) = first_error {
+                    tracing::warn!(errors = ?out.errors, files = ?out.files.errors, "sync cycle had errors");
+                    self.sync.error = Some(err.clone());
+                } else {
                     self.sync.error = None;
                     self.sync.last_ok = Some(Instant::now());
-                } else {
-                    tracing::warn!(errors = ?out.errors, "sync cycle had errors");
-                    self.sync.error = Some(out.errors[0].clone());
                 }
                 self.sync.summary = if conflicts > 0 {
                     Some(fl!("sync-conflicts", n = conflicts, device = device))
@@ -1575,11 +1590,16 @@ impl AppModel {
                 } else {
                     None
                 };
-                // Conflict copies are new notes: send them straight up.
-                if conflicts > 0 {
+                self.sync.files_summary = (out.files.down > 0 || out.files.up > 0)
+                    .then(|| fl!("sync-files-moved", down = out.files.down, up = out.files.up));
+                // Conflict copies and repointed notes are local changes, and
+                // a big assets folder goes up a slice at a time: go again.
+                if conflicts > 0 || repointed || out.files.more {
                     self.sync.due = Some(Instant::now() + Duration::from_secs(1));
                 }
-                return Task::batch([token_task, self.update_title()]);
+                image_tasks.push(token_task);
+                image_tasks.push(self.update_title());
+                return Task::batch(image_tasks);
             }
 
             Message::SetLinkPreviews(on) => {
@@ -5023,9 +5043,16 @@ impl AppModel {
                 if let Some(summary) = &self.sync.summary {
                     col = col.push(status(summary.clone()));
                 }
+                if let Some(summary) = &self.sync.files_summary {
+                    col = col.push(status(summary.clone()));
+                }
                 let pending = self.store.as_ref().map_or(0, Store::sync_pending_count);
                 if pending > 0 && !self.sync.busy {
                     col = col.push(status(fl!("sync-pending", n = pending)));
+                }
+                let files_pending = self.store.as_ref().map_or(0, Store::sync_files_pending_count);
+                if files_pending > 0 && !self.sync.busy {
+                    col = col.push(status(fl!("sync-files-pending", n = files_pending)));
                 }
                 col = col.push(
                     widget::row::with_capacity(2)
@@ -7774,6 +7801,8 @@ struct SyncUi {
     error: Option<String>,
     /// What the last cycle did, for the status line.
     summary: Option<String>,
+    /// The same for pictures and attached files.
+    files_summary: Option<String>,
 }
 
 /// Foldable sections of the Appearance drawer (index into `appearance_open`).

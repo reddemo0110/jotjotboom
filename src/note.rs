@@ -451,6 +451,31 @@ fn tag_spans(body: &str) -> Vec<(usize, usize, String)> {
     out
 }
 
+/// Point every `](old)` link or picture target in `body` at `new` — an
+/// asset changed its name. Only whole targets match (`assets/pic.jpg` leaves
+/// `assets/pic.jpg.bak` alone). `None` when nothing matched.
+pub fn repoint_asset(body: &str, old: &str, new: &str) -> Option<String> {
+    let needle = format!("]({old}");
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    let mut changed = false;
+    while let Some(at) = rest.find(&needle) {
+        let after = &rest[at + needle.len()..];
+        let whole = after.starts_with([')', ' ', '\t']);
+        out.push_str(&rest[..at]);
+        if whole {
+            out.push_str("](");
+            out.push_str(new);
+            changed = true;
+        } else {
+            out.push_str(&needle);
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    changed.then_some(out)
+}
+
 /// Rewrite every `#old` and `#old/…` in `body` as `#new` / `#new/…`.
 /// `old` and `new` are normalised tags. `None` when nothing matched.
 pub fn rename_tag(body: &str, old: &str, new: &str) -> Option<String> {
@@ -616,6 +641,16 @@ pub fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repointing_an_asset_touches_whole_targets_only() {
+        let body = "![a](assets/pic.jpg){w=240}\n[pic](assets/pic.jpg)\n![b](assets/pic.jpg.bak)\n![c](assets/pic.jpg \"t\")\n";
+        assert_eq!(
+            repoint_asset(body, "assets/pic.jpg", "assets/pic-2.jpg").unwrap(),
+            "![a](assets/pic-2.jpg){w=240}\n[pic](assets/pic-2.jpg)\n![b](assets/pic.jpg.bak)\n![c](assets/pic-2.jpg \"t\")\n"
+        );
+        assert!(repoint_asset("no pictures", "assets/pic.jpg", "assets/x.jpg").is_none());
+    }
 
     #[test]
     fn clip_words_ends_on_a_word() {

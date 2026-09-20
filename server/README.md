@@ -12,8 +12,9 @@ counter, a timestamp and which device wrote it.
    <https://github.com/pocketbase/pocketbase/releases> (0.23 or newer) and
    unpack it into a directory.
 2. Copy `pb_migrations/` and `pb_hooks/` from this folder next to the
-   binary. The migration creates the `notes` collection on first start; the
-   hook keeps the revision counter honest.
+   binary. The migrations create the `notes` and `files` collections on
+   start; the hook keeps the revision counters honest. (Upgrading an
+   existing server: copy both folders again and restart.)
 3. Create the admin login and start the server:
 
    ```sh
@@ -34,8 +35,13 @@ counter, a timestamp and which device wrote it.
 ## What syncs
 
 - Notes, including pinned state and trash: the whole file goes in the blob.
-- Not yet: the `assets/` folder (pictures, attached files), and `.folders`
-  (tags created without a note). They stay local for now.
+- Pictures and attached files (`assets/`), up to 256 MB each, and
+  `.folders` (tags created without a note). The server stores them under
+  a hash of their path, never their name; downloads need a signed-in
+  token.
+- Not the link-preview cache (`assets/.links/`) — every device rebuilds
+  its own. Deleting a file from `assets/` by hand does not remove it
+  elsewhere.
 
 ## Conflicts
 
@@ -43,3 +49,7 @@ Last write wins per note, and nothing is ever silently thrown away: if two
 devices changed the same note between syncs, the server's copy keeps the
 note's id and the local text is kept beside it as a new note titled
 "… (conflict, *hostname*)".
+
+Files follow the same spirit: if two devices hold different files under one
+name, the local one is renamed (`photo-2.jpg`) and the notes that show it
+are pointed at the new name, so every note keeps its own picture.

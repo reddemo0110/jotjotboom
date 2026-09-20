@@ -214,7 +214,7 @@ anim-off = off
 
 # Options → Sync
 section-sync = Sync
-sync-hint = Keep these notes on every machine through your own server. Notes travel as sealed packages the server never reads.
+sync-hint = Keep these notes on every machine through your own server. Notes, pictures and attached files travel as sealed packages the server never reads.
 sync-url = Server
 sync-url-placeholder = https://notes.example.com
 sync-email = Email
@@ -242,6 +242,19 @@ sync-moved = { $down ->
    *[other] { $down } notes came down
 }, { $up ->
     [0] nothing sent up.
+    [one] one sent up.
+   *[other] { $up } sent up.
+}
+sync-files-pending = { $n ->
+    [one] One picture or file waiting to go up.
+   *[other] { $n } pictures and files waiting to go up.
+}
+sync-files-moved = Pictures and files: { $down ->
+    [0] none came down
+    [one] one came down
+   *[other] { $down } came down
+}, { $up ->
+    [0] none sent up.
     [one] one sent up.
    *[other] { $up } sent up.
 }

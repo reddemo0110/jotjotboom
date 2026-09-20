@@ -43,7 +43,8 @@ desktop already knows:
 
 ## Sync between machines
 
-Notes can follow you between machines through a server you run yourself:
+Notes — with their pictures, attached files and folders — can follow you
+between machines through a server you run yourself:
 a single [PocketBase](https://pocketbase.io) binary. Set it up in five
 minutes with [server/README.md](./server/README.md), then open
 Options → Sync in the app, enter the address, an email and a password,

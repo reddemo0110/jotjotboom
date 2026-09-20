@@ -7,6 +7,7 @@
 use super::Store;
 use super::db::SyncState;
 use crate::note::{self, Note};
+use crate::sync::files::{FilesJob, FilesOutcome};
 use crate::sync::{Envelope, Job, Outcome, Pending, Pushed, Remote, Session};
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -14,6 +15,9 @@ use std::collections::HashMap;
 
 const META_CURSOR: &str = "cursor";
 const META_ACCOUNT: &str = "account";
+const META_FILES_CURSOR: &str = "files_cursor";
+/// The `.folders` text both sides last agreed on: the base of the merge.
+const META_FOLDERS_BASE: &str = "folders_base";
 
 /// What applying a remote record did locally.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +32,10 @@ pub enum Applied {
     /// Nothing to do (already identical, or a tombstone for a note we no
     /// longer have — or one we changed since, which will go back up).
     Unchanged,
+    /// A picture or file this note shows had to change its name (a
+    /// different file of the same name came down); the note now points at
+    /// the new name and goes back up.
+    Repointed,
 }
 
 impl Store {
@@ -138,6 +146,12 @@ impl Store {
         self.sync_diff().map_or(0, |(c, g)| c.len() + g.len())
     }
 
+    /// How many pictures and files are waiting to go up (as of the last
+    /// look at `assets/`).
+    pub fn sync_files_pending_count(&self) -> usize {
+        self.db.sync_files_pending().unwrap_or(0)
+    }
+
     /// A push landed: remember what the server now holds.
     pub fn mark_pushed(&mut self, p: &Pushed) -> Result<()> {
         if p.deleted {
@@ -160,14 +174,24 @@ impl Store {
             cursor: self.sync_cursor(),
             pending: self.sync_pending()?,
             known: self.sync_known(),
+            files: FilesJob {
+                notes_dir: self.dir.root().to_owned(),
+                cursor: self.db.sync_meta(META_FILES_CURSOR)?.unwrap_or_default(),
+                known: self.db.all_sync_files()?,
+            },
         })
     }
 
-    /// Fold a finished cycle in: incoming records first, then the pushes
-    /// that landed, then the cursor. Returns what each incoming record did,
-    /// so the app can refresh whatever is open.
+    /// Fold a finished cycle in: renamed files first (so the notes written
+    /// against them follow before anything from the server lands), then
+    /// incoming records, the pushes that landed, the cursor. Returns what
+    /// happened to each note, so the app can refresh whatever is open.
     pub fn apply_outcome(&mut self, out: &Outcome, device_name: &str) -> Vec<(String, Applied)> {
-        let mut applied = Vec::new();
+        let mut applied: Vec<(String, Applied)> = self
+            .apply_files(&out.files)
+            .into_iter()
+            .map(|id| (id, Applied::Repointed))
+            .collect();
         for r in &out.incoming {
             tracing::debug!(
                 id = r.note_id,
@@ -192,6 +216,77 @@ impl Store {
             tracing::error!(%err, "recording sync cursor");
         }
         applied
+    }
+
+    /// The store's share of the files cycle: the bytes are already in
+    /// place; what is left is pointing notes at renamed files, merging the
+    /// folder list and the bookkeeping. Returns the notes it rewrote.
+    fn apply_files(&mut self, f: &FilesOutcome) -> Vec<String> {
+        let mut rewritten = Vec::new();
+        for (old, new) in &f.renamed {
+            match self.repoint_asset(old, new) {
+                Ok(ids) => rewritten.extend(ids),
+                Err(err) => tracing::error!(%err, old, new, "pointing notes at a renamed file"),
+            }
+        }
+        if let Some(remote) = &f.folders_remote {
+            let base = self.db.sync_meta(META_FOLDERS_BASE).ok().flatten().unwrap_or_default();
+            let merged = merge_folders(
+                &super::parse_folders(&base),
+                &self.folders,
+                &super::parse_folders(remote),
+            );
+            if merged != self.folders {
+                self.folders = merged;
+                if let Err(err) = self.write_folders() {
+                    tracing::error!(%err, "writing the merged folder list");
+                }
+            }
+            if let Err(err) = self.db.set_sync_meta(META_FOLDERS_BASE, remote) {
+                tracing::error!(%err, "recording the folder list base");
+            }
+        } else if let Some(pushed) = &f.folders_pushed
+            && let Err(err) = self.db.set_sync_meta(META_FOLDERS_BASE, pushed)
+        {
+            tracing::error!(%err, "recording the folder list base");
+        }
+        if let Err(err) = self.db.set_sync_files(&f.states) {
+            tracing::error!(%err, "recording file sync state");
+        }
+        if !f.cursor.is_empty()
+            && let Err(err) = self.db.set_sync_meta(META_FILES_CURSOR, &f.cursor)
+        {
+            tracing::error!(%err, "recording the files cursor");
+        }
+        rewritten
+    }
+
+    /// Rewrite `](old)` as `](new)` in every note, trash included. The
+    /// caller must flush the open note first; files are rewritten here.
+    fn repoint_asset(&mut self, old: &str, new: &str) -> Result<Vec<String>> {
+        let mut ids = Vec::new();
+        for entry in self.dir.scan()? {
+            let text = self.dir.read(&entry.path)?;
+            let (_, body) = note::parse_document(&text);
+            let Some(new_body) = note::repoint_asset(body, old, new) else {
+                continue;
+            };
+            let n = if text.ends_with(body) {
+                let head = &text[..text.len() - body.len()];
+                self.dir.write_atomic(&entry.path, &format!("{head}{new_body}"))?;
+                let modified = std::fs::metadata(&entry.path)
+                    .and_then(|m| m.modified())
+                    .unwrap_or(entry.modified);
+                self.index_file(&entry.path, entry.trashed, modified)?
+            } else {
+                let mut n = self.index_file(&entry.path, entry.trashed, entry.modified)?;
+                n.body = new_body;
+                self.write(&mut n)?;
+                n
+            };
+            ids.push(n.id);
+        }
+        Ok(ids)
     }
 
     /// Fold a record from the server into the notes dir.
@@ -336,6 +431,21 @@ impl Store {
     }
 }
 
+/// Three-way merge of folder lists: a folder stays when both sides have it
+/// or when either side added it since `base`; one side removing it removes
+/// it. Sorted, so every device writes the same bytes.
+fn merge_folders(base: &[String], local: &[String], remote: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = local
+        .iter()
+        .chain(remote)
+        .filter(|f| (local.contains(f) && remote.contains(f)) || !base.contains(f))
+        .cloned()
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The body with the title marked as a conflict copy: a heading line gets
 /// the suffix; anything else gets a heading put in front.
 fn conflict_body(body: &str, device_name: &str) -> String {
@@ -381,6 +491,7 @@ mod tests {
         let job = store.sync_job(session.clone(), device.into()).unwrap();
         let out = crate::sync::run(job);
         assert!(out.errors.is_empty(), "sync errors: {:?}", out.errors);
+        assert!(out.files.errors.is_empty(), "file sync errors: {:?}", out.files.errors);
         assert!(!out.unauthorized);
         let applied = store.apply_outcome(&out, device);
         (out, applied)
@@ -511,6 +622,115 @@ Both halves.
         assert!(applied.iter().all(|(_, a)| *a == Applied::Unchanged));
         assert_eq!(c.sync_pending_count(), 0);
         assert_eq!(titles(&c, &View::All), vec!["Kyoto".to_string()]);
+    }
+
+    /// Pictures, attached files and `.folders`, through the same server.
+    #[test]
+    fn files_travel_between_two_devices() {
+        let Ok(url) = std::env::var("JJB_PB_URL") else {
+            eprintln!("JJB_PB_URL not set; skipping");
+            return;
+        };
+        let email = format!("{}@example.com", note::new_id());
+        let session = crate::sync::sign_up(&url, &email, "password123").unwrap();
+        let (mut a, _ta) = device("laptop-a");
+        let (mut b, _tb) = device("laptop-b");
+        a.set_sync_account(&session.account()).unwrap();
+        b.set_sync_account(&session.account()).unwrap();
+        let asset = |s: &Store, name: &str| s.notes_dir().join("assets").join(name);
+        let put = |s: &Store, name: &str, bytes: &[u8]| {
+            std::fs::create_dir_all(s.notes_dir().join("assets")).unwrap();
+            std::fs::write(s.notes_dir().join("assets").join(name), bytes).unwrap();
+        };
+
+        // A picture, a link-card cache that must stay home, and a folder.
+        put(&a, "pic.jpg", b"kyoto at night");
+        std::fs::create_dir_all(a.notes_dir().join("assets/.links")).unwrap();
+        std::fs::write(a.notes_dir().join("assets/.links/card.json"), b"{}").unwrap();
+        a.add_folder("work").unwrap();
+        let (out, _) = cycle(&mut a, &session, "laptop-a");
+        assert_eq!(out.files.up, 2, "the picture and .folders");
+        assert_eq!(a.sync_files_pending_count(), 0);
+        let (out, _) = cycle(&mut b, &session, "laptop-b");
+        assert_eq!(out.files.down, 1);
+        assert_eq!(std::fs::read(asset(&b, "pic.jpg")).unwrap(), b"kyoto at night");
+        assert!(!b.notes_dir().join("assets/.links").exists());
+        assert!(!b.notes_dir().join("assets/.incoming/x").exists());
+        assert_eq!(b.folders(), ["work"]);
+        // Quiet afterwards, both ways.
+        let (out, _) = cycle(&mut b, &session, "laptop-b");
+        assert_eq!((out.files.up, out.files.down), (0, 0));
+        let (out, _) = cycle(&mut a, &session, "laptop-a");
+        assert_eq!((out.files.up, out.files.down), (0, 0));
+        assert!(out.files.states.is_empty(), "nothing to remember: {:?}", out.files.states);
+
+        // An edited picture replaces the untouched copy, no renaming.
+        put(&a, "pic.jpg", b"kyoto at dawn, retouched");
+        cycle(&mut a, &session, "laptop-a");
+        let (out, _) = cycle(&mut b, &session, "laptop-b");
+        assert!(out.files.renamed.is_empty());
+        assert_eq!(std::fs::read(asset(&b, "pic.jpg")).unwrap(), b"kyoto at dawn, retouched");
+
+        // Two different IMG_0001s, imported offline on each side. A's gets
+        // there first; B's steps aside and B's note follows it.
+        put(&a, "img_0001.jpg", b"a's cat");
+        put(&b, "img_0001.jpg", b"b's dog");
+        let dog = b.create().unwrap().id;
+        write(&mut b, &dog, "# Dog\n\n![dog](assets/img_0001.jpg){w=240}\n");
+        cycle(&mut a, &session, "laptop-a");
+        let (out, applied) = cycle(&mut b, &session, "laptop-b");
+        assert_eq!(
+            out.files.renamed,
+            vec![("assets/img_0001.jpg".to_string(), "assets/img_0001-2.jpg".to_string())]
+        );
+        assert_eq!(applied, vec![(dog.clone(), Applied::Repointed)]);
+        assert_eq!(std::fs::read(asset(&b, "img_0001.jpg")).unwrap(), b"a's cat");
+        assert_eq!(std::fs::read(asset(&b, "img_0001-2.jpg")).unwrap(), b"b's dog");
+        assert_eq!(
+            b.load(&dog).unwrap().unwrap().body,
+            "# Dog\n\n![dog](assets/img_0001-2.jpg){w=240}\n"
+        );
+        // The repointed note and the dog go up; A ends with both pictures.
+        cycle(&mut b, &session, "laptop-b");
+        cycle(&mut a, &session, "laptop-a");
+        assert_eq!(std::fs::read(asset(&a, "img_0001.jpg")).unwrap(), b"a's cat");
+        assert_eq!(std::fs::read(asset(&a, "img_0001-2.jpg")).unwrap(), b"b's dog");
+        assert!(a.load(&dog).unwrap().unwrap().body.contains("img_0001-2.jpg"));
+
+        // Folders: A swaps work for home while B adds play.
+        a.remove_folder("work").unwrap();
+        a.add_folder("home").unwrap();
+        b.add_folder("play").unwrap();
+        cycle(&mut a, &session, "laptop-a");
+        cycle(&mut b, &session, "laptop-b"); // merges
+        assert_eq!(b.folders(), ["home", "play"]);
+        cycle(&mut b, &session, "laptop-b"); // sends the merge up
+        cycle(&mut a, &session, "laptop-a");
+        assert_eq!(a.folders(), ["home", "play"]);
+        let (out, _) = cycle(&mut a, &session, "laptop-a");
+        assert_eq!((out.files.up, out.files.down), (0, 0));
+        assert_eq!(a.sync_files_pending_count() + b.sync_files_pending_count(), 0);
+
+        // A fresh install holding the same files agrees without moving them.
+        let (mut c, _tc) = device("laptop-c");
+        c.set_sync_account(&session.account()).unwrap();
+        put(&c, "pic.jpg", b"kyoto at dawn, retouched");
+        let (out, _) = cycle(&mut c, &session, "laptop-c");
+        assert!(out.files.renamed.is_empty());
+        assert_eq!(out.files.down, 2, "only the two it lacked");
+        assert_eq!(c.folders(), ["home", "play"]);
+    }
+
+    #[test]
+    fn folder_lists_merge_three_ways() {
+        let v = |s: &str| -> Vec<String> { s.split_whitespace().map(str::to_owned).collect() };
+        // Added on each side, removed on each side, kept by both.
+        assert_eq!(
+            merge_folders(&v("keep gone-here gone-there"), &v("keep gone-there mine"), &v("keep gone-here theirs")),
+            v("keep mine theirs")
+        );
+        // No base (first meeting): the union.
+        assert_eq!(merge_folders(&[], &v("b a"), &v("c a")), v("a b c"));
     }
 
     #[test]

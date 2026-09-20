@@ -12,12 +12,15 @@
 //! One [`run`] is one cycle: refresh the token, pull everything changed
 //! since the cursor, push what changed locally. It is blocking (ureq) and
 //! meant for `spawn_blocking`; applying the result to the store happens on
-//! the app thread, see `Store::apply_remote`.
+//! the app thread, see `Store::apply_remote`. Pictures, attached files and
+//! `.folders` follow in the same cycle: see [`files`].
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
+
+pub mod files;
 
 /// Keyring key for the bearer token.
 pub const TOKEN_KEY: &str = "sync-token";
@@ -127,6 +130,8 @@ pub struct Job {
     /// note id → (record id, revision) we already hold, so echoes of our
     /// own pushes and records applied earlier are skipped.
     pub known: HashMap<String, (String, i64)>,
+    /// The other half of the folder: `assets/` and `.folders`.
+    pub files: files::FilesJob,
 }
 
 /// A push that landed.
@@ -153,6 +158,7 @@ pub struct Outcome {
     pub errors: Vec<String>,
     /// The token was refused: sign in again.
     pub unauthorized: bool,
+    pub files: files::FilesOutcome,
 }
 
 fn agent() -> ureq::Agent {
@@ -510,6 +516,9 @@ pub fn run(job: Job) -> Outcome {
             Err(err) => out.errors.push(format!("{}: {err:#}", p.note_id)),
         }
     }
+
+    // Notes first, then what they show.
+    out.files = files::run(&session, &job.device_id, job.files);
     out
 }
 

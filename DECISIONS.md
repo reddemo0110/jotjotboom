@@ -1003,3 +1003,56 @@ captures) plus a read of the user's own notes. Fixed, in order found:
 Seen and left alone: the user's own note asks about bullet alignment
 (dated before the 2.2× gutter change); text wrapped beside a floated
 image breaks a heading mid-word when the column is under ~100 px.
+
+## 2026-09-20 — Sync v2: pictures, attached files and `.folders`
+- A second collection, `files` (`server/pocketbase/pb_migrations/
+  1758000000_files.js`), under the same bargain as `notes`: the server
+  sees a `key` (blake3 of the path — never the file name), revision,
+  timestamp, device. Path, content hash and size sit in an opaque `meta`;
+  the bytes are a protected upload always named "blob" (downloads need a
+  short-lived file token). Encryption later wraps `meta` and the bytes
+  and changes nothing else. Limit 256 MB per file; bigger ones are
+  reported and stay local.
+- What travels: `.folders` and everything visible under `assets/`.
+  Dot-named things stay home — `assets/.links/` (derived cache) and
+  `assets/.incoming/` (downloads land there, are checked against the
+  hash in `meta`, then renamed into place). Symlinks are skipped.
+- The revision hook now guards both collections and reads
+  `base_revision` as a number or a string (multipart sends strings — the
+  old `typeof === "number"` test would have waved every upload through).
+- The bytes never cross the app thread: `sync::files::run` scans, hashes,
+  uploads and downloads from the blocking thread, after the notes half
+  of the same cycle. The store only gets bookkeeping. A cycle moves
+  files for about 20 s, smallest first, then asks for another, so a
+  first sync of a big folder never holds the notes up.
+- Local state: `sync_files` in index.db (record id, revision, agreed
+  hash, plus size/mtime/hash of the local file so unchanged files are
+  not re-read). Created outside the schema version so adding it cost no
+  rebuild. Losing it is safe: identical bytes are re-agreed silently.
+- Never clobber, for files: if a *different* file of the same name
+  comes down and ours was not simply the old agreed version (two
+  cameras' IMG_0001, or both sides edited), ours steps aside as
+  `name-2.ext` — the import naming — and every local note showing it is
+  rewritten to the new name before anything from the server is applied
+  (`note::repoint_asset`, `Applied::Repointed`; the open note is flushed
+  first and reloaded). So each note keeps showing the picture it was
+  written against, on every device. An untouched local copy is simply
+  replaced by the newer one.
+- Deleting an asset does not travel (v1): nothing in the app deletes
+  assets yet, and a folder that briefly lost its `assets/` must not
+  empty everyone else's. A file deleted by hand stays on the server and
+  on other devices. Revisit together with orphan clean-up.
+- `.folders` is merged three ways against the last agreed text
+  (`sync_meta.folders_base`): a folder survives if both sides have it or
+  either side added it; one side removing it removes it. Sorted output,
+  so devices converge on identical bytes. The merge happens in the
+  store (it owns the in-memory list); the merged list goes up on the
+  next cycle.
+- A server without the new migration gives a plain error naming the fix;
+  the notes half still syncs. Older clients ignore the collection.
+- UI: Options → Sync gains a files line ("n came down, n sent up") and a
+  waiting count. Pictures that failed to load are retried when a cycle
+  brings files down.
+- Tested: `files_travel_between_two_devices` (needs `JJB_PB_URL`), and
+  two real app instances against a local PocketBase — note, picture
+  (byte-identical) and folder arrived.
