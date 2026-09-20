@@ -43,6 +43,10 @@ secret-service = { version = "5", features = ["rt-tokio-crypto-rust"] }
 # portal Settings reads (fonts, icon theme, button layout) speak D-Bus
 # directly. Same zbus libcosmic already builds.
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+base64 = "0.23.1"
+getrandom = "0.4.3"
+argon2 = "0.5"
+chacha20poly1305 = { version = "0.10", features = ["stream"] }
 
 [build-dependencies]
 xdgen = "0.1"

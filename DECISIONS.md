@@ -1082,3 +1082,44 @@ image breaks a heading mid-word when the column is under ~100 px.
   Drive backend will detect a concurrent write after the fact (revision
   list) and hand the overwritten text back as a conflict, so nothing is
   lost; the trait's `Conflict`/`Taken` results already carry that.
+
+## 2026-09-20 — End-to-end encryption, as a backend around a backend
+- `sync::sealed::Sealed<B>` wraps any backend: note blobs and file meta
+  are sealed on the way out and opened on the way in, files are sealed
+  into a scratch file (ciphertext only) before upload. The cycle and the
+  store do not know. This is handover step 8, and it serves Drive's
+  "fully encrypted" mode and PocketBase alike.
+- No home-made cryptography (`sync/seal.rs` is glue): Argon2id
+  (64 MiB, 3 passes) turns the passphrase into a master key; blake3
+  `derive_key` splits it into a data key and a names key;
+  XChaCha20-Poly1305 seals. Short things whole (`jjb1.` + base64 of
+  nonce ‖ ciphertext); files as a STREAM of 64 KiB chunks (`JJBS1`
+  header + 19-byte nonce), so nothing big sits in memory and a
+  truncated, reordered or bit-flipped upload fails to open. Crates pinned
+  to the settled series (argon2 0.5, chacha20poly1305 0.10).
+- File keys become `blake3::keyed_hash(names key, path)`: the plain
+  path hash would let a host test guesses. The wrapper keeps a plain →
+  sealed key map so the cycle still asks by the key it knows, and
+  refuses a record filed under a name its own meta does not claim.
+- What the host still sees: note ids (random UUIDs), revisions, device
+  ids, timestamps, sizes, counts. Not: text, titles, tags, trash state,
+  file names, file meta, file contents.
+- The key file (salt, costs, a sealed check word) lives on the backend
+  in the clear under the file key `jjb-keyfile` — a new device needs it
+  before it can derive anything. `probe` finds it, `unlock` tells a
+  wrong passphrase from a right one without touching a note, `enroll`
+  creates it (first device wins; a second one is told to use that
+  passphrase). The derived key goes to the keyring (`to_secret`), so the
+  passphrase is asked once per device.
+- Encryption is per account, chosen when sync is turned on. The local
+  notes folder is never encrypted: a lost passphrase loses the cloud
+  copy, not the notes.
+- Guard until the passphrase UI exists: `sync::run` refuses to cycle a
+  plain device against an encrypted account.
+- Tests: tamper/truncate/swap/wrong-key cases for text and files; both
+  two-device scenarios re-run through `Sealed<Memory>` with an assertion
+  that the server's entire contents contain none of the titles, text,
+  file names, folder names or file bytes.
+- Still to do: Options → Sync passphrase UI + keyring, Google sign-in,
+  the Drive backend (readable and sealed), switching modes (wipe and
+  re-upload).

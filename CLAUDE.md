@@ -68,7 +68,10 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
   revisioned blob store: `sync/pocketbase.rs` is the real one,
   `sync/memory.rs` the test one (the two-device scenarios run against it
   in every `cargo test`). New backends implement the trait and nothing
-  else; conflict rules never live in a backend. `src/store/sync.rs` is the store's half:
+  else; conflict rules never live in a backend. `sync/sealed.rs` is
+  end-to-end encryption as a wrapper backend over `sync/seal.rs`
+  (Argon2id + XChaCha20-Poly1305 + blake3; glue only — never hand-roll
+  crypto here). `src/store/sync.rs` is the store's half:
   `sync_pending` (hash diff vs `sync_state`), `apply_remote` (adopt /
   delete / conflict copy), `apply_outcome`. `src/sync/files.rs` is the
   other half of the folder (`assets/`, `.folders`) through a `files`

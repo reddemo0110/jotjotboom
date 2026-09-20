@@ -532,6 +532,61 @@ mod tests {
         ])
     }
 
+    /// The same server behind a passphrase: the first device enrols, the
+    /// others read the key file and unlock with the same words.
+    fn encrypted(server: &Memory) -> [Box<dyn Backend>; 3] {
+        use crate::sync::seal::KeyFile;
+        use crate::sync::sealed::{Sealed, probe, store_keyfile};
+        // Cheap key settings: the real ones cost half a second a time.
+        let (file, _) = KeyFile::create_with("correct horse battery", 64, 1, 1).unwrap();
+        store_keyfile(&mut server.clone(), "laptop-a", &file).unwrap();
+        let device = || -> Box<dyn Backend> {
+            let mut raw = server.clone();
+            let key = probe(&mut raw).unwrap().unwrap().unlock("correct horse battery").unwrap();
+            let scratch = tempfile::tempdir().unwrap().keep();
+            Box::new(Sealed::new(raw, key, scratch))
+        };
+        [device(), device(), device()]
+    }
+
+    #[test]
+    fn encrypted_accounts_behave_the_same_and_leak_nothing() {
+        let server = Memory::default();
+        notes_between_devices(encrypted(&server));
+        let seen = server.dump();
+        assert!(seen.contains("jjb1."));
+        for secret in ["Kyoto", "Night one", "conflict", "trashed", "text"] {
+            assert!(!seen.contains(secret), "the server can read {secret:?}");
+        }
+
+        let server = Memory::default();
+        files_between_devices(encrypted(&server));
+        let seen = server.dump();
+        for secret in ["kyoto at", "a's cat", "b's dog", "pic.jpg", "img_0001", "assets/", "work", "play", "Dog"] {
+            assert!(!seen.contains(secret), "the server can read {secret:?}");
+        }
+        // Not even a guessable name: the plain path hash is not there.
+        assert!(!seen.contains(&crate::sync::files::key_for("assets/pic.jpg")));
+    }
+
+    #[test]
+    fn a_plain_device_cannot_read_an_encrypted_account_and_says_so() {
+        use crate::sync::sealed::probe;
+        let server = Memory::default();
+        let [mut sa, ..] = encrypted(&server);
+        let (mut a, _ta) = device("laptop-a");
+        a.set_sync_account(&account().account()).unwrap();
+        let id = a.create().unwrap().id;
+        write(&mut a, &id, "# Private\n");
+        cycle(&mut a, sa.as_mut(), "laptop-a");
+        // The app asks this before its first cycle.
+        assert!(probe(&mut server.clone()).unwrap().is_some());
+        assert!(probe(&mut Memory::default()).unwrap().is_none());
+        // And a wrong passphrase is told apart from a right one.
+        let file = probe(&mut server.clone()).unwrap().unwrap();
+        assert!(file.unlock("not the passphrase").is_err());
+    }
+
     #[test]
     fn two_devices_in_memory() {
         notes_between_devices(in_memory());

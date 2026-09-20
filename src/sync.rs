@@ -25,6 +25,8 @@ pub mod files;
 #[cfg(test)]
 pub mod memory;
 pub mod pocketbase;
+pub mod seal;
+pub mod sealed;
 
 use backend::{Backend, NotePush, NoteUpload, RawNote};
 use pocketbase::PocketBase;
@@ -181,6 +183,16 @@ fn remote(r: RawNote) -> Result<Remote> {
 /// link only delays things.
 pub fn run(job: Job) -> Outcome {
     let mut backend = PocketBase::new(job.session.clone());
+    // Until the passphrase can be entered (Options → Sync, next), a plain
+    // device must stay out of an encrypted account: it could read nothing
+    // and would push readable notes in beside the sealed ones.
+    if let Ok(Some(_)) = sealed::probe(&mut backend) {
+        return Outcome {
+            cursor: job.cursor,
+            errors: vec!["this account is encrypted; this version cannot unlock it yet".into()],
+            ..Default::default()
+        };
+    }
     run_with(&mut backend, job)
 }
 

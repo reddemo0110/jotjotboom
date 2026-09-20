@@ -33,6 +33,22 @@ fn since(c: &str) -> u64 {
     c.parse().unwrap_or(0)
 }
 
+impl Memory {
+    /// Everything the server holds, as one searchable string: what a
+    /// curious host could read.
+    pub fn dump(&self) -> String {
+        let server = self.server.lock().unwrap();
+        let mut out = String::new();
+        for (_, n) in &server.notes {
+            out.push_str(&format!("{} {} {}\n", n.note_id, n.modified, n.blob));
+        }
+        for (_, f, bytes) in &server.files {
+            out.push_str(&format!("{} {} {}\n", f.key, f.meta, String::from_utf8_lossy(bytes)));
+        }
+        out
+    }
+}
+
 impl Backend for Memory {
     fn authorize(&mut self) -> Result<Option<Session>> {
         Ok((!self.signed_out).then(|| Session {
