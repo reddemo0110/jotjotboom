@@ -62,9 +62,13 @@ under `~/.cargo/git/checkouts/libcosmic-*/` rather than trusting docs.
   (`dbus_activation`); set `COSMIC_SINGLE_INSTANCE=false` to bypass
   (xshot does).
 - `src/secrets.rs` — keyring wrapper; holds the sync token.
-- `src/sync.rs` — PocketBase client and one blocking sync cycle (`run`):
-  refresh token, pull since cursor, push; `Envelope` is the opaque payload
-  (file text + trashed/deleted). `src/store/sync.rs` is the store's half:
+- `src/sync.rs` — one blocking sync cycle (`run` / `run_with`): authorize,
+  pull since cursor, push; `Envelope` is the opaque payload (file text +
+  trashed/deleted). It talks to a `sync::backend::Backend` — a dumb
+  revisioned blob store: `sync/pocketbase.rs` is the real one,
+  `sync/memory.rs` the test one (the two-device scenarios run against it
+  in every `cargo test`). New backends implement the trait and nothing
+  else; conflict rules never live in a backend. `src/store/sync.rs` is the store's half:
   `sync_pending` (hash diff vs `sync_state`), `apply_remote` (adopt /
   delete / conflict copy), `apply_outcome`. `src/sync/files.rs` is the
   other half of the folder (`assets/`, `.folders`) through a `files`

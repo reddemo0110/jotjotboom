@@ -15,25 +15,23 @@
 //! file steps aside under a free name and the notes that show it are
 //! pointed at the new name; deleting an asset does not travel.
 
-use super::{Session, api_error};
-use anyhow::{Context, Result, anyhow};
+use super::backend::{Backend, FileBody, FilePush, FileUpload, RawFile};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use ureq::unversioned::multipart::{Form, Part};
 
 pub const FOLDERS_PATH: &str = ".folders";
 const ASSETS_PREFIX: &str = "assets/";
 /// Downloads land here first; dot-named, so the scan never sees it.
 const INCOMING_DIR: &str = "assets/.incoming";
-/// The `files` collection's upload limit (see the migration).
+/// The biggest file that travels (the PocketBase `files` collection's
+/// upload limit, see the migration; kept the same everywhere).
 pub const MAX_SIZE: u64 = 256 * 1024 * 1024;
 /// A cycle stops moving files after this long and asks for another, so a
 /// first sync of a big `assets/` never holds the notes up for minutes.
 const BUDGET: Duration = Duration::from_secs(20);
-const PAGE: usize = 200;
 
 /// The opaque part of a file record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,57 +115,17 @@ struct Local {
     hash: String,
 }
 
-#[derive(Deserialize)]
-struct Record {
-    id: String,
-    #[serde(default)]
-    key: String,
-    #[serde(default)]
-    revision: i64,
-    #[serde(default)]
-    updated: String,
-    #[serde(default)]
-    meta: String,
-    /// The stored file name, for the download URL.
-    #[serde(default)]
-    data: String,
-}
-
-#[derive(Deserialize)]
-struct ListResponse {
-    items: Vec<Record>,
-}
-
 struct RemoteFile {
-    record_id: String,
-    revision: i64,
-    stored_name: String,
+    raw: RawFile,
     meta: Meta,
 }
 
-fn remote(r: Record) -> Result<RemoteFile> {
-    let meta: Meta = serde_json::from_str(&r.meta).context("decoding file details")?;
-    if !safe_path(&meta.path) || key_for(&meta.path) != r.key {
+fn remote(raw: RawFile) -> Result<RemoteFile> {
+    let meta: Meta = serde_json::from_str(&raw.meta).context("decoding file details")?;
+    if !safe_path(&meta.path) || key_for(&meta.path) != raw.key {
         anyhow::bail!("refusing a file with a bad path ({})", meta.path);
     }
-    Ok(RemoteFile {
-        record_id: r.id,
-        revision: r.revision,
-        stored_name: r.data,
-        meta,
-    })
-}
-
-/// Uploads and downloads can be long: no overall deadline, only patience
-/// limits on connecting and on hearing back.
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_connect(Some(Duration::from_secs(30)))
-        .timeout_recv_response(Some(Duration::from_secs(120)))
-        .user_agent(super::USER_AGENT)
-        .build()
-        .into()
+    Ok(RemoteFile { raw, meta })
 }
 
 fn mtime_ns(meta: &std::fs::Metadata) -> i64 {
@@ -241,29 +199,19 @@ fn free_name(root: &Path, rel: &str) -> String {
 }
 
 struct Cycle<'a> {
-    agent: ureq::Agent,
-    session: &'a Session,
+    backend: &'a mut dyn Backend,
     device_id: &'a str,
     root: PathBuf,
     started: Instant,
     locals: HashMap<String, Local>,
     /// path → what the server agreed to, updated as the cycle goes.
     synced: HashMap<String, FileState>,
-    file_token: Option<String>,
     /// `.folders` came down: merge before pushing ours.
     folders_incoming: bool,
     out: FilesOutcome,
 }
 
 impl Cycle<'_> {
-    fn records_url(&self) -> String {
-        format!("{}/api/collections/files/records", self.session.url)
-    }
-
-    fn bearer(&self) -> String {
-        format!("Bearer {}", self.session.token)
-    }
-
     fn out_of_time(&mut self) -> bool {
         let over = self.started.elapsed() > BUDGET;
         if over {
@@ -272,119 +220,26 @@ impl Cycle<'_> {
         over
     }
 
-    fn list(&self, cursor: &str) -> Result<Vec<Record>> {
-        let mut out = Vec::new();
-        for page in 1.. {
-            let mut req = self
-                .agent
-                .get(self.records_url())
-                .header("Authorization", self.bearer())
-                .query("sort", "updated,id")
-                .query("perPage", PAGE.to_string())
-                .query("page", page.to_string())
-                .query("skipTotal", "1");
-            if !cursor.is_empty() {
-                req = req.query("filter", format!("updated >= \"{cursor}\""));
-            }
-            let mut resp = req.call().context("listing files")?;
-            let status = resp.status().as_u16();
-            let body = resp.body_mut().read_to_string()?;
-            if status == 404 {
-                anyhow::bail!(
-                    "the server has no `files` collection yet — add the new migration and hook from server/pocketbase"
-                );
-            }
-            if status >= 400 {
-                return Err(api_error(status, &body)).context("listing files");
-            }
-            let list: ListResponse = serde_json::from_str(&body).context("parsing the file list")?;
-            let n = list.items.len();
-            out.extend(list.items);
-            if n < PAGE {
-                break;
-            }
-        }
-        Ok(out)
-    }
-
-    fn fetch_by_key(&self, key: &str) -> Result<Option<RemoteFile>> {
-        let mut resp = self
-            .agent
-            .get(self.records_url())
-            .header("Authorization", self.bearer())
-            .query("filter", format!("key = \"{key}\""))
-            .query("perPage", "1")
-            .query("skipTotal", "1")
-            .call()?;
-        let status = resp.status().as_u16();
-        let body = resp.body_mut().read_to_string()?;
-        if status >= 400 {
-            return Err(api_error(status, &body));
-        }
-        let list: ListResponse = serde_json::from_str(&body)?;
-        list.items.into_iter().next().map(remote).transpose()
-    }
-
-    /// Protected files are fetched with a short-lived token of their own.
-    fn token(&mut self) -> Result<String> {
-        #[derive(Deserialize)]
-        struct Token {
-            token: String,
-        }
-        if let Some(t) = &self.file_token {
-            return Ok(t.clone());
-        }
-        let mut resp = self
-            .agent
-            .post(format!("{}/api/files/token", self.session.url))
-            .header("Authorization", self.bearer())
-            .send_empty()?;
-        let status = resp.status().as_u16();
-        let body = resp.body_mut().read_to_string()?;
-        if status >= 400 {
-            return Err(api_error(status, &body)).context("asking for a download token");
-        }
-        let t: Token = serde_json::from_str(&body).context("parsing the download token")?;
-        self.file_token = Some(t.token.clone());
-        Ok(t.token)
-    }
-
     /// Fetch a record's bytes into the incoming dir, checked against the
     /// hash its meta promises.
     fn download(&mut self, r: &RemoteFile) -> Result<PathBuf> {
-        let token = self.token()?;
         let incoming = self.root.join(INCOMING_DIR);
         std::fs::create_dir_all(&incoming).context("creating the incoming dir")?;
-        let tmp = incoming.join(format!("{}.part", r.record_id));
-        let mut resp = self
-            .agent
-            .get(format!(
-                "{}/api/files/files/{}/{}",
-                self.session.url, r.record_id, r.stored_name
-            ))
-            .query("token", &token)
-            .call()?;
-        let status = resp.status().as_u16();
-        if status >= 400 {
-            let body = resp.body_mut().read_to_string().unwrap_or_default();
-            return Err(api_error(status, &body));
-        }
-        let mut reader = resp.body_mut().as_reader();
-        let mut file = std::fs::File::create(&tmp)?;
-        let mut hasher = blake3::Hasher::new();
-        let mut buf = vec![0u8; 64 * 1024];
-        loop {
-            let n = reader.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-            file.write_all(&buf[..n])?;
-        }
-        file.sync_all().ok();
-        if hasher.finalize().to_hex().as_str() != r.meta.hash {
+        let tmp = incoming.join(format!("{}.part", r.raw.key));
+        let fetched = self
+            .backend
+            .download(&r.raw, &tmp)
+            .and_then(|()| hash_file(&tmp))
+            .and_then(|hash| {
+                if hash == r.meta.hash {
+                    Ok(())
+                } else {
+                    anyhow::bail!("the download does not match its checksum")
+                }
+            });
+        if let Err(err) = fetched {
             std::fs::remove_file(&tmp).ok();
-            anyhow::bail!("the download does not match its checksum");
+            return Err(err);
         }
         Ok(tmp)
     }
@@ -415,8 +270,8 @@ impl Cycle<'_> {
     fn agree(&mut self, r: &RemoteFile) {
         let s = self.synced.entry(r.meta.path.clone()).or_default();
         s.path.clone_from(&r.meta.path);
-        s.record_id.clone_from(&r.record_id);
-        s.revision = r.revision;
+        s.record_id.clone_from(&r.raw.record_id);
+        s.revision = r.raw.revision;
         s.hash.clone_from(&r.meta.hash);
     }
 
@@ -460,19 +315,15 @@ impl Cycle<'_> {
     }
 
     fn pull(&mut self, cursor: &str) {
-        let records = match self.list(cursor) {
-            Ok(r) => r,
+        let page = match self.backend.list_files(cursor) {
+            Ok(p) => p,
             Err(err) => {
                 self.out.errors.push(format!("{err:#}"));
                 return;
             }
         };
-        let mut newest = cursor.to_owned();
         let mut complete = true;
-        for rec in records {
-            if rec.updated > newest {
-                newest.clone_from(&rec.updated);
-            }
+        for rec in page.items {
             let r = match remote(rec) {
                 Ok(r) => r,
                 Err(err) => {
@@ -483,7 +334,7 @@ impl Cycle<'_> {
             if self
                 .synced
                 .get(&r.meta.path)
-                .is_some_and(|s| s.record_id == r.record_id && s.revision == r.revision)
+                .is_some_and(|s| s.record_id == r.raw.record_id && s.revision == r.raw.revision)
             {
                 continue;
             }
@@ -498,7 +349,7 @@ impl Cycle<'_> {
         }
         // Anything left behind is listed again next time.
         if complete {
-            self.out.cursor = newest;
+            self.out.cursor = page.cursor;
         }
     }
 
@@ -512,7 +363,6 @@ impl Cycle<'_> {
         })?;
         let key = key_for(path);
         let modified = chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(local.mtime).to_rfc3339();
-        let base = state.revision.to_string();
         // `.folders` goes up from memory so the merge base is exactly what
         // the server got.
         let folders_text = if path == FOLDERS_PATH {
@@ -520,66 +370,50 @@ impl Cycle<'_> {
         } else {
             None
         };
-        let data = match &folders_text {
-            Some(bytes) => Part::bytes(bytes),
-            None => Part::file(&local.abs)?,
-        }
-        .file_name("blob")
-        .mime_str("application/octet-stream")
-        .map_err(|e| anyhow!("{e}"))?;
-        let mut form = Form::new()
-            .text("device", self.device_id)
-            .text("modified", &modified)
-            .text("meta", &meta)
-            .part("data", data);
-        let creating = state.record_id.is_empty();
-        let mut resp = if creating {
-            form = form.text("owner", &self.session.user_id).text("key", &key);
-            self.agent
-                .post(self.records_url())
-                .header("Authorization", self.bearer())
-                .send(form)?
-        } else {
-            form = form.text("base_revision", &base);
-            self.agent
-                .patch(format!("{}/{}", self.records_url(), state.record_id))
-                .header("Authorization", self.bearer())
-                .send(form)?
-        };
-        let status = resp.status().as_u16();
-        let body = resp.body_mut().read_to_string()?;
-        let taken = status == 409 || (status == 400 && creating && body.contains("validation_not_unique"));
-        if status == 200 {
-            let rec: Record = serde_json::from_str(&body).context("parsing the upload reply")?;
-            let s = self.synced.entry(path.to_owned()).or_default();
-            path.clone_into(&mut s.path);
-            s.record_id = rec.id;
-            s.revision = rec.revision;
-            s.hash.clone_from(&local.hash);
-            if let Some(bytes) = folders_text {
-                self.out.folders_pushed = Some(String::from_utf8_lossy(&bytes).into_owned());
+        let pushed = self.backend.upload(&FileUpload {
+            key: &key,
+            record_id: (!state.record_id.is_empty()).then_some(state.record_id.as_str()),
+            base_revision: state.revision,
+            device: self.device_id,
+            modified: &modified,
+            meta: &meta,
+            body: match &folders_text {
+                Some(bytes) => FileBody::Bytes(bytes),
+                None => FileBody::Path(&local.abs),
+            },
+        })?;
+        match pushed {
+            FilePush::Landed { record_id, revision } => {
+                let s = self.synced.entry(path.to_owned()).or_default();
+                path.clone_into(&mut s.path);
+                s.record_id = record_id;
+                s.revision = revision;
+                s.hash.clone_from(&local.hash);
+                if let Some(bytes) = folders_text {
+                    self.out.folders_pushed = Some(String::from_utf8_lossy(&bytes).into_owned());
+                }
+                self.out.up += 1;
+                Ok(())
             }
-            self.out.up += 1;
-            Ok(())
-        } else if taken {
             // Someone else holds this name (or wrote first): fold theirs in;
             // whatever of ours is left goes up next cycle.
-            self.out.more = true;
-            match self.fetch_by_key(&key)? {
-                Some(r) => self.reconcile(&r),
-                None => Ok(()),
+            FilePush::Taken => {
+                self.out.more = true;
+                match self.backend.file_by_key(&key)?.map(remote).transpose()? {
+                    Some(r) => self.reconcile(&r),
+                    None => Ok(()),
+                }
             }
-        } else if status == 404 && !creating {
             // The record went away under us: create it next time.
-            if let Some(s) = self.synced.get_mut(path) {
-                s.record_id.clear();
-                s.revision = 0;
-                s.hash.clear();
+            FilePush::Gone => {
+                if let Some(s) = self.synced.get_mut(path) {
+                    s.record_id.clear();
+                    s.revision = 0;
+                    s.hash.clear();
+                }
+                self.out.more = true;
+                Ok(())
             }
-            self.out.more = true;
-            Ok(())
-        } else {
-            Err(api_error(status, &body))
         }
     }
 
@@ -617,7 +451,7 @@ impl Cycle<'_> {
 }
 
 /// The files half of one sync cycle.
-pub fn run(session: &Session, device_id: &str, job: FilesJob) -> FilesOutcome {
+pub fn run(backend: &mut dyn Backend, device_id: &str, job: FilesJob) -> FilesOutcome {
     let known: HashMap<String, FileState> = job.known.into_iter().map(|s| (s.path.clone(), s)).collect();
     let mut errors = Vec::new();
     let mut locals = HashMap::new();
@@ -638,14 +472,12 @@ pub fn run(session: &Session, device_id: &str, job: FilesJob) -> FilesOutcome {
     }
 
     let mut cycle = Cycle {
-        agent: agent(),
-        session,
+        backend,
         device_id,
         root: job.notes_dir.clone(),
         started: Instant::now(),
         locals,
         synced: known.clone(),
-        file_token: None,
         folders_incoming: false,
         out: FilesOutcome {
             cursor: job.cursor.clone(),

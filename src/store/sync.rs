@@ -474,6 +474,9 @@ fn conflict_body(body: &str, device_name: &str) -> String {
 mod tests {
     use super::*;
     use crate::store::View;
+    use crate::sync::backend::Backend;
+    use crate::sync::memory::Memory;
+    use crate::sync::pocketbase::PocketBase;
 
     /// One device: its own notes dir and index.
     fn device(name: &str) -> (Store, tempfile::TempDir) {
@@ -487,14 +490,70 @@ mod tests {
         (store, tmp)
     }
 
-    fn cycle(store: &mut Store, session: &Session, device: &str) -> (Outcome, Vec<(String, Applied)>) {
-        let job = store.sync_job(session.clone(), device.into()).unwrap();
-        let out = crate::sync::run(job);
+    fn cycle(store: &mut Store, backend: &mut dyn Backend, device: &str) -> (Outcome, Vec<(String, Applied)>) {
+        let job = store.sync_job(account(), device.into()).unwrap();
+        let out = crate::sync::run_with(backend, job);
         assert!(out.errors.is_empty(), "sync errors: {:?}", out.errors);
         assert!(out.files.errors.is_empty(), "file sync errors: {:?}", out.files.errors);
         assert!(!out.unauthorized);
         let applied = store.apply_outcome(&out, device);
         (out, applied)
+    }
+
+    /// The job's own session is only a label here: each backend carries
+    /// its real sign-in.
+    fn account() -> Session {
+        Session {
+            url: "test".into(),
+            token: String::new(),
+            user_id: "user".into(),
+            email: String::new(),
+        }
+    }
+
+    /// Three devices' worth of connections to one account.
+    fn in_memory() -> [Box<dyn Backend>; 3] {
+        let server = Memory::default();
+        [Box::new(server.clone()), Box::new(server.clone()), Box::new(server)]
+    }
+
+    /// The same against a PocketBase (`JJB_PB_URL=http://127.0.0.1:8090`).
+    fn real_server() -> Option<[Box<dyn Backend>; 3]> {
+        let Ok(url) = std::env::var("JJB_PB_URL") else {
+            eprintln!("JJB_PB_URL not set; skipping");
+            return None;
+        };
+        let email = format!("{}@example.com", note::new_id());
+        let session = crate::sync::sign_up(&url, &email, "password123").unwrap();
+        Some([
+            Box::new(PocketBase::new(session.clone())),
+            Box::new(PocketBase::new(session.clone())),
+            Box::new(PocketBase::new(session)),
+        ])
+    }
+
+    #[test]
+    fn two_devices_in_memory() {
+        notes_between_devices(in_memory());
+    }
+
+    #[test]
+    fn two_devices_through_a_real_server() {
+        if let Some(backends) = real_server() {
+            notes_between_devices(backends);
+        }
+    }
+
+    #[test]
+    fn files_travel_in_memory() {
+        files_between_devices(in_memory());
+    }
+
+    #[test]
+    fn files_travel_through_a_real_server() {
+        if let Some(backends) = real_server() {
+            files_between_devices(backends);
+        }
     }
 
     fn write(store: &mut Store, id: &str, body: &str) {
@@ -509,19 +568,11 @@ mod tests {
         t
     }
 
-    /// Runs only with a PocketBase up (`JJB_PB_URL=http://127.0.0.1:8090`).
-    #[test]
-    fn two_devices_through_a_real_server() {
-        let Ok(url) = std::env::var("JJB_PB_URL") else {
-            eprintln!("JJB_PB_URL not set; skipping");
-            return;
-        };
-        let email = format!("{}@example.com", note::new_id());
-        let session = crate::sync::sign_up(&url, &email, "password123").unwrap();
+    fn notes_between_devices([mut sa, mut sb, mut sc]: [Box<dyn Backend>; 3]) {
         let (mut a, _ta) = device("laptop-a");
         let (mut b, _tb) = device("laptop-b");
-        a.set_sync_account(&session.account()).unwrap();
-        b.set_sync_account(&session.account()).unwrap();
+        a.set_sync_account(&account().account()).unwrap();
+        b.set_sync_account(&account().account()).unwrap();
 
         // A writes a note; B receives it byte for byte.
         let kyoto = a.create().unwrap().id;
@@ -529,9 +580,9 @@ mod tests {
 
 Night one.
 ");
-        let (out, _) = cycle(&mut a, &session, "laptop-a");
+        let (out, _) = cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!(out.pushed.len(), 1);
-        let (out, applied) = cycle(&mut b, &session, "laptop-b");
+        let (out, applied) = cycle(&mut b, sb.as_mut(), "laptop-b");
         assert_eq!(out.incoming.len(), 1);
         assert_eq!(applied, vec![(kyoto.clone(), Applied::Adopted)]);
         let a_text = std::fs::read_to_string(&a.load(&kyoto).unwrap().unwrap().path).unwrap();
@@ -539,7 +590,7 @@ Night one.
         assert_eq!(std::fs::read_to_string(&b_note.path).unwrap(), a_text);
         assert!(b_note.path.ends_with("Kyoto.md"));
         // Quiet afterwards: nothing pending, nothing incoming.
-        let (out, _) = cycle(&mut b, &session, "laptop-b");
+        let (out, _) = cycle(&mut b, sb.as_mut(), "laptop-b");
         assert!(out.pushed.is_empty() && out.incoming.is_empty());
         assert_eq!(a.sync_pending_count(), 0);
 
@@ -552,8 +603,8 @@ Night one, written on the plane.
 
 Night one, written after landing.
 ");
-        cycle(&mut b, &session, "laptop-b");
-        let (out, applied) = cycle(&mut a, &session, "laptop-a");
+        cycle(&mut b, sb.as_mut(), "laptop-b");
+        let (out, applied) = cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!(out.conflicts, vec![kyoto.clone()]);
         assert!(out.pushed.is_empty(), "nothing goes up while a conflict is open");
         let copy_id = match &applied[..] {
@@ -571,9 +622,9 @@ Night one, written after landing.
         assert_eq!(copy.title, "Kyoto (conflict, laptop-a)");
         assert!(copy.body.contains("on the plane"));
         // The copy goes up as its own note and B gets it.
-        let (out, _) = cycle(&mut a, &session, "laptop-a");
+        let (out, _) = cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!(out.pushed.len(), 1);
-        cycle(&mut b, &session, "laptop-b");
+        cycle(&mut b, sb.as_mut(), "laptop-b");
         assert_eq!(
             titles(&b, &View::All),
             vec!["Kyoto".to_string(), "Kyoto (conflict, laptop-a)".to_string()]
@@ -581,8 +632,8 @@ Night one, written after landing.
 
         // Trash travels.
         b.trash(&copy_id).unwrap();
-        cycle(&mut b, &session, "laptop-b");
-        cycle(&mut a, &session, "laptop-a");
+        cycle(&mut b, sb.as_mut(), "laptop-b");
+        cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!(titles(&a, &View::Trash), vec!["Kyoto (conflict, laptop-a)".to_string()]);
         assert!(a.load(&copy_id).unwrap().unwrap().trashed);
 
@@ -593,29 +644,29 @@ Night one, written after landing.
 
 Both halves.
 ");
-        cycle(&mut b, &session, "laptop-b");
-        let (out, applied) = cycle(&mut a, &session, "laptop-a");
+        cycle(&mut b, sb.as_mut(), "laptop-b");
+        let (out, applied) = cycle(&mut a, sa.as_mut(), "laptop-a");
         assert!(out.pushed.is_empty(), "the tombstone must not go up over an edit");
         assert_eq!(applied, vec![(copy_id.clone(), Applied::Adopted)]);
         assert_eq!(a.load(&copy_id).unwrap().unwrap().title, "Kyoto, merged");
 
         // A plain delete goes through.
         a.delete_forever(&copy_id).unwrap();
-        let (out, _) = cycle(&mut a, &session, "laptop-a");
+        let (out, _) = cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!(out.pushed.len(), 1);
         assert!(out.pushed[0].deleted);
-        let (_, applied) = cycle(&mut b, &session, "laptop-b");
+        let (_, applied) = cycle(&mut b, sb.as_mut(), "laptop-b");
         assert_eq!(applied, vec![(copy_id.clone(), Applied::Deleted)]);
         assert!(b.load(&copy_id).unwrap().is_none());
         assert_eq!(titles(&b, &View::All), vec!["Kyoto".to_string()]);
 
         // A fresh install with the same files adopts quietly.
         let (mut c, _tc) = device("laptop-c");
-        c.set_sync_account(&session.account()).unwrap();
+        c.set_sync_account(&account().account()).unwrap();
         let text = std::fs::read_to_string(&a.load(&kyoto).unwrap().unwrap().path).unwrap();
         std::fs::write(c.notes_dir().join("Kyoto.md"), &text).unwrap();
         c.reindex().unwrap();
-        let (out, applied) = cycle(&mut c, &session, "laptop-c");
+        let (out, applied) = cycle(&mut c, sc.as_mut(), "laptop-c");
         assert!(out.conflicts.contains(&kyoto), "the create is refused: the note exists up there");
         // (The deleted copy's tombstone comes down too, harmlessly.)
         assert!(applied.contains(&(kyoto.clone(), Applied::Unchanged)));
@@ -624,19 +675,12 @@ Both halves.
         assert_eq!(titles(&c, &View::All), vec!["Kyoto".to_string()]);
     }
 
-    /// Pictures, attached files and `.folders`, through the same server.
-    #[test]
-    fn files_travel_between_two_devices() {
-        let Ok(url) = std::env::var("JJB_PB_URL") else {
-            eprintln!("JJB_PB_URL not set; skipping");
-            return;
-        };
-        let email = format!("{}@example.com", note::new_id());
-        let session = crate::sync::sign_up(&url, &email, "password123").unwrap();
+    /// Pictures, attached files and `.folders`.
+    fn files_between_devices([mut sa, mut sb, mut sc]: [Box<dyn Backend>; 3]) {
         let (mut a, _ta) = device("laptop-a");
         let (mut b, _tb) = device("laptop-b");
-        a.set_sync_account(&session.account()).unwrap();
-        b.set_sync_account(&session.account()).unwrap();
+        a.set_sync_account(&account().account()).unwrap();
+        b.set_sync_account(&account().account()).unwrap();
         let asset = |s: &Store, name: &str| s.notes_dir().join("assets").join(name);
         let put = |s: &Store, name: &str, bytes: &[u8]| {
             std::fs::create_dir_all(s.notes_dir().join("assets")).unwrap();
@@ -648,26 +692,26 @@ Both halves.
         std::fs::create_dir_all(a.notes_dir().join("assets/.links")).unwrap();
         std::fs::write(a.notes_dir().join("assets/.links/card.json"), b"{}").unwrap();
         a.add_folder("work").unwrap();
-        let (out, _) = cycle(&mut a, &session, "laptop-a");
+        let (out, _) = cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!(out.files.up, 2, "the picture and .folders");
         assert_eq!(a.sync_files_pending_count(), 0);
-        let (out, _) = cycle(&mut b, &session, "laptop-b");
+        let (out, _) = cycle(&mut b, sb.as_mut(), "laptop-b");
         assert_eq!(out.files.down, 1);
         assert_eq!(std::fs::read(asset(&b, "pic.jpg")).unwrap(), b"kyoto at night");
         assert!(!b.notes_dir().join("assets/.links").exists());
         assert!(!b.notes_dir().join("assets/.incoming/x").exists());
         assert_eq!(b.folders(), ["work"]);
         // Quiet afterwards, both ways.
-        let (out, _) = cycle(&mut b, &session, "laptop-b");
+        let (out, _) = cycle(&mut b, sb.as_mut(), "laptop-b");
         assert_eq!((out.files.up, out.files.down), (0, 0));
-        let (out, _) = cycle(&mut a, &session, "laptop-a");
+        let (out, _) = cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!((out.files.up, out.files.down), (0, 0));
         assert!(out.files.states.is_empty(), "nothing to remember: {:?}", out.files.states);
 
         // An edited picture replaces the untouched copy, no renaming.
         put(&a, "pic.jpg", b"kyoto at dawn, retouched");
-        cycle(&mut a, &session, "laptop-a");
-        let (out, _) = cycle(&mut b, &session, "laptop-b");
+        cycle(&mut a, sa.as_mut(), "laptop-a");
+        let (out, _) = cycle(&mut b, sb.as_mut(), "laptop-b");
         assert!(out.files.renamed.is_empty());
         assert_eq!(std::fs::read(asset(&b, "pic.jpg")).unwrap(), b"kyoto at dawn, retouched");
 
@@ -677,8 +721,8 @@ Both halves.
         put(&b, "img_0001.jpg", b"b's dog");
         let dog = b.create().unwrap().id;
         write(&mut b, &dog, "# Dog\n\n![dog](assets/img_0001.jpg){w=240}\n");
-        cycle(&mut a, &session, "laptop-a");
-        let (out, applied) = cycle(&mut b, &session, "laptop-b");
+        cycle(&mut a, sa.as_mut(), "laptop-a");
+        let (out, applied) = cycle(&mut b, sb.as_mut(), "laptop-b");
         assert_eq!(
             out.files.renamed,
             vec![("assets/img_0001.jpg".to_string(), "assets/img_0001-2.jpg".to_string())]
@@ -691,8 +735,8 @@ Both halves.
             "# Dog\n\n![dog](assets/img_0001-2.jpg){w=240}\n"
         );
         // The repointed note and the dog go up; A ends with both pictures.
-        cycle(&mut b, &session, "laptop-b");
-        cycle(&mut a, &session, "laptop-a");
+        cycle(&mut b, sb.as_mut(), "laptop-b");
+        cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!(std::fs::read(asset(&a, "img_0001.jpg")).unwrap(), b"a's cat");
         assert_eq!(std::fs::read(asset(&a, "img_0001-2.jpg")).unwrap(), b"b's dog");
         assert!(a.load(&dog).unwrap().unwrap().body.contains("img_0001-2.jpg"));
@@ -701,21 +745,21 @@ Both halves.
         a.remove_folder("work").unwrap();
         a.add_folder("home").unwrap();
         b.add_folder("play").unwrap();
-        cycle(&mut a, &session, "laptop-a");
-        cycle(&mut b, &session, "laptop-b"); // merges
+        cycle(&mut a, sa.as_mut(), "laptop-a");
+        cycle(&mut b, sb.as_mut(), "laptop-b"); // merges
         assert_eq!(b.folders(), ["home", "play"]);
-        cycle(&mut b, &session, "laptop-b"); // sends the merge up
-        cycle(&mut a, &session, "laptop-a");
+        cycle(&mut b, sb.as_mut(), "laptop-b"); // sends the merge up
+        cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!(a.folders(), ["home", "play"]);
-        let (out, _) = cycle(&mut a, &session, "laptop-a");
+        let (out, _) = cycle(&mut a, sa.as_mut(), "laptop-a");
         assert_eq!((out.files.up, out.files.down), (0, 0));
         assert_eq!(a.sync_files_pending_count() + b.sync_files_pending_count(), 0);
 
         // A fresh install holding the same files agrees without moving them.
         let (mut c, _tc) = device("laptop-c");
-        c.set_sync_account(&session.account()).unwrap();
+        c.set_sync_account(&account().account()).unwrap();
         put(&c, "pic.jpg", b"kyoto at dawn, retouched");
-        let (out, _) = cycle(&mut c, &session, "laptop-c");
+        let (out, _) = cycle(&mut c, sc.as_mut(), "laptop-c");
         assert!(out.files.renamed.is_empty());
         assert_eq!(out.files.down, 2, "only the two it lacked");
         assert_eq!(c.folders(), ["home", "play"]);

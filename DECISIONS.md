@@ -1056,3 +1056,29 @@ image breaks a heading mid-word when the column is under ~100 px.
 - Tested: `files_travel_between_two_devices` (needs `JJB_PB_URL`), and
   two real app instances against a local PocketBase — note, picture
   (byte-identical) and folder arrived.
+
+## 2026-09-20 — Sync gets a backend seam; Google Drive is coming
+- The user does not want to run a server: sync should work from anywhere
+  against storage they already have. Decision: Google Drive becomes the
+  easy backend; PocketBase stays for self-hosters. This reverses the
+  handover's PocketBase-only choice.
+- On Drive the user picks one of two modes when turning sync on:
+  readable (real `Title.md` files and pictures, visible in Drive) or
+  fully encrypted (passphrase, everything sealed on the device; Google
+  sees counts, sizes and times only). Encryption sits above the backend,
+  so PocketBase gets it too.
+- Step one, done: `sync::backend::Backend` — authorize, pull/push notes,
+  list/find/download/upload files, all in opaque strings and bytes. The
+  cycle (`sync::run_with`, `sync::files::run`) and every rule about
+  conflicts, paths and hashes stay on the app's side of the trait.
+  `sync/pocketbase.rs` holds all the HTTP that used to be spread over
+  `sync.rs` and `sync/files.rs`; behaviour unchanged (both scenarios
+  re-run against a live PocketBase).
+- `sync/memory.rs` is a test backend with the same contract (server-owned
+  revisions, stale writes refused, one record per id/key), so the
+  two-device scenarios now run in every `cargo test`, not only with
+  `JJB_PB_URL` set.
+- Known difference to design for: Drive cannot refuse a stale write. The
+  Drive backend will detect a concurrent write after the fact (revision
+  list) and hand the overwritten text back as a conflict, so nothing is
+  lost; the trait's `Conflict`/`Taken` results already carry that.
