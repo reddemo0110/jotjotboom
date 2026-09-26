@@ -150,6 +150,9 @@ buffet-off = Nothing plated yet — click a colour to switch the buffet on.
 show-nav = Views and tags
 show-list = Notes list
 editor-only = Editor only
+zoom-in = Bigger text
+zoom-out = Smaller text
+zoom-reset = Reset text size
 
 # Images
 images-rail = Images: right rail

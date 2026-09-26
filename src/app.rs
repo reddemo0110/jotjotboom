@@ -3,6 +3,7 @@
 use crate::blocks::{Block, Blocks};
 use crate::config::Config;
 use crate::debug_script::{self, Step};
+use crate::dockicon::DockIcon;
 use crate::fl;
 use crate::images::{self, Align, FrameStyle, ImageRef, PickerEntry, Processed, UriList};
 use crate::markdown;
@@ -404,6 +405,7 @@ pub enum Message {
     RestoreFonts,
     /// Grow (+) or shrink (−) one pane's text, in px.
     SizeStep(Pane, i16),
+    SizeReset(Pane),
     ToggleSection(Section),
     SetDockSize(retro::DockSize),
     SetTaskMarker(String),
@@ -864,6 +866,10 @@ impl cosmic::Application for AppModel {
                 MenuAction::ToggleList,
             ),
             menu::Item::Button(fl!("editor-only"), None, MenuAction::Solo),
+            menu::Item::Divider,
+            menu::Item::Button(fl!("zoom-in"), None, MenuAction::ZoomIn),
+            menu::Item::Button(fl!("zoom-out"), None, MenuAction::ZoomOut),
+            menu::Item::Button(fl!("zoom-reset"), None, MenuAction::ZoomReset),
             menu::Item::Divider,
             menu::Item::Button(fl!("theme-colours"), None, MenuAction::Themes),
             menu::Item::CheckBox(
@@ -1779,35 +1785,15 @@ impl AppModel {
                 };
                 let next = (i32::from(current) + i32::from(step))
                     .clamp(i32::from(min), i32::from(max)) as u16;
-                let saved = match (pane, &self.config_handler) {
-                    (Pane::Editor, Some(h)) => {
-                        self.font_size = next;
-                        self.config.set_editor_font_size(h, next).map(|_| ())
-                    }
-                    (Pane::Sidebar, Some(h)) => {
-                        self.sidebar_size = next;
-                        self.config.set_sidebar_font_size(h, next).map(|_| ())
-                    }
-                    (Pane::List, Some(h)) => {
-                        self.list_size = next;
-                        self.config.set_list_font_size(h, next).map(|_| ())
-                    }
-                    (Pane::Editor, None) => {
-                        self.font_size = next;
-                        Ok(())
-                    }
-                    (Pane::Sidebar, None) => {
-                        self.sidebar_size = next;
-                        Ok(())
-                    }
-                    (Pane::List, None) => {
-                        self.list_size = next;
-                        Ok(())
-                    }
+                self.set_pane_size(pane, next);
+            }
+
+            Message::SizeReset(pane) => {
+                let default = match pane {
+                    Pane::Editor => retro::FONT_SIZE_DEFAULT,
+                    Pane::Sidebar | Pane::List => retro::PANE_SIZE_DEFAULT,
                 };
-                if let Err(why) = saved {
-                    tracing::warn!(%why, ?pane, "saving text size");
-                }
+                self.set_pane_size(pane, default);
             }
 
             Message::SetIcon(choice) => {
@@ -4200,6 +4186,39 @@ impl AppModel {
         )
     }
 
+    /// Apply a text size to a pane and remember it in the config.
+    fn set_pane_size(&mut self, pane: Pane, next: u16) {
+        let saved = match (pane, &self.config_handler) {
+            (Pane::Editor, Some(h)) => {
+                self.font_size = next;
+                self.config.set_editor_font_size(h, next).map(|_| ())
+            }
+            (Pane::Sidebar, Some(h)) => {
+                self.sidebar_size = next;
+                self.config.set_sidebar_font_size(h, next).map(|_| ())
+            }
+            (Pane::List, Some(h)) => {
+                self.list_size = next;
+                self.config.set_list_font_size(h, next).map(|_| ())
+            }
+            (Pane::Editor, None) => {
+                self.font_size = next;
+                Ok(())
+            }
+            (Pane::Sidebar, None) => {
+                self.sidebar_size = next;
+                Ok(())
+            }
+            (Pane::List, None) => {
+                self.list_size = next;
+                Ok(())
+            }
+        };
+        if let Err(why) = saved {
+            tracing::warn!(%why, ?pane, "saving text size");
+        }
+    }
+
     /// The dock: format actions for the open note, `+`, and the theme
     /// picker, as a centred pill at the foot of the editor. The `+` section
     /// opens as a second pill underneath so the main row never overflows.
@@ -4210,12 +4229,17 @@ impl AppModel {
                 .padding([0, 1])
         };
         let ds = self.dock_size;
+        let icon = |i: DockIcon, colour: cosmic::iced::Color| {
+            widget::svg(i.handle(self.icon_set, colour))
+                .width(ds.icon())
+                .height(ds.icon())
+        };
         // A wrapping row, so the bigger sizes fold onto extra lines instead
         // of running off the pane.
         let mut items: Vec<Element<'a, Message>> = Vec::with_capacity(16);
 
         for format in Format::ALL {
-            let button = widget::button::custom(retro::text(p, format.glyph()).size(ds.glyph()))
+            let button = widget::button::custom(icon(format.icon(), p.fg))
                 .padding(ds.pad())
                 .class(retro::row_class(p, false))
                 .on_press_maybe(editable.then_some(Message::Format(format)));
@@ -4235,8 +4259,8 @@ impl AppModel {
         items.push(divider().into());
         items.push(
             widget::tooltip(
-                widget::button::custom(retro::accent(p, "+").size(ds.glyph() + 2.0))
-                    .padding([ds.pad()[0].saturating_sub(2), ds.pad()[1]])
+                widget::button::custom(icon(DockIcon::Plus, p.accent))
+                    .padding(ds.pad())
                     .class(retro::row_class(p, self.dock_open))
                     .on_press(Message::ToggleDock),
                 retro::dim(p, self.with_shortcut(fl!("dock-plus"), MenuAction::NewNote)),
@@ -4247,8 +4271,8 @@ impl AppModel {
 
         items.push(
             widget::tooltip(
-                widget::button::custom(retro::accent(p, "⧉").size(ds.glyph() + 1.0))
-                    .padding([ds.pad()[0].saturating_sub(1), ds.pad()[1]])
+                widget::button::custom(icon(DockIcon::Image, p.accent))
+                    .padding(ds.pad())
                     .class(retro::row_class(p, false))
                     .on_press_maybe(editable.then_some(Message::PickImage)),
                 retro::dim(
@@ -5546,7 +5570,9 @@ impl AppModel {
             .filter(|(_, a)| **a == action)
             .map(|(k, _)| k.to_string())
             .collect();
-        found.sort_by_key(|k| k.len());
+        // Shortest first; ties broken alphabetically so an action with
+        // several spellings always shows the same one.
+        found.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
         found.into_iter().next()
     }
 
@@ -5591,6 +5617,9 @@ impl AppModel {
                     (fl!("show-nav"), MenuAction::ToggleNav),
                     (fl!("show-list"), MenuAction::ToggleList),
                     (fl!("editor-only"), MenuAction::Solo),
+                    (fl!("zoom-in"), MenuAction::ZoomIn),
+                    (fl!("zoom-out"), MenuAction::ZoomOut),
+                    (fl!("zoom-reset"), MenuAction::ZoomReset),
                     (fl!("theme-colours"), MenuAction::Themes),
                     (fl!("show-markers"), MenuAction::ToggleMarkers),
                     (fl!("shortcuts"), MenuAction::Shortcuts),
@@ -8127,6 +8156,12 @@ fn key_binds() -> HashMap<menu::KeyBind, MenuAction> {
     bind(&[Ctrl, Shift], "1", MenuAction::ToggleNav);
     bind(&[Ctrl, Shift], "2", MenuAction::ToggleList);
     bind(&[Ctrl, Shift], "0", MenuAction::Solo);
+    // Ctrl + plus is Ctrl + Shift + = on most keyboards; take every spelling.
+    bind(&[Ctrl], "+", MenuAction::ZoomIn);
+    bind(&[Ctrl, Shift], "+", MenuAction::ZoomIn);
+    bind(&[Ctrl], "=", MenuAction::ZoomIn);
+    bind(&[Ctrl], "-", MenuAction::ZoomOut);
+    bind(&[Ctrl], "0", MenuAction::ZoomReset);
     bind(&[Alt], ",", MenuAction::Themes);
     bind(&[Ctrl, Shift], "m", MenuAction::ToggleMarkers);
     bind(&[Ctrl, Shift], "h", MenuAction::Shortcuts);
@@ -8312,21 +8347,22 @@ impl Format {
         }
     }
 
-    fn glyph(self) -> &'static str {
+    /// The dock drawing for this action, in the user's icon set.
+    fn icon(self) -> DockIcon {
         match self {
-            Format::Bold => "B",
-            Format::Italic => "I",
-            Format::Code => "`",
-            Format::H1 => "H1",
-            Format::H2 => "H2",
-            Format::Bullet => "•",
-            Format::Todo => "☐",
-            Format::Link => "[[ ]]",
-            Format::Tag => "#",
-            Format::Rule => "—",
-            Format::Quote => "❝",
-            Format::Mark => "░",
-            Format::Table => "⊞",
+            Format::Bold => DockIcon::Bold,
+            Format::Italic => DockIcon::Italic,
+            Format::Code => DockIcon::Code,
+            Format::H1 => DockIcon::H1,
+            Format::H2 => DockIcon::H2,
+            Format::Bullet => DockIcon::Bullet,
+            Format::Todo => DockIcon::Todo,
+            Format::Link => DockIcon::Link,
+            Format::Tag => DockIcon::Tag,
+            Format::Rule => DockIcon::Rule,
+            Format::Quote => DockIcon::Quote,
+            Format::Mark => DockIcon::Mark,
+            Format::Table => DockIcon::Table,
         }
     }
 
@@ -8376,6 +8412,9 @@ pub enum MenuAction {
     ToggleNav,
     ToggleList,
     Solo,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
     Quit,
 }
 
@@ -8402,6 +8441,9 @@ impl menu::action::MenuAction for MenuAction {
             MenuAction::ToggleNav => Message::ToggleNav,
             MenuAction::ToggleList => Message::ToggleList,
             MenuAction::Solo => Message::ToggleSolo,
+            MenuAction::ZoomIn => Message::SizeStep(Pane::Editor, 1),
+            MenuAction::ZoomOut => Message::SizeStep(Pane::Editor, -1),
+            MenuAction::ZoomReset => Message::SizeReset(Pane::Editor),
         }
     }
 }
@@ -8409,6 +8451,27 @@ impl menu::action::MenuAction for MenuAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zoom_keys_resolve_in_every_spelling() {
+        use cosmic::iced::keyboard::{Modifiers, key::Key};
+        let binds = key_binds();
+        let find = |mods: Modifiers, ch: &str| {
+            binds
+                .iter()
+                .find(|(b, _)| b.matches(mods, &Key::Character(ch.into()), None))
+                .map(|(_, a)| *a)
+        };
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(find(Modifiers::CTRL, "+"), Some(MenuAction::ZoomIn));
+        assert_eq!(find(ctrl_shift, "+"), Some(MenuAction::ZoomIn));
+        assert_eq!(find(Modifiers::CTRL, "="), Some(MenuAction::ZoomIn));
+        assert_eq!(find(Modifiers::CTRL, "-"), Some(MenuAction::ZoomOut));
+        assert_eq!(find(Modifiers::CTRL, "0"), Some(MenuAction::ZoomReset));
+        // The old binds around them are untouched.
+        assert_eq!(find(ctrl_shift, "0"), Some(MenuAction::Solo));
+        assert_eq!(find(Modifiers::CTRL, "1"), Some(MenuAction::Format(Format::H1)));
+    }
 
     fn swept(text: &str, from: (usize, &str), to: (usize, &str), sweep: bool) -> String {
         use text_editor::{Cursor, Position};

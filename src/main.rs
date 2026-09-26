@@ -7,7 +7,7 @@ mod coffee;
 mod config;
 mod debug_script;
 mod desktop;
-mod table;
+mod dockicon;
 mod editor;
 mod glyph;
 mod i18n;
@@ -22,6 +22,7 @@ mod search_provider;
 mod secrets;
 mod store;
 mod sync;
+mod table;
 
 use cosmic::Application as _;
 

@@ -1625,23 +1625,23 @@ impl DockSize {
         }
     }
 
-    /// Glyph size of a format button.
-    pub fn glyph(self) -> f32 {
+    /// Side of the square an action icon is drawn in.
+    pub fn icon(self) -> f32 {
         match self {
-            DockSize::Small => 12.0,
-            DockSize::Medium => 14.0,
-            DockSize::Large => 18.0,
-            DockSize::Wow => 26.0,
+            DockSize::Small => 14.0,
+            DockSize::Medium => 17.0,
+            DockSize::Large => 22.0,
+            DockSize::Wow => 30.0,
         }
     }
 
     /// Button padding [vertical, horizontal].
     pub fn pad(self) -> [u16; 2] {
         match self {
-            DockSize::Small => [2, 5],
-            DockSize::Medium => [3, 7],
-            DockSize::Large => [5, 10],
-            DockSize::Wow => [8, 15],
+            DockSize::Small => [2, 4],
+            DockSize::Medium => [3, 6],
+            DockSize::Large => [5, 9],
+            DockSize::Wow => [8, 14],
         }
     }
 
