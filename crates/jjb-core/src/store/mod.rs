@@ -96,8 +96,8 @@ impl Store {
     /// Bring a markdown file from outside the notes folder in as a new note
     /// (a copy — the original is left alone) and return its id.
     pub fn import(&mut self, path: &Path) -> Result<Note> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let (fm, body) = note::parse_document(&text);
         let now = Utc::now();
         let stem = path
@@ -551,7 +551,10 @@ mod tests {
         store.save(&mut n).unwrap();
 
         // A note in the folder is found by its path; a stranger is not.
-        assert_eq!(store.find_by_path(&n.path).unwrap().as_deref(), Some(n.id.as_str()));
+        assert_eq!(
+            store.find_by_path(&n.path).unwrap().as_deref(),
+            Some(n.id.as_str())
+        );
         let outside = tmp.path().join("elsewhere.md");
         std::fs::write(&outside, "Just a body line\n\nwith #ideas").unwrap();
         assert_eq!(store.find_by_path(&outside).unwrap(), None);
@@ -559,7 +562,11 @@ mod tests {
         // Importing copies it in under its own filename and leaves the original.
         let imported = store.import(&outside).unwrap();
         assert!(imported.path.starts_with(store.notes_dir()));
-        assert!(imported.path.ends_with("elsewhere.md"), "{}", imported.path.display());
+        assert!(
+            imported.path.ends_with("elsewhere.md"),
+            "{}",
+            imported.path.display()
+        );
         assert_eq!(imported.title, "Just a body line");
         assert!(outside.exists());
         assert_eq!(
@@ -573,8 +580,15 @@ mod tests {
         let hits = index.search("roadmap").unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, n.id);
-        assert_eq!(index.path(&n.id).unwrap().as_deref(), Some(n.path.as_path()));
-        assert!(Index::open(&tmp.path().join("missing.db")).unwrap().is_none());
+        assert_eq!(
+            index.path(&n.id).unwrap().as_deref(),
+            Some(n.path.as_path())
+        );
+        assert!(
+            Index::open(&tmp.path().join("missing.db"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

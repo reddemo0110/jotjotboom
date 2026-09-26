@@ -6287,7 +6287,7 @@ impl AppModel {
             tasks.push(Task::perform(
                 async move {
                     tokio::task::spawn_blocking(move || {
-                        images::load_and_process(&path, style, palette, cols)
+                        images::load_and_process(&path, style, images::inks(&palette), cols)
                     })
                     .await
                     .map_err(|e| e.to_string())

@@ -62,7 +62,7 @@ cargo build --release
 # --- install into ~/.local -------------------------------------------------
 say "Installing into ~/.local"
 install -Dm0755 "$TARGET/release/$NAME" "$BIN_DIR/$NAME"
-install -Dm0644 resources/icons/hicolor/scalable/apps/icon.svg \
+install -Dm0644 apps/jjb-cosmic/resources/icons/hicolor/scalable/apps/icon.svg \
     "$BASE/icons/hicolor/scalable/apps/$APPID.svg"
 install -Dm0644 "$TARGET/xdgen/app.metainfo.xml" "$BASE/metainfo/$APPID.metainfo.xml"
 mkdir -p "$BASE/applications"
@@ -71,10 +71,10 @@ sed "s|^Exec=jotjotboom\(.*\)|Exec=$BIN_DIR/$NAME\1|" "$TARGET/xdgen/app.desktop
     > "$BASE/applications/$APPID.desktop"
 # GNOME Shell search provider: the shell reads the .ini and D-Bus activates
 # the .service on demand. Harmless on other desktops.
-install -Dm0644 resources/search-provider.ini \
+install -Dm0644 apps/jjb-cosmic/resources/search-provider.ini \
     "$BASE/gnome-shell/search-providers/$APPID.search-provider.ini"
 mkdir -p "$BASE/dbus-1/services"
-sed "s|^Exec=.*|Exec=$BIN_DIR/$NAME --search-provider|" resources/search-provider.service \
+sed "s|^Exec=.*|Exec=$BIN_DIR/$NAME --search-provider|" apps/jjb-cosmic/resources/search-provider.service \
     > "$BASE/dbus-1/services/$APPID.SearchProvider.service"
 update-desktop-database "$BASE/applications" 2>/dev/null || true
 gtk-update-icon-cache -q -t -f "$BASE/icons/hicolor" 2>/dev/null || true

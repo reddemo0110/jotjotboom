@@ -1,4 +1,7 @@
-use std::{env, fs, path::Path};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 use xdgen::{App, Context, FluentString};
 
 fn main() {
@@ -12,7 +15,13 @@ fn main() {
         .expand_metainfo("resources/app.metainfo.xml", &ctx)
         .unwrap();
 
-    let output = Path::new("target/xdgen/");
+    // Into the workspace's target dir (the justfile installs from there),
+    // not the package's: `apps/jjb-cosmic/../../target/xdgen`.
+    let output = match env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) => PathBuf::from(dir).join("xdgen"),
+        None => Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../target/xdgen"),
+    };
+    let output = output.as_path();
     fs::create_dir_all(output).unwrap();
     fs::write(output.join("app.desktop"), desktop_entry).unwrap();
     fs::write(output.join("app.metainfo.xml"), metainfo).unwrap();

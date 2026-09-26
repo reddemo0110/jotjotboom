@@ -13,16 +13,14 @@ mod glyph;
 mod i18n;
 mod icon;
 mod images;
-mod links;
 mod markdown;
-mod note;
 mod probe;
 mod retro;
 mod search_provider;
 mod secrets;
-mod store;
-mod sync;
-mod table;
+
+// The core's modules keep their old `crate::` paths inside this crate.
+use jjb_core::{links, note, store, sync, table};
 
 use cosmic::Application as _;
 

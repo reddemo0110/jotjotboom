@@ -1,0 +1,49 @@
+[package]
+name = "jjb-core"
+description = "JotJotBoom's notes, store, sync and markdown scanner — no toolkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Rule: nothing from libcosmic, iced or zbus in here; this crate builds for
+# Windows (`just check-windows`) and, without `full`, for the browser.
+[features]
+default = ["full"]
+# Everything that touches disk, the network or the OS: the store, sync,
+# images, link cards and the platform trait. Off, only the pure modules
+# remain (markdown scanner, tables) — that is what `jjb-md-wasm` compiles.
+full = [
+    "dep:blake3",
+    "dep:dirs",
+    "dep:image",
+    "dep:open",
+    "dep:rusqlite",
+    "dep:secret-service",
+    "dep:ureq",
+    "dep:uuid",
+    "dep:chrono",
+]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+blake3 = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+open = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+# The Linux keyring (Secret Service over D-Bus). The one OS-specific
+# dependency, and only on Linux; Windows gets the Credential Manager later.
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5", features = ["rt-tokio-crypto-rust"], optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true

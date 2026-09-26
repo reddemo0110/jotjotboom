@@ -49,7 +49,9 @@ pub struct Meta {
 
 /// What the server can see of a path.
 pub fn key_for(path: &str) -> String {
-    blake3::hash(format!("jjb-file:{path}").as_bytes()).to_hex().to_string()
+    blake3::hash(format!("jjb-file:{path}").as_bytes())
+        .to_hex()
+        .to_string()
 }
 
 /// A path we are willing to write: `.folders`, or something under `assets/`
@@ -61,7 +63,9 @@ pub fn safe_path(path: &str) -> bool {
     path.strip_prefix(ASSETS_PREFIX).is_some_and(|rest| {
         !rest.is_empty()
             && !path.contains(['\\', '\0'])
-            && rest.split('/').all(|c| !c.is_empty() && !c.starts_with('.'))
+            && rest
+                .split('/')
+                .all(|c| !c.is_empty() && !c.starts_with('.'))
     })
 }
 
@@ -178,7 +182,8 @@ fn mtime_ns(meta: &std::fs::Metadata) -> i64 {
 }
 
 pub fn hash_file(path: &Path) -> Result<String> {
-    let mut file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut hasher = blake3::Hasher::new();
     std::io::copy(&mut file, &mut hasher).with_context(|| format!("reading {}", path.display()))?;
     Ok(hasher.finalize().to_hex().to_string())
@@ -297,7 +302,8 @@ impl Cycle<'_> {
             if status >= 400 {
                 return Err(api_error(status, &body)).context("listing files");
             }
-            let list: ListResponse = serde_json::from_str(&body).context("parsing the file list")?;
+            let list: ListResponse =
+                serde_json::from_str(&body).context("parsing the file list")?;
             let n = list.items.len();
             out.extend(list.items);
             if n < PAGE {
@@ -451,9 +457,19 @@ impl Cycle<'_> {
             let new_abs = self.root.join(&new_rel);
             std::fs::rename(&local.abs, &new_abs)
                 .with_context(|| format!("moving {} aside", local.abs.display()))?;
-            tracing::info!(from = path, to = new_rel, "a different file of the same name came down");
+            tracing::info!(
+                from = path,
+                to = new_rel,
+                "a different file of the same name came down"
+            );
             self.locals.remove(path);
-            self.locals.insert(new_rel.clone(), Local { abs: new_abs, ..local });
+            self.locals.insert(
+                new_rel.clone(),
+                Local {
+                    abs: new_abs,
+                    ..local
+                },
+            );
             self.out.renamed.push((path.clone(), new_rel));
         }
         self.adopt(r)
@@ -511,7 +527,8 @@ impl Cycle<'_> {
             size: local.size,
         })?;
         let key = key_for(path);
-        let modified = chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(local.mtime).to_rfc3339();
+        let modified =
+            chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(local.mtime).to_rfc3339();
         let base = state.revision.to_string();
         // `.folders` goes up from memory so the merge base is exactly what
         // the server got.
@@ -548,7 +565,8 @@ impl Cycle<'_> {
         };
         let status = resp.status().as_u16();
         let body = resp.body_mut().read_to_string()?;
-        let taken = status == 409 || (status == 400 && creating && body.contains("validation_not_unique"));
+        let taken =
+            status == 409 || (status == 400 && creating && body.contains("validation_not_unique"));
         if status == 200 {
             let rec: Record = serde_json::from_str(&body).context("parsing the upload reply")?;
             let s = self.synced.entry(path.to_owned()).or_default();
@@ -601,9 +619,10 @@ impl Cycle<'_> {
                 continue;
             };
             if local.size > MAX_SIZE {
-                self.out
-                    .errors
-                    .push(format!("{path}: too big to sync ({} MB)", local.size / (1024 * 1024)));
+                self.out.errors.push(format!(
+                    "{path}: too big to sync ({} MB)",
+                    local.size / (1024 * 1024)
+                ));
                 continue;
             }
             if self.out_of_time() {
@@ -618,14 +637,20 @@ impl Cycle<'_> {
 
 /// The files half of one sync cycle.
 pub fn run(session: &Session, device_id: &str, job: FilesJob) -> FilesOutcome {
-    let known: HashMap<String, FileState> = job.known.into_iter().map(|s| (s.path.clone(), s)).collect();
+    let known: HashMap<String, FileState> =
+        job.known.into_iter().map(|s| (s.path.clone(), s)).collect();
     let mut errors = Vec::new();
     let mut locals = HashMap::new();
     for (rel, abs, meta) in scan(&job.notes_dir) {
         let (size, mtime) = (meta.len(), mtime_ns(&meta));
         let cached = known
             .get(&rel)
-            .filter(|s| rel != FOLDERS_PATH && s.size == size && s.mtime == mtime && !s.local_hash.is_empty())
+            .filter(|s| {
+                rel != FOLDERS_PATH
+                    && s.size == size
+                    && s.mtime == mtime
+                    && !s.local_hash.is_empty()
+            })
             .map(|s| s.local_hash.clone());
         let hash = match cached.map_or_else(|| hash_file(&abs), Ok) {
             Ok(h) => h,
@@ -634,7 +659,15 @@ pub fn run(session: &Session, device_id: &str, job: FilesJob) -> FilesOutcome {
                 continue;
             }
         };
-        locals.insert(rel, Local { abs, size, mtime, hash });
+        locals.insert(
+            rel,
+            Local {
+                abs,
+                size,
+                mtime,
+                hash,
+            },
+        );
     }
 
     let mut cycle = Cycle {
@@ -658,7 +691,10 @@ pub fn run(session: &Session, device_id: &str, job: FilesJob) -> FilesOutcome {
 
     // Bookkeeping: every file we looked at, where anything changed.
     let Cycle {
-        locals, synced, mut out, ..
+        locals,
+        synced,
+        mut out,
+        ..
     } = cycle;
     for (path, local) in &locals {
         let agreed = synced.get(path).cloned().unwrap_or_default();

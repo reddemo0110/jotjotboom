@@ -840,7 +840,10 @@ mod tests {
         assert_eq!(translate_formula("=SUM(C2*C3)", 1, 0), "=SUM(C3*C4)");
         assert_eq!(translate_formula("=SUM(B2:B4)", 2, 0), "=SUM(B4:B6)");
         assert_eq!(translate_formula("=A1+10", 0, 1), "=B1+10");
-        assert_eq!(translate_formula("=\u{20ac}SUM(A1)", 1, 0), "=\u{20ac}SUM(A2)");
+        assert_eq!(
+            translate_formula("=\u{20ac}SUM(A1)", 1, 0),
+            "=\u{20ac}SUM(A2)"
+        );
         // Values copy verbatim; off-the-edge refs flag themselves.
         assert_eq!(translate_formula("$4.50", 3, 0), "$4.50");
         assert_eq!(translate_formula("=A1", -1, 0), "=#REF");

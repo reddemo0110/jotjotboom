@@ -195,7 +195,11 @@ fn api_error(status: u16, body: &str) -> anyhow::Error {
         .map(|fields| {
             fields
                 .iter()
-                .filter_map(|(k, v)| v.get("message").and_then(|m| m.as_str()).map(|m| format!("{k}: {m}")))
+                .filter_map(|(k, v)| {
+                    v.get("message")
+                        .and_then(|m| m.as_str())
+                        .map(|m| format!("{k}: {m}"))
+                })
                 .collect::<Vec<_>>()
                 .join("; ")
         })
@@ -219,7 +223,11 @@ struct AuthRecord {
     email: String,
 }
 
-fn auth_response(url: &str, email: &str, mut resp: ureq::http::Response<ureq::Body>) -> Result<Session> {
+fn auth_response(
+    url: &str,
+    email: &str,
+    mut resp: ureq::http::Response<ureq::Body>,
+) -> Result<Session> {
     let status = resp.status().as_u16();
     let body = resp.body_mut().read_to_string().context("reading reply")?;
     if status >= 400 {
@@ -280,7 +288,10 @@ pub fn sign_up(url: &str, email: &str, password: &str) -> Result<Session> {
 /// refused it (expired, revoked, account gone) — sign in again.
 pub fn refresh(session: &Session) -> Result<Option<Session>> {
     let resp = agent()
-        .post(format!("{}/api/collections/users/auth-refresh", session.url))
+        .post(format!(
+            "{}/api/collections/users/auth-refresh",
+            session.url
+        ))
         .header("Authorization", format!("Bearer {}", session.token))
         .send_empty()
         .with_context(|| format!("reaching {}", session.url))?;
@@ -395,7 +406,12 @@ enum PushResult {
     Conflict(Option<Remote>),
 }
 
-fn push_one(agent: &ureq::Agent, session: &Session, device_id: &str, p: &Pending) -> Result<PushResult> {
+fn push_one(
+    agent: &ureq::Agent,
+    session: &Session,
+    device_id: &str,
+    p: &Pending,
+) -> Result<PushResult> {
     let blob = p.envelope.encode();
     let (mut resp, creating) = match &p.record_id {
         None => (
@@ -427,13 +443,17 @@ fn push_one(agent: &ureq::Agent, session: &Session, device_id: &str, p: &Pending
     let status = resp.status().as_u16();
     let body = resp.body_mut().read_to_string()?;
     match status {
-        200 => Ok(PushResult::Landed(serde_json::from_str(&body).context("parsing push reply")?)),
+        200 => Ok(PushResult::Landed(
+            serde_json::from_str(&body).context("parsing push reply")?,
+        )),
         // Stale base revision (hook), or the note already exists up there
         // (a reinstall that lost its sync state, another device's copy).
-        409 => Ok(PushResult::Conflict(fetch_by_note(agent, session, &p.note_id)?)),
-        400 if creating && body.contains("validation_not_unique") => {
-            Ok(PushResult::Conflict(fetch_by_note(agent, session, &p.note_id)?))
-        }
+        409 => Ok(PushResult::Conflict(fetch_by_note(
+            agent, session, &p.note_id,
+        )?)),
+        400 if creating && body.contains("validation_not_unique") => Ok(PushResult::Conflict(
+            fetch_by_note(agent, session, &p.note_id)?,
+        )),
         // The record went away under us: start over as a create next time.
         404 if !creating => Ok(PushResult::Conflict(None)),
         _ => Err(api_error(status, &body)),
@@ -472,7 +492,11 @@ pub fn run(job: Job) -> Outcome {
                 if r.updated > out.cursor {
                     out.cursor = r.updated.clone();
                 }
-                if job.known.get(&r.note_id).is_some_and(|(_, rev)| *rev == r.revision) {
+                if job
+                    .known
+                    .get(&r.note_id)
+                    .is_some_and(|(_, rev)| *rev == r.revision)
+                {
                     continue;
                 }
                 incoming_ids.insert(r.note_id.clone());

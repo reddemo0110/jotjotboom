@@ -1079,3 +1079,50 @@ image breaks a heading mid-word when the column is under ~100 px.
   `shortcut_for` now breaks length ties alphabetically so an action
   with several bindings always shows the same one.
 
+
+## 2026-09-26 — Windows first: a Rust core and one shell per platform
+
+- Windows is the primary platform from here. The two real audiences are
+  Windows and GNOME, not COSMIC; one primary during the feature rush.
+  The app becomes a Rust core plus a Tauri 2 shell: WebView2 with Fluent
+  UI React v9 chrome on Windows, the same Tauri app on WebKitGTK for
+  GNOME (second), Mac third and later. The editor there is CodeMirror 6
+  driven by the existing markdown scanner compiled to WASM, so both
+  editors paint the same spans from the same code. The libcosmic app is
+  frozen as the reference build on the Linux box until the Tauri build
+  is the better GNOME app; then it retires (recorded here when it does).
+- The repo is a Cargo workspace: `crates/jjb-core` (note, store, sync,
+  markdown scanner, images, links, tables, platform trait), `crates/
+  jjb-md-wasm` (the scanner for the browser), `apps/jjb-cosmic` (the app
+  as it was; package name stays `jotjotboom` because the i18n domain and
+  the launcher files derive from it). Rule: no libcosmic, iced or zbus in
+  the core. The one OS dependency it keeps is `secret-service`, gated to
+  Linux, because the Tauri app on GNOME needs that keyring too.
+  `just check-windows` proves the core builds for
+  `x86_64-pc-windows-msvc` through cargo-xwin; `cargo test` runs a parity
+  test that feeds one fixture through the WASM build (via node) and the
+  native scanner and compares the spans.
+- What stayed in the shell: the cosmic-config entry (`config.rs`; the
+  Tauri app keeps its own settings file with the same keys), the iced
+  colour and font table for spans (`markdown::style_for`), the drag-and-
+  drop payload type, the palette → image inks conversion. The core's
+  `images` takes plain RGB `Inks` and its `markdown` returns plain
+  spans with serde derives, so the scanner is toolkit-free.
+- The platform trait (`jjb_core::platform`) covers the default notes
+  dir, the data dir for `index.db`, the keyring, and opening a URL.
+  Single instance is deliberately not on it: it is the shell's job
+  (libcosmic's D-Bus activation here, Tauri's single-instance plugin
+  there) because the shell receives the forwarded arguments and raises
+  the window. The Windows implementation is a stub for the keyring
+  (Phase C wires the Credential Manager through the `keyring` crate);
+  folders and open-URL already work there through `dirs` and `open`.
+- The list-marker helpers (`task_box`, `list_marker`, `numbered_marker`)
+  moved from `note` into `markdown`, re-exported from `note`, so the
+  scanner has no dependency on the note module (which needs uuid and
+  blake3, neither of which the WASM build wants).
+- `.gitattributes` forces LF for everything text: notes are byte-exact
+  files, the sync hash is over the bytes, and Windows Git would
+  otherwise rewrite them.
+- Safe point before all this: tag `v0.2-pre-windows`. The handover for
+  the Windows session is `WINDOWS-HANDOVER.md` in the repo root; it is
+  the only thing that session can read.

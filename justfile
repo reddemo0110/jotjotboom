@@ -9,6 +9,8 @@ rootdir := ''
 prefix := '/usr'
 # The location of the cargo target directory.
 cargo-target-dir := env('CARGO_TARGET_DIR', 'target')
+# The COSMIC app's crate: its launcher files, icon and fonts live there.
+app-dir := 'apps' / 'jjb-cosmic'
 
 # Application's appstream metadata
 appdata := appid + '.metainfo.xml'
@@ -57,7 +59,12 @@ build-vendored *args: vendor-extract (build-release '--frozen --offline' args)
 
 # Runs a clippy check
 check *args:
-    cargo clippy --all-features --locked {{args}} -- -W clippy::pedantic
+    cargo clippy --workspace --all-features --locked {{args}} -- -W clippy::pedantic
+
+# Proves the core builds for Windows (needs `rustup target add x86_64-pc-windows-msvc`
+# and `cargo install cargo-xwin`; the first run downloads the Windows SDK).
+check-windows:
+    env CARGO_TARGET_DIR={{ cargo-target-dir / 'xwin' }} cargo xwin check -p jjb-core --target x86_64-pc-windows-msvc
 
 # Runs a clippy check with JSON message format
 check-json: (check '--message-format=json')
@@ -71,10 +78,10 @@ install:
     install -Dm0755 {{ cargo-target-dir / 'release' / name }} {{bin-dst}}
     install -Dm0644 {{ 'target' / 'xdgen' / 'app.desktop' }} {{desktop-dst}}
     install -Dm0644 {{ 'target' / 'xdgen' / 'app.metainfo.xml' }} {{appdata-dst}}
-    install -Dm0644 {{ 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'icon.svg' }} {{icon-svg-dst}}
-    install -Dm0644 {{ 'resources' / 'search-provider.ini' }} {{search-ini-dst}}
+    install -Dm0644 {{ app-dir / 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'icon.svg' }} {{icon-svg-dst}}
+    install -Dm0644 {{ app-dir / 'resources' / 'search-provider.ini' }} {{search-ini-dst}}
     mkdir -p {{ parent_directory(search-service-dst) }}
-    sed 's|^Exec=.*|Exec={{bin-dst}} --search-provider|' {{ 'resources' / 'search-provider.service' }} > {{search-service-dst}}
+    sed 's|^Exec=.*|Exec={{bin-dst}} --search-provider|' {{ app-dir / 'resources' / 'search-provider.service' }} > {{search-service-dst}}
 
 # Uninstalls installed files
 uninstall:
@@ -86,12 +93,12 @@ uninstall:
 user-base := env('HOME') / '.local'
 install-user: build-release
     install -Dm0755 {{ cargo-target-dir / 'release' / name }} {{ user-base / 'bin' / name }}
-    install -Dm0644 {{ 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'icon.svg' }} {{ user-base / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / icon-svg }}
+    install -Dm0644 {{ app-dir / 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'icon.svg' }} {{ user-base / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / icon-svg }}
     install -Dm0644 {{ 'target' / 'xdgen' / 'app.metainfo.xml' }} {{ user-base / 'share' / 'metainfo' / appdata }}
     sed 's|^Exec=jotjotboom\(.*\)|Exec={{ user-base / 'bin' / name }}\1|' {{ 'target' / 'xdgen' / 'app.desktop' }} > {{ user-base / 'share' / 'applications' / desktop }}
-    install -Dm0644 {{ 'resources' / 'search-provider.ini' }} {{ user-base / 'share' / 'gnome-shell' / 'search-providers' / search-ini }}
+    install -Dm0644 {{ app-dir / 'resources' / 'search-provider.ini' }} {{ user-base / 'share' / 'gnome-shell' / 'search-providers' / search-ini }}
     mkdir -p {{ user-base / 'share' / 'dbus-1' / 'services' }}
-    sed 's|^Exec=.*|Exec={{ user-base / 'bin' / name }} --search-provider|' {{ 'resources' / 'search-provider.service' }} > {{ user-base / 'share' / 'dbus-1' / 'services' / search-service }}
+    sed 's|^Exec=.*|Exec={{ user-base / 'bin' / name }} --search-provider|' {{ app-dir / 'resources' / 'search-provider.service' }} > {{ user-base / 'share' / 'dbus-1' / 'services' / search-service }}
     -update-desktop-database {{ user-base / 'share' / 'applications' }}
     -gtk-update-icon-cache -q -t -f {{ user-base / 'share' / 'icons' / 'hicolor' }}
     @echo "Installed. Find JotJotBoom in the app library; right-click it in the dock to pin."
@@ -118,7 +125,7 @@ vendor-extract:
 
 # Bump cargo version, create git commit, and create tag
 tag version:
-    find -type f -name Cargo.toml -exec sed -i '0,/^version/s/^version.*/version = "{{version}}"/' '{}' \; -exec git add '{}' \;
+    sed -i '0,/^version/s/^version.*/version = "{{version}}"/' Cargo.toml && git add Cargo.toml
     cargo check
     cargo clean
     git add Cargo.lock

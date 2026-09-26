@@ -94,36 +94,14 @@ pub struct Config {
 }
 
 impl Config {
-    /// Resolve the notes directory, falling back to `~/Documents/JotJotBoom`.
+    /// Resolve the notes directory, falling back to the platform default
+    /// (`~/Documents/JotJotBoom`); `JJB_NOTES_DIR` overrides both.
     pub fn notes_dir(&self) -> PathBuf {
-        // `JJB_NOTES_DIR` lets the screenshot harness (and anyone testing)
-        // point a run at a scratch directory without touching real notes.
-        if let Some(dir) = std::env::var_os("JJB_NOTES_DIR").filter(|d| !d.is_empty()) {
-            return PathBuf::from(dir);
-        }
-        if !self.notes_dir.trim().is_empty() {
-            return PathBuf::from(shellexpand_home(self.notes_dir.trim()));
-        }
-        dirs::document_dir()
-            .or_else(dirs::home_dir)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("JotJotBoom")
+        jjb_core::platform::notes_dir(&self.notes_dir)
     }
 
     /// The derived SQLite index. Safe to delete — rebuilt from the notes dir on start.
     pub fn index_path(app_id: &str) -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(app_id)
-            .join("index.db")
+        jjb_core::platform::index_path(app_id)
     }
-}
-
-fn shellexpand_home(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/")
-        && let Some(home) = dirs::home_dir()
-    {
-        return home.join(rest).to_string_lossy().into_owned();
-    }
-    path.to_owned()
 }

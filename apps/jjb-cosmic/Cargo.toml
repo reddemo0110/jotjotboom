@@ -1,0 +1,66 @@
+[package]
+name = "jotjotboom"
+description = "Retro-flavoured markdown notes for the COSMIC and GNOME desktops"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The binary keeps the app's name; the package directory says which shell
+# this is (`apps/jjb-cosmic`). The i18n domain and the launcher files are
+# derived from the package name, so it must stay `jotjotboom`.
+
+[dependencies]
+jjb-core = { workspace = true, features = ["full"] }
+
+i18n-embed = { version = "0.16", features = [
+    "fluent-system",
+    "desktop-requester",
+] }
+i18n-embed-fl = "0.10"
+open.workspace = true
+rust-embed = "8.8.0"
+tokio = { version = "1.48.0", features = ["full"] }
+
+chrono.workspace = true
+dirs.workspace = true
+anyhow.workspace = true
+# The rich editor drives cosmic-text directly (same version iced uses).
+cosmic-text = "0.19"
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Debug-only self-screenshot (JJB_SCREENSHOT=path) for headless visual checks.
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Desktop integration beyond COSMIC: the GNOME Shell search provider and the
+# portal Settings reads (fonts, icon theme, button layout) speak D-Bus
+# directly. Same zbus libcosmic already builds.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[build-dependencies]
+xdgen = "0.1"
+
+[dependencies.libcosmic]
+git = "https://github.com/pop-os/libcosmic.git"
+# See https://github.com/pop-os/libcosmic/blob/master/Cargo.toml for available features.
+features = [
+    # About widget for the app
+    "about",
+    # On app startup, focuses an existing instance if the app is already open
+    "single-instance",
+    # GPU-accelerated rendering
+    "wgpu",
+    # xdg portal dialogs on Linux
+    "xdg-portal"
+]
+
+# Uncomment to test a locally-cloned libcosmic
+# [patch.'https://github.com/pop-os/libcosmic']
+# libcosmic = { path = "../../../libcosmic" }
+# cosmic-config = { path = "../../../libcosmic/cosmic-config" }
+# cosmic-theme = { path = "../../../libcosmic/cosmic-theme" }
+
+[dev-dependencies]
+tempfile.workspace = true

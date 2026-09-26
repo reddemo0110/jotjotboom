@@ -494,23 +494,26 @@ impl Db {
     }
 
     pub fn remove_sync_state(&mut self, note_id: &str) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM sync_state WHERE note_id = ?1", params![note_id])?;
+        self.conn.execute(
+            "DELETE FROM sync_state WHERE note_id = ?1",
+            params![note_id],
+        )?;
         Ok(())
     }
 
     /// Forget everything about the server (new account, new server).
     pub fn clear_sync(&mut self) -> Result<()> {
-        self.conn
-            .execute_batch("DELETE FROM sync_state; DELETE FROM sync_meta; DELETE FROM sync_files;")?;
+        self.conn.execute_batch(
+            "DELETE FROM sync_state; DELETE FROM sync_meta; DELETE FROM sync_files;",
+        )?;
         Ok(())
     }
 
     /// What we know about `assets/` and `.folders`, for the files cycle.
     pub fn all_sync_files(&self) -> Result<Vec<FileState>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT path, record_id, revision, hash, local_hash, size, mtime FROM sync_files")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT path, record_id, revision, hash, local_hash, size, mtime FROM sync_files",
+        )?;
         let rows = stmt.query_map([], |r| {
             Ok(FileState {
                 path: r.get(0)?,

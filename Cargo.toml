@@ -1,72 +1,37 @@
-[package]
-name = "jotjotboom"
+# JotJotBoom — a Rust core with one shell per platform.
+#
+#   crates/jjb-core     notes, store, sync, markdown scanner, images, links,
+#                       tables, platform trait. No toolkit. Builds for Windows.
+#   crates/jjb-md-wasm  the markdown scanner for the browser-side editor.
+#   apps/jjb-cosmic     the libcosmic app (COSMIC and GNOME), the reference
+#                       build until the Tauri app is the better GNOME app.
+#
+# `cargo build` / `cargo test` at the root cover all three; the wasm crate's
+# parity test builds it for `wasm32-unknown-unknown` itself (and skips when
+# the wasm target, the wasm-bindgen CLI or node is missing).
+[workspace]
+resolver = "3"
+members = ["crates/jjb-core", "crates/jjb-md-wasm", "apps/jjb-cosmic"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
-description = "Retro-flavoured markdown notes for the COSMIC and GNOME desktops"
 repository = "https://github.com/reddemo0110/jotjotboom"
 
-[dependencies]
-i18n-embed = { version = "0.16", features = [
-    "fluent-system",
-    "desktop-requester",
-] }
-i18n-embed-fl = "0.10"
-open = "5.3.2"
-# Link previews: fetch a page's Open Graph title/description/picture.
-ureq = { version = "3", features = ["json", "multipart"] }
-rust-embed = "8.8.0"
-tokio = { version = "1.48.0", features = ["full"] }
-
-# Storage: markdown files on disk, SQLite (FTS5) as the derived index.
-rusqlite = { version = "0.40", features = ["bundled"] }
-uuid = { version = "1", features = ["v7"] }
-chrono = "0.4"
-blake3 = "1"
-dirs = "6"
+[workspace.dependencies]
+# Members opt into `full`; the wasm scanner takes the pure modules only.
+jjb-core = { path = "crates/jjb-core", default-features = false }
 anyhow = "1"
-# The rich editor drives cosmic-text directly (same version iced uses).
-cosmic-text = "0.19"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Debug-only self-screenshot (JJB_SCREENSHOT=path) for headless visual checks.
+blake3 = "1"
+chrono = "0.4"
+dirs = "6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
-
-# Sync payloads and PocketBase replies.
+open = "5.3.2"
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# Secrets live in the system keyring from day one (sync tokens later).
-secret-service = { version = "5", features = ["rt-tokio-crypto-rust"] }
-
-# Desktop integration beyond COSMIC: the GNOME Shell search provider and the
-# portal Settings reads (fonts, icon theme, button layout) speak D-Bus
-# directly. Same zbus libcosmic already builds.
-zbus = { version = "5", default-features = false, features = ["tokio"] }
-
-[build-dependencies]
-xdgen = "0.1"
-
-[dependencies.libcosmic]
-git = "https://github.com/pop-os/libcosmic.git"
-# See https://github.com/pop-os/libcosmic/blob/master/Cargo.toml for available features.
-# Remove features if not needed.
-features = [
-    # About widget for the app
-    "about",
-    # On app startup, focuses an existing instance if the app is already open
-    "single-instance",
-    # GPU-accelerated rendering
-    "wgpu",
-    # xdg portal dialogs on Linux
-    "xdg-portal"
-]
-
-# Uncomment to test a locally-cloned libcosmic
-# [patch.'https://github.com/pop-os/libcosmic']
-# libcosmic = { path = "../libcosmic" }
-# cosmic-config = { path = "../libcosmic/cosmic-config" }
-# cosmic-theme = { path = "../libcosmic/cosmic-theme" }
-
-[dev-dependencies]
 tempfile = "3"
+tracing = "0.1"
+ureq = { version = "3", features = ["json", "multipart"] }
+uuid = { version = "1", features = ["v7"] }

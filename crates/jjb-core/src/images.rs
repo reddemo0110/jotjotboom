@@ -3,11 +3,8 @@
 //! Images in notes: the `![alt](assets/x.png){frame=tint size=m}` line format,
 //! the asset store, and the retro treatments applied before display.
 
-use crate::retro::Palette;
 use anyhow::{Context, Result};
-use cosmic::iced::clipboard::mime::AllowedMimeTypes;
 use image::{ImageBuffer, Rgba, RgbaImage};
-use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 pub const ASSETS_DIR: &str = "assets";
@@ -294,7 +291,9 @@ pub fn split(body: &str) -> Vec<Segment> {
             out.push(Segment::Link(l));
         } else if !in_fence
             && crate::table::table_line(line)
-            && lines.get(i + 1).is_some_and(|l| crate::table::separator_line(l))
+            && lines
+                .get(i + 1)
+                .is_some_and(|l| crate::table::separator_line(l))
         {
             // A pipe table: rows, then maybe its size comment.
             let start = i;
@@ -346,40 +345,19 @@ pub fn join(segments: &[Segment]) -> String {
     body
 }
 
-// ---------- drag and drop payload ----------
-
-/// A `text/uri-list` drop (files dragged from a file manager).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UriList(pub Vec<PathBuf>);
-
-impl AllowedMimeTypes for UriList {
-    fn allowed() -> Cow<'static, [String]> {
-        Cow::Owned(vec!["text/uri-list".to_owned()])
-    }
-}
-
-impl TryFrom<(Vec<u8>, String)> for UriList {
-    type Error = anyhow::Error;
-
-    fn try_from((data, mime): (Vec<u8>, String)) -> Result<Self> {
-        anyhow::ensure!(
-            mime.starts_with("text/uri-list"),
-            "unsupported mime type {mime}"
-        );
-        let text = String::from_utf8_lossy(&data);
-        let paths = text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .filter_map(|l| l.strip_prefix("file://").map(percent_decode))
-            .map(|p| {
-                // file://host/path — drop a host component if present.
-                let p = p.strip_prefix("localhost").unwrap_or(&p).to_owned();
-                PathBuf::from(p)
-            })
-            .collect();
-        Ok(UriList(paths))
-    }
+/// Percent-decoded `file://` URIs from a `text/uri-list` payload (files
+/// dragged from a file manager). Comment lines and other schemes are skipped.
+pub fn uri_list_paths(text: &str) -> Vec<PathBuf> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.strip_prefix("file://").map(percent_decode))
+        .map(|p| {
+            // file://host/path — drop a host component if present.
+            let p = p.strip_prefix("localhost").unwrap_or(&p).to_owned();
+            PathBuf::from(p)
+        })
+        .collect()
 }
 
 /// A file named on the command line or over D-Bus: a `file://` URI or a
@@ -537,6 +515,17 @@ pub fn is_image_file(path: &Path) -> bool {
 
 // ---------- treatments ----------
 
+/// The theme colours the pixel treatments paint with, as 0–255 RGB. The
+/// shell builds one from its palette; the core never sees a toolkit colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Inks {
+    pub bg: [f32; 3],
+    pub mute: [f32; 3],
+    pub dim: [f32; 3],
+    pub fg: [f32; 3],
+    pub accent: [f32; 3],
+}
+
 /// What the renderer gets back for one image.
 #[derive(Debug, Clone)]
 pub enum Processed {
@@ -563,7 +552,7 @@ pub fn ascii_layout(width: Option<u32>) -> (u32, f32) {
 pub fn load_and_process(
     path: &Path,
     style: FrameStyle,
-    palette: Palette,
+    inks: Inks,
     ascii_cols: u32,
 ) -> Result<Processed> {
     let img = image::open(path).with_context(|| format!("opening {}", path.display()))?;
@@ -579,10 +568,10 @@ pub fn load_and_process(
         img
     };
     let rgba = img.to_rgba8();
-    Ok(process(rgba, style, &palette, ascii_cols))
+    Ok(process(rgba, style, &inks, ascii_cols))
 }
 
-pub fn process(rgba: RgbaImage, style: FrameStyle, p: &Palette, ascii_cols: u32) -> Processed {
+pub fn process(rgba: RgbaImage, style: FrameStyle, p: &Inks, ascii_cols: u32) -> Processed {
     let out = match style {
         FrameStyle::Tint => tint(&rgba, p),
         FrameStyle::Dither => dither(&rgba, p),
@@ -603,10 +592,6 @@ fn luma(px: &Rgba<u8>) -> f32 {
     (0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32) / 255.0
 }
 
-fn c8(c: cosmic::iced::Color) -> [f32; 3] {
-    [c.r * 255.0, c.g * 255.0, c.b * 255.0]
-}
-
 fn lerp(a: [f32; 3], b: [f32; 3], t: f32) -> Rgba<u8> {
     Rgba([
         (a[0] + (b[0] - a[0]) * t) as u8,
@@ -617,8 +602,8 @@ fn lerp(a: [f32; 3], b: [f32; 3], t: f32) -> Rgba<u8> {
 }
 
 /// Greyscale mapped onto bg → fg of the palette (with a slight lift).
-fn tint(src: &RgbaImage, p: &Palette) -> RgbaImage {
-    let (bg, fg) = (c8(p.bg), c8(p.accent));
+fn tint(src: &RgbaImage, p: &Inks) -> RgbaImage {
+    let (bg, fg) = (p.bg, p.accent);
     ImageBuffer::from_fn(src.width(), src.height(), |x, y| {
         let t = luma(src.get_pixel(x, y)).powf(0.9);
         let mut px = lerp(bg, fg, t);
@@ -628,8 +613,8 @@ fn tint(src: &RgbaImage, p: &Palette) -> RgbaImage {
 }
 
 /// Floyd–Steinberg to four palette shades: bg, mute, dim, fg.
-fn dither(src: &RgbaImage, p: &Palette) -> RgbaImage {
-    let shades = [c8(p.bg), c8(p.mute), c8(p.dim), c8(p.fg)];
+fn dither(src: &RgbaImage, p: &Inks) -> RgbaImage {
+    let shades = [p.bg, p.mute, p.dim, p.fg];
     let (w, h) = (src.width() as usize, src.height() as usize);
     let mut buf: Vec<f32> = src.pixels().map(|px| luma(px) * 255.0).collect();
     let mut out = ImageBuffer::new(src.width(), src.height());
@@ -840,7 +825,13 @@ mod tests {
 
     #[test]
     fn treatments_keep_dimensions() {
-        let p = crate::retro::Theme::Phosphor.palette(&cosmic::Theme::default());
+        let p = Inks {
+            bg: [8.0, 12.0, 8.0],
+            mute: [40.0, 60.0, 40.0],
+            dim: [90.0, 140.0, 90.0],
+            fg: [180.0, 255.0, 180.0],
+            accent: [120.0, 255.0, 120.0],
+        };
         let img = ImageBuffer::from_fn(40, 30, |x, y| {
             Rgba([(x * 6) as u8, (y * 8) as u8, 128, 255])
         });
@@ -861,16 +852,14 @@ mod tests {
 
     #[test]
     fn uri_list_parses_file_urls() {
-        let data = b"# comment\r\nfile:///home/me/My%20Pics/a%20b.png\r\nfile://localhost/tmp/c.jpg\r\nhttp://x/y.png\r\n".to_vec();
-        let list = UriList::try_from((data, "text/uri-list".to_owned())).unwrap();
+        let data = "# comment\r\nfile:///home/me/My%20Pics/a%20b.png\r\nfile://localhost/tmp/c.jpg\r\nhttp://x/y.png\r\n";
         assert_eq!(
-            list.0,
+            uri_list_paths(data),
             vec![
                 PathBuf::from("/home/me/My Pics/a b.png"),
                 PathBuf::from("/tmp/c.jpg")
             ]
         );
-        assert!(UriList::try_from((vec![], "text/plain".to_owned())).is_err());
     }
 
     #[test]

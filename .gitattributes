@@ -1,0 +1,10 @@
+# Notes and sources are byte-exact files on disk; the sync hash is over the
+# bytes, so nothing may pick up CRLF on Windows.
+* text=auto eol=lf
+*.jpg binary
+*.png binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.ico binary

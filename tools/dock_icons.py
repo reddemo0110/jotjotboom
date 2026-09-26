@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Generate src/dockicon.rs — the dock's action icons in the seven tag icon sets.
+"""Generate apps/jjb-cosmic/src/dockicon.rs — the dock's action icons in the seven tag icon sets.
 
 Reads the Iconify collection JSON for each set (downloaded from the
 iconify/icon-sets repository into a cache directory) and writes a Rust module
 with one SVG body per (icon, set). A set that lacks a drawing borrows the
 Boxicons one at runtime, the same rule the tag icons follow.
 
-    tools/dock_icons.py [--cache DIR] [--out src/dockicon.rs]
+    tools/dock_icons.py [--cache DIR] [--out apps/jjb-cosmic/src/dockicon.rs]
 
 Sets and their Iconify prefixes: Boxicons `bx`, Iconoir `iconoir`, Solar
 `solar`, Myna UI `mynaui`, Majesticons `majesticons`, Pixelarticons
@@ -115,7 +115,7 @@ def rust_str(s):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=os.path.expanduser("~/.cache/jotjotboom-iconify"))
-    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "src", "dockicon.rs"))
+    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "apps", "jjb-cosmic", "src", "dockicon.rs"))
     args = ap.parse_args()
 
     colls = {variant: load(prefix, args.cache) for variant, prefix in SETS}

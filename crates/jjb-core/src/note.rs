@@ -512,47 +512,7 @@ pub fn rename_tag(body: &str, old: &str, new: &str) -> Option<String> {
     Some(out)
 }
 
-/// A task box at the start of `s`: `[ ]` is open, `[` + anything else + `]`
-/// is done (`x` by convention; the app lets the user pick ✓, 🦆, …).
-/// Returns the byte length of the box including one trailing space when
-/// present, and whether it is done. The box must end the line or be
-/// followed by a space.
-pub fn task_box(s: &str) -> Option<(usize, bool)> {
-    let rest = s.strip_prefix('[')?;
-    let close = rest.find(']')?;
-    let inner = &rest[..close];
-    if inner.is_empty() || inner.len() > 12 || (inner != " " && inner.contains(' ')) {
-        return None;
-    }
-    let after = &rest[close + 1..];
-    let len = if after.starts_with(' ') {
-        close + 3
-    } else if after.is_empty() {
-        close + 2
-    } else {
-        return None;
-    };
-    Some((len, inner != " "))
-}
-
-/// Length of a list marker (`- `, `* `, `+ `) at the start of `s`.
-pub fn list_marker(s: &str) -> Option<usize> {
-    (s.starts_with("- ") || s.starts_with("* ") || s.starts_with("+ ")).then_some(2)
-}
-
-/// Length of a numbered marker (`1. `, `12) `) at the start of `s`, with
-/// its number.
-pub fn numbered_marker(s: &str) -> Option<(usize, u32)> {
-    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
-    if digits == 0 || digits > 9 {
-        return None;
-    }
-    let rest = &s[digits..];
-    if !(rest.starts_with(". ") || rest.starts_with(") ")) {
-        return None;
-    }
-    Some((digits + 2, s[..digits].parse().ok()?))
-}
+pub use crate::markdown::{list_marker, numbered_marker, task_box};
 
 /// What Enter should do on a list line: the byte length of the indent +
 /// marker (+ task box) that opens `line`, and the prefix the next line
@@ -655,7 +615,10 @@ mod tests {
     #[test]
     fn clip_words_ends_on_a_word() {
         assert_eq!(clip_words("short one", 20), "short one");
-        assert_eq!(clip_words("the quick brown fox jumps", 15), "the quick brown…");
+        assert_eq!(
+            clip_words("the quick brown fox jumps", 15),
+            "the quick brown…"
+        );
         assert_eq!(clip_words("the quick brown fox jumps", 14), "the quick…");
         assert_eq!(clip_words("supercalifragilistic word", 10), "supercalif…");
     }

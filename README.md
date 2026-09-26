@@ -56,7 +56,7 @@ are kept and one is marked "(conflict, *machine*)".
 
 ## Translators
 
-[Fluent][fluent] is used for localization of the software. Fluent's translation files are found in the [i18n directory](./i18n). New translations may copy the [English (en) localization](./i18n/en) of the project, rename `en` to the desired [ISO 639-1 language code][iso-codes], and then translations can be provided for each [message identifier][fluent-guide]. If no translation is necessary, the message may be omitted.
+[Fluent][fluent] is used for localization of the software. Fluent's translation files are found in the [i18n directory](./apps/jjb-cosmic/i18n). New translations may copy the [English (en) localization](./apps/jjb-cosmic/i18n/en) of the project, rename `en` to the desired [ISO 639-1 language code][iso-codes], and then translations can be provided for each [message identifier][fluent-guide]. If no translation is necessary, the message may be omitted.
 
 ## Packaging
 
@@ -85,4 +85,4 @@ Developers should install [rustup][rustup] and configure their editor to use [ru
 
 ## Credits
 
-Folder icons come from [Boxicons](https://github.com/box-icons/boxicons) (MIT), [Iconoir](https://iconoir.com) (MIT), [Solar](https://www.figma.com/community/file/1166831539721848736) by 480 Design (CC BY 4.0), [Myna UI Icons](https://github.com/praveenjuge/mynaui-icons) (MIT), [Majesticons](https://github.com/halfmage/majesticons) (MIT), [Pixelarticons](https://github.com/halfmage/pixelarticons) (MIT) and [Duoicons](https://github.com/fernandcf/duoicons) (MIT), bundled via Iconify. Bundled fonts are under the OFL/UFL, see `resources/fonts`.
+Folder icons come from [Boxicons](https://github.com/box-icons/boxicons) (MIT), [Iconoir](https://iconoir.com) (MIT), [Solar](https://www.figma.com/community/file/1166831539721848736) by 480 Design (CC BY 4.0), [Myna UI Icons](https://github.com/praveenjuge/mynaui-icons) (MIT), [Majesticons](https://github.com/halfmage/majesticons) (MIT), [Pixelarticons](https://github.com/halfmage/pixelarticons) (MIT) and [Duoicons](https://github.com/fernandcf/duoicons) (MIT), bundled via Iconify. Bundled fonts are under the OFL/UFL, see `apps/jjb-cosmic/resources/fonts`.

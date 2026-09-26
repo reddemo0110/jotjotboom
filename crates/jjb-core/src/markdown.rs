@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Line-oriented markdown scanner and the editor highlighter built on it.
+//! Line-oriented markdown scanner.
 //!
-//! The raw markdown stays the source of truth; this only decides how each
-//! byte range of a line is painted: bold text bold, tags and links in the
-//! secondary accent, and the syntax markers themselves in a "ghost" colour
-//! so the text reads as formatted while the cursor can still move over them.
+//! The raw markdown stays the source of truth; this only decides what each
+//! byte range of a line *is*: bold text, a tag, a link, or a syntax marker
+//! the editor may ghost. Colours and fonts belong to the shell (the COSMIC
+//! app's `markdown::style_for`, the web editor's CSS); the same scanner is
+//! compiled to WASM for the browser-side editor, so its output must stay
+//! plain data.
 
-use crate::retro::Palette;
-use cosmic::iced::font::{Style, Weight};
-use cosmic::iced::{Color, Font};
+use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Kind {
     /// Syntax that is not content: `**`, `#`, `[[`, fences, rules.
     Marker,
@@ -45,7 +46,7 @@ pub enum Kind {
     QuoteMarker,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     pub range: Range<usize>,
     pub kind: Kind,
@@ -125,7 +126,7 @@ pub fn scan_line(line: &str, in_fence: bool) -> (Vec<Span>, bool) {
         pos += 2;
         // Task box: `[ ]` open, `[x]` / `[✓]` / `[🦆]` … done. The span
         // keeps its trailing space so a drawn box leaves a gap.
-        if let Some((len, done)) = crate::note::task_box(&line[pos..]) {
+        if let Some((len, done)) = task_box(&line[pos..]) {
             spans.push(Span {
                 range: pos..pos + len,
                 kind: if done { Kind::TaskDone } else { Kind::TaskBox },
@@ -324,71 +325,48 @@ fn link_end(line: &str, start: usize) -> Option<usize> {
     Some(end + 1)
 }
 
-// ---------- the iced highlighter ----------
+// ---------- line markers ----------
 
-#[derive(Clone, PartialEq)]
-pub struct Settings {
-    pub palette: Palette,
-    pub show_markers: bool,
-    pub font: Font,
-    /// Folder icons by tag; a tag wearing one shows it instead of its `#`.
-    pub tag_icons: std::sync::Arc<std::collections::HashMap<String, crate::glyph::Icon>>,
-    pub icon_set: crate::glyph::IconSet,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Highlight {
-    pub color: Option<Color>,
-    pub font: Option<Font>,
-}
-
-/// Colour and font for a span kind under `settings` — shared by iced's
-/// highlighter path and the rich editor.
-pub fn style_for(kind: Kind, settings: &Settings) -> Highlight {
-    {
-        let p = &settings.palette;
-        let base = settings.font;
-        let bold = Font {
-            weight: Weight::Bold,
-            ..base
-        };
-        let italic = Font {
-            style: Style::Italic,
-            ..base
-        };
-        let bold_italic = Font {
-            weight: Weight::Bold,
-            style: Style::Italic,
-            ..base
-        };
-        let ghost = if settings.show_markers {
-            p.dim
-        } else {
-            p.mute.scale_alpha(0.45)
-        };
-        let (color, font) = match kind {
-            Kind::Marker | Kind::QuoteMarker => (ghost, None),
-            Kind::Bold => (p.fg, Some(bold)),
-            Kind::Italic => (p.fg, Some(italic)),
-            Kind::BoldItalic => (p.fg, Some(bold_italic)),
-            Kind::Code | Kind::CodeBlock => (p.accent2, None),
-            Kind::Heading => (p.accent, Some(bold)),
-            Kind::Tag | Kind::Link => (p.accent2, None),
-            Kind::LinkUrl => (ghost, None),
-            Kind::ListMarker | Kind::NumMarker => (p.accent, None),
-            Kind::Quote => (p.dim, Some(italic)),
-            // Finished tasks fade into the theme rather than change colour.
-            Kind::Done | Kind::Strike => (p.fg.scale_alpha(0.45), None),
-            // The band behind it carries the colour; the text stays put.
-            Kind::Mark => (p.fg, None),
-            Kind::TaskBox => (p.dim, None),
-            Kind::TaskDone => (p.accent, Some(bold)),
-        };
-        Highlight {
-            color: Some(color),
-            font,
-        }
+/// A task box at the start of `s`: `[ ]` is open, `[` + anything else + `]`
+/// is done (`x` by convention; the app lets the user pick ✓, 🦆, …).
+/// Returns the byte length of the box including one trailing space when
+/// present, and whether it is done. The box must end the line or be
+/// followed by a space.
+pub fn task_box(s: &str) -> Option<(usize, bool)> {
+    let rest = s.strip_prefix('[')?;
+    let close = rest.find(']')?;
+    let inner = &rest[..close];
+    if inner.is_empty() || inner.len() > 12 || (inner != " " && inner.contains(' ')) {
+        return None;
     }
+    let after = &rest[close + 1..];
+    let len = if after.starts_with(' ') {
+        close + 3
+    } else if after.is_empty() {
+        close + 2
+    } else {
+        return None;
+    };
+    Some((len, inner != " "))
+}
+
+/// Length of a list marker (`- `, `* `, `+ `) at the start of `s`.
+pub fn list_marker(s: &str) -> Option<usize> {
+    (s.starts_with("- ") || s.starts_with("* ") || s.starts_with("+ ")).then_some(2)
+}
+
+/// Length of a numbered marker (`1. `, `12) `) at the start of `s`, with
+/// its number.
+pub fn numbered_marker(s: &str) -> Option<(usize, u32)> {
+    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits > 9 {
+        return None;
+    }
+    let rest = &s[digits..];
+    if !(rest.starts_with(". ") || rest.starts_with(") ")) {
+        return None;
+    }
+    Some((digits + 2, s[..digits].parse().ok()?))
 }
 
 // ---------- the highlighter pen ----------
@@ -437,7 +415,10 @@ pub fn unmark(line: &str, mark: Range<usize>) -> (String, Range<usize>) {
 /// new line and where the marked text sits, or `None` when there is
 /// nothing to mark.
 pub fn mark(line: &str, start: usize, end: usize) -> Option<(String, Range<usize>)> {
-    let Range { start: mut lo, end: mut hi } = trim_range(line, start, end)?;
+    let Range {
+        start: mut lo,
+        end: mut hi,
+    } = trim_range(line, start, end)?;
     // A mark a space away counts as touching: the band should run on.
     let near_lo = line[..lo].trim_end().len();
     let near_hi = hi + (line[hi..].len() - line[hi..].trim_start().len());
@@ -488,7 +469,11 @@ pub fn snap_to_words(line: &str, start: usize, end: usize) -> Range<usize> {
     };
     let a = back(start);
     let (ws, we) = (back(end), forward(end));
-    let b = if end - ws >= we - end || ws <= a { we } else { ws };
+    let b = if end - ws >= we - end || ws <= a {
+        we
+    } else {
+        ws
+    };
     a..b
 }
 
