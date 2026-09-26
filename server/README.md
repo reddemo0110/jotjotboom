@@ -1,4 +1,4 @@
-# JotJotBoom sync server
+# Attic sync server
 
 Sync runs against a self-hosted [PocketBase](https://pocketbase.io) — one Go
 binary, its own SQLite database, no other services. The app never lets the
@@ -25,7 +25,7 @@ counter, a timestamp and which device wrote it.
    Put it behind HTTPS (Caddy, nginx, a Tailscale node, …) before pointing
    another machine at it. `./pocketbase serve --https` can also terminate
    TLS itself with Let's Encrypt when the box has a public name.
-4. In JotJotBoom, open Options → Sync, enter the server address
+4. In Attic, open Options → Sync, enter the server address
    (`https://notes.example.com`), an email and a password, and press
    **Create account**. Every other device then signs in with the same
    details. Accounts are ordinary PocketBase `users`; close signup in the

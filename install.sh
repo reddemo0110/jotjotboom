@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# One-shot installer: clone the repo, run this, find JotJotBoom in the
+# One-shot installer: clone the repo, run this, find Attic in the
 # app library. Installs per-user into ~/.local — no root needed except
 # (optionally) to fetch build tools from your distro.
 #
-#   git clone https://github.com/reddemo0110/jotjotboom.git
-#   cd jotjotboom && ./install.sh
+#   git clone https://github.com/reddemo0110/attic.git
+#   cd attic && ./install.sh
 #
 # Re-running after a `git pull` updates the install.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-NAME=jotjotboom
-APPID=io.github.jotjotboom.JotJotBoom
+NAME=attic
+APPID=io.github.reddemo0110.Attic
 BASE="${XDG_DATA_HOME:-$HOME/.local/share}"
 BIN_DIR="$HOME/.local/bin"
 TARGET="${CARGO_TARGET_DIR:-target}"
@@ -67,7 +67,7 @@ install -Dm0644 apps/jjb-cosmic/resources/icons/hicolor/scalable/apps/icon.svg \
 install -Dm0644 "$TARGET/xdgen/app.metainfo.xml" "$BASE/metainfo/$APPID.metainfo.xml"
 mkdir -p "$BASE/applications"
 # Every Exec line (the app and its "New note" action) gets the absolute path.
-sed "s|^Exec=jotjotboom\(.*\)|Exec=$BIN_DIR/$NAME\1|" "$TARGET/xdgen/app.desktop" \
+sed "s|^Exec=attic\(.*\)|Exec=$BIN_DIR/$NAME\1|" "$TARGET/xdgen/app.desktop" \
     > "$BASE/applications/$APPID.desktop"
 # GNOME Shell search provider: the shell reads the .ini and D-Bus activates
 # the .service on demand. Harmless on other desktops.
@@ -79,7 +79,7 @@ sed "s|^Exec=.*|Exec=$BIN_DIR/$NAME --search-provider|" apps/jjb-cosmic/resource
 update-desktop-database "$BASE/applications" 2>/dev/null || true
 gtk-update-icon-cache -q -t -f "$BASE/icons/hicolor" 2>/dev/null || true
 
-say "Installed. Find JotJotBoom in the app library; right-click it in the dock to pin."
+say "Installed. Find Attic in the app library; right-click it in the dock to pin."
 case ":${XDG_CURRENT_DESKTOP:-}:" in
     *GNOME*) echo "GNOME: notes show up in the Activities overview search after your next login (or Alt+F2, r, Enter on X11)." ;;
 esac

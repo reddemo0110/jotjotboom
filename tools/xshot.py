@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Headless-ish visual check for JotJotBoom.
+"""Headless-ish visual check for Attic.
 
 Runs the app on Xwayland (DISPLAY, WAYLAND_DISPLAY unset), optionally drives
 it through the app's JJB_SCRIPT hook, and captures the window with XGetImage.
@@ -29,7 +29,7 @@ def _find_window(w, depth=0):
         cls = w.get_wm_class()
     except Exception:
         return None, None
-    if attrs.map_state == X.IsViewable and geom.width > 100 and cls and any("jotjotboom" in c.lower() for c in cls):
+    if attrs.map_state == X.IsViewable and geom.width > 100 and cls and any("attic" in c.lower() for c in cls):
         return w, geom
     try:
         children = w.query_tree().children
@@ -77,7 +77,7 @@ def log(*a):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
-    ap.add_argument("--binary", default="target/debug/jotjotboom")
+    ap.add_argument("--binary", default="target/debug/attic")
     ap.add_argument("--display", default=os.environ.get("DISPLAY", ":1"))
     ap.add_argument("--wait", type=float, default=4.0, help="seconds after launch before acting")
     ap.add_argument("--script", default=None, help="JJB_SCRIPT steps, e.g. 'new;type:Hi;wait:1500'")
@@ -95,8 +95,8 @@ def main():
         args.notes_dir = tempfile.mkdtemp(prefix="jjb-notes-")
         log("scratch notes dir:", args.notes_dir)
     env["JJB_NOTES_DIR"] = args.notes_dir
-    env.setdefault("RUST_LOG", "jotjotboom=info,warn")
-    # The app is single-instance: without this a real JotJotBoom already
+    env.setdefault("RUST_LOG", "attic=info,warn")
+    # The app is single-instance: without this a real Attic already
     # running would be handed our launch and the scratch run would never
     # open a window.
     env["COSMIC_SINGLE_INSTANCE"] = "false"
@@ -121,7 +121,7 @@ def main():
         d, win, geom = find_window(args.display)
         log("search done:", win is not None)
         if win is None:
-            print("no JotJotBoom window found", file=sys.stderr)
+            print("no Attic window found", file=sys.stderr)
             return 1
         log("settling")
         time.sleep(args.settle)

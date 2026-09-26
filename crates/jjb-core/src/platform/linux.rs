@@ -10,7 +10,7 @@ use secret_service::blocking::SecretService;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-const APP_ATTR: (&str, &str) = ("application", "jotjotboom");
+const APP_ATTR: (&str, &str) = ("application", "attic");
 
 fn attrs(key: &str) -> HashMap<&str, &str> {
     HashMap::from([APP_ATTR, ("key", key)])

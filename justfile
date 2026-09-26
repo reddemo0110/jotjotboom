@@ -1,7 +1,7 @@
 # Name of the application's binary.
-name := 'jotjotboom'
+name := 'attic'
 # The unique ID of the application.
-appid := 'io.github.jotjotboom.JotJotBoom'
+appid := 'io.github.reddemo0110.Attic'
 
 # Path to root file system, which defaults to `/`.
 rootdir := ''
@@ -95,13 +95,13 @@ install-user: build-release
     install -Dm0755 {{ cargo-target-dir / 'release' / name }} {{ user-base / 'bin' / name }}
     install -Dm0644 {{ app-dir / 'resources' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'icon.svg' }} {{ user-base / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / icon-svg }}
     install -Dm0644 {{ 'target' / 'xdgen' / 'app.metainfo.xml' }} {{ user-base / 'share' / 'metainfo' / appdata }}
-    sed 's|^Exec=jotjotboom\(.*\)|Exec={{ user-base / 'bin' / name }}\1|' {{ 'target' / 'xdgen' / 'app.desktop' }} > {{ user-base / 'share' / 'applications' / desktop }}
+    sed 's|^Exec=attic\(.*\)|Exec={{ user-base / 'bin' / name }}\1|' {{ 'target' / 'xdgen' / 'app.desktop' }} > {{ user-base / 'share' / 'applications' / desktop }}
     install -Dm0644 {{ app-dir / 'resources' / 'search-provider.ini' }} {{ user-base / 'share' / 'gnome-shell' / 'search-providers' / search-ini }}
     mkdir -p {{ user-base / 'share' / 'dbus-1' / 'services' }}
     sed 's|^Exec=.*|Exec={{ user-base / 'bin' / name }} --search-provider|' {{ app-dir / 'resources' / 'search-provider.service' }} > {{ user-base / 'share' / 'dbus-1' / 'services' / search-service }}
     -update-desktop-database {{ user-base / 'share' / 'applications' }}
     -gtk-update-icon-cache -q -t -f {{ user-base / 'share' / 'icons' / 'hicolor' }}
-    @echo "Installed. Find JotJotBoom in the app library; right-click it in the dock to pin."
+    @echo "Installed. Find Attic in the app library; right-click it in the dock to pin."
     @echo "On GNOME, notes appear in the Activities overview search after the next login (or a shell restart)."
 
 # Removes the per-user install
@@ -135,8 +135,8 @@ tag version:
 
 
 # Copy the example notes (and their photos) into the notes folder; never overwrites.
-install-examples notes_dir=(env('HOME') / 'Documents' / 'JotJotBoom'):
+install-examples notes_dir=(env('HOME') / 'Documents' / 'Attic'):
     mkdir -p '{{notes_dir}}/assets'
     cp -n examples/notes/*.md '{{notes_dir}}/'
     cp -n examples/notes/assets/*.jpg '{{notes_dir}}/assets/'
-    @echo "Examples installed into {{notes_dir}} — open JotJotBoom and look for #examples."
+    @echo "Examples installed into {{notes_dir}} — open Attic and look for #examples."

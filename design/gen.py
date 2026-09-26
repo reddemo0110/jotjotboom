@@ -118,7 +118,7 @@ def search_line():
 
 def note_rows():
     notes = [
-        ("Shopping list", "13:43", "Things to grab before the weekend — milk, eggs, see Welcome to JotJotBoom", True, False),
+        ("Shopping list", "13:43", "Things to grab before the weekend — milk, eggs, see Welcome to Attic", True, False),
         ("Groceries", "13:44", "eggs #home/kitchen #errand see Shopping list", False, True),
     ]
     out = []
@@ -145,7 +145,7 @@ def editor_body():
         p('<div style="height: 12px"></div>'),
         p(f'<div><span style="color: {dim}">- [ ]</span> milk</div>'),
         p(f'<div><span style="color: {dim}">- [</span><span style="color: {acc}">x</span><span style="color: {dim}">]</span> <span style="text-decoration: line-through; color: {{{{t.dim}}}}">eggs</span></div>'),
-        p(f'<div><span style="color: {dim}">-</span> see <span style="color: {dim}">[[</span><span style="color: {acc2}; text-decoration: underline; text-underline-offset: 3px">Welcome to JotJotBoom</span><span style="color: {dim}">]]</span></div>'),
+        p(f'<div><span style="color: {dim}">-</span> see <span style="color: {dim}">[[</span><span style="color: {acc2}; text-decoration: underline; text-underline-offset: 3px">Welcome to Attic</span><span style="color: {dim}">]]</span></div>'),
         p('<div style="height: 12px"></div>'),
         p(f'<div><span style="color: {dim}">**</span><span style="font-weight: 600">Remember</span><span style="color: {dim}">**</span> the market closes at <span style="color: {dim}">*</span><span style="font-style: italic">noon</span><span style="color: {dim}">*</span>.'
           f'<span style="display: inline-block; width: 9px; height: 19px; vertical-align: -4px; margin-left: 1px; background: {{{{t.cursor}}}}; box-shadow: {{{{t.glow}}}}; animation: blink 1.06s steps(1) infinite"></span></div>', focused=True),
@@ -240,7 +240,7 @@ canvas = {
   ],
   "annotations": [
     {"id": "brief", "x": 0, "y": -330, "w": 620,
-     "text": "Retro + btop direction for JotJotBoom.\n\nBoth boards share the tweaks up top: Theme (phosphor / amber / wordperfect / cosmic), CRT scanlines on/off, Focus mode (dims every paragraph but the one with the cursor).\n\nA: everything but the COSMIC header lives in btop-style frames, tag tree drawn with box-drawing connectors. Most retro; breaks the handover's 'chrome stays native' rule.\nB: nav bar stays stock COSMIC; only the notes list and editor are framed. Reads as a COSMIC app with a terminal inside it."},
+     "text": "Retro + btop direction for Attic.\n\nBoth boards share the tweaks up top: Theme (phosphor / amber / wordperfect / cosmic), CRT scanlines on/off, Focus mode (dims every paragraph but the one with the cursor).\n\nA: everything but the COSMIC header lives in btop-style frames, tag tree drawn with box-drawing connectors. Most retro; breaks the handover's 'chrome stays native' rule.\nB: nav bar stays stock COSMIC; only the notes list and editor are framed. Reads as a COSMIC app with a terminal inside it."},
   ],
   "launch": {"view": "canvas"},
 }

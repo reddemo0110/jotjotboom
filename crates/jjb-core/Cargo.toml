@@ -1,6 +1,6 @@
 [package]
 name = "jjb-core"
-description = "JotJotBoom's notes, store, sync and markdown scanner — no toolkit"
+description = "Attic's notes, store, sync and markdown scanner — no toolkit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

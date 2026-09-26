@@ -1,6 +1,6 @@
 /// <reference path="../pb_data/types.d.ts" />
 //
-// The JotJotBoom sync collection. The server is a dumb blob store: it knows
+// The Attic sync collection. The server is a dumb blob store: it knows
 // a note's id, revision, timestamp and device, and carries the note itself
 // as an opaque `blob` it never reads. Title, body, tags and trash state all
 // live inside the blob, which is what lets end-to-end encryption wrap the

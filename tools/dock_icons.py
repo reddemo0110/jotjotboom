@@ -73,7 +73,7 @@ def load(prefix, cache):
     if not os.path.exists(path):
         os.makedirs(cache, exist_ok=True)
         print("fetching", prefix, file=sys.stderr)
-        req = urllib.request.Request(RAW.format(prefix), headers={"User-Agent": "jotjotboom-dock-icons"})
+        req = urllib.request.Request(RAW.format(prefix), headers={"User-Agent": "attic-dock-icons"})
         with urllib.request.urlopen(req, timeout=120) as r, open(path, "wb") as f:
             f.write(r.read())
     with open(path) as f:
@@ -114,7 +114,7 @@ def rust_str(s):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cache", default=os.path.expanduser("~/.cache/jotjotboom-iconify"))
+    ap.add_argument("--cache", default=os.path.expanduser("~/.cache/attic-iconify"))
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "apps", "jjb-cosmic", "src", "dockicon.rs"))
     args = ap.parse_args()
 

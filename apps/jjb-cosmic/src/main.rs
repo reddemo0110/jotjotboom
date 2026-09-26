@@ -25,7 +25,7 @@ use jjb_core::{links, note, store, sync, table};
 use cosmic::Application as _;
 
 const USAGE: &str = "\
-Usage: jotjotboom [OPTIONS] [FILE]...
+Usage: attic [OPTIONS] [FILE]...
 
 Retro-flavoured markdown notes. With no arguments, opens (or raises) the
 notes window. Files inside the notes folder open in place; other markdown
@@ -42,9 +42,9 @@ fn main() -> cosmic::iced::Result {
     // Off COSMIC there is no cosmic-theme config, and libcosmic logs an
     // error per missing key at every start; that is expected there.
     let default_filter = if desktop::Desktop::current() == desktop::Desktop::Cosmic {
-        "jotjotboom=info,warn"
+        "attic=info,warn"
     } else {
-        "jotjotboom=info,warn,cosmic::theme=off"
+        "attic=info,warn,cosmic::theme=off"
     };
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -59,11 +59,11 @@ fn main() -> cosmic::iced::Result {
         return Ok(());
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("jotjotboom {}", env!("CARGO_PKG_VERSION"));
+        println!("attic {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
-    // `jotjotboom --search-provider` is the headless GNOME Shell search
+    // `attic --search-provider` is the headless GNOME Shell search
     // service, D-Bus activated by the shell; no window, no store.
     let Some(flags) = app::Flags::from_args(args) else {
         if let Err(err) = search_provider::serve(app::AppModel::APP_ID) {
@@ -98,7 +98,7 @@ fn main() -> cosmic::iced::Result {
     }
     desktop::reassert();
 
-    // One window per user: a second launch (from the dock, `jotjotboom
+    // One window per user: a second launch (from the dock, `attic
     // file.md`, the search provider) hands its arguments to the running
     // instance over D-Bus and exits.
     cosmic::app::run_single_instance::<app::AppModel>(settings, flags)
@@ -108,7 +108,7 @@ fn main() -> cosmic::iced::Result {
 fn last_window_size() -> Option<(f32, f32)> {
     use cosmic::cosmic_config::CosmicConfigEntry;
     let ctx = cosmic::cosmic_config::Config::new(
-        "io.github.jotjotboom.JotJotBoom",
+        "io.github.reddemo0110.Attic",
         config::Config::VERSION,
     )
     .ok()?;

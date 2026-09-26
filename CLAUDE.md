@@ -1,4 +1,7 @@
-# JotJotBoom — agent notes
+# Attic — agent notes
+
+Called JotJotBoom until 2026-09-26; the `jjb` prefixes (crates, `jjb:table`,
+`jjb-file:`, `JJB_*`) are deliberate and stay, see DECISIONS.md.
 
 Hybrid-markdown notes app, Rust. A Cargo workspace since 2026-09-26:
 `crates/jjb-core` (everything true of a note regardless of window; no
@@ -25,13 +28,13 @@ Toolchain lives in `~/.cargo/bin` (rustup); make sure it's on `PATH`.
   `x86_64-pc-windows-msvc`; the core must always pass this
 - `just install-user` — release build + per-user install (~/.local: binary,
   launcher entry with absolute Exec, icon, metainfo); `just uninstall-user`
-- `RUST_LOG=jotjotboom=debug cargo run` for tracing output
+- `RUST_LOG=attic=debug cargo run` for tracing output
 - Visual check without a human: `tools/xshot.py out.png [--script ...]`
   runs the app on Xwayland (`XSHOT_LOG=path` keeps its log), drives it via the `JJB_SCRIPT` hook (`step:arg` form, e.g. `--script 'new;type:Hello;wait:1000'`; steps:
   new, type, search, select, pin, trash, folder, format, selectall, dock,
   themes, theme, image, imgframe, imgalign, imgwidth, imgcaption, imgmenu, imgdrag, imgmove, linkdrag, fold, font, pairing, size, docksize, section, tagmenu, renametag, nav, togglebox, marker, measure, follow, icon, coffee, tagicon, pickdir, iconset, attach, tagdrag, tagmove, addspace, weight, fontfor, buffet, sel, sweep, cell, editcell, fpick, fpickover, pickdone, draft, fill, tsel, sync, syncnow, key (`key:backspace`, `key:left:3`; backspace, delete, enter, tab, arrows, home, end), quit, wait, exit; `;` separates steps — write `\;` inside text; a `\n` in `type:` is a real Enter, so it continues lists like the keyboard does),
   and captures the window with X auto-repeat switched off. It runs against a
-  fresh scratch notes dir (`JJB_NOTES_DIR`); pass `--notes-dir ~/Documents/JotJotBoom`
+  fresh scratch notes dir (`JJB_NOTES_DIR`); pass `--notes-dir ~/Documents/Attic`
   only when the real notes are needed for the picture — steps like `new`/`type`/`attach` write files. Portal screenshots hang unattended, and the in-app `JJB_SCREENSHOT`
   hook (iced `window::screenshot`) silently drops editor text and menu labels.
 
@@ -86,7 +89,7 @@ files) and `build.rs` live in `apps/jjb-cosmic/`.
   title-bar buttons are read from the portal (`org.gnome.desktop.*`) and
   pushed into libcosmic's `COSMIC_TK` by `reassert()` (called from the
   header/view because libcosmic overwrites that struct on its config update).
-- `src/search_provider.rs` — `jotjotboom --search-provider`: the headless
+- `src/search_provider.rs` — `attic --search-provider`: the headless
   GNOME Shell search service (`org.gnome.Shell.SearchProvider2`), answering
   from `store::Index` (read-only index.db) and launching the app to open a
   hit. `resources/search-provider.{ini,service}` are installed by the
@@ -131,5 +134,5 @@ files) and `build.rs` live in `apps/jjb-cosmic/`.
   different file of the same name makes the local one step aside
   (`name-2.ext`) and its notes follow. Test
   runs that sign in write the token into the real keyring
-  (`secret-tool clear application jotjotboom key sync-token` afterwards)
+  (`secret-tool clear application attic key sync-token` afterwards)
   and must set `XDG_DATA_HOME` too, since `sync_state` lives in index.db.

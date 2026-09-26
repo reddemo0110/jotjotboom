@@ -1343,8 +1343,8 @@ pub struct Pairing {
 
 pub const PAIRINGS: [Pairing; 17] = [
     Pairing {
-        key: "jotjotboom",
-        name: "JotJotBoom",
+        key: "attic",
+        name: "Attic",
         blurb: "the default — VT323 titles, your system monospace everywhere else",
         title: EditorFont::Vt323,
         ui: EditorFont::System,

@@ -24,7 +24,7 @@ pub mod files;
 
 /// Keyring key for the bearer token.
 pub const TOKEN_KEY: &str = "sync-token";
-const USER_AGENT: &str = concat!("JotJotBoom/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("Attic/", env!("CARGO_PKG_VERSION"));
 const PAGE: usize = 200;
 
 /// The opaque payload: everything the other device needs to recreate the

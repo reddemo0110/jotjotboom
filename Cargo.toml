@@ -1,4 +1,4 @@
-# JotJotBoom — a Rust core with one shell per platform.
+# Attic — a Rust core with one shell per platform.
 #
 #   crates/jjb-core     notes, store, sync, markdown scanner, images, links,
 #                       tables, platform trait. No toolkit. Builds for Windows.
@@ -17,7 +17,7 @@ members = ["crates/jjb-core", "crates/jjb-md-wasm", "apps/jjb-cosmic"]
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
-repository = "https://github.com/reddemo0110/jotjotboom"
+repository = "https://github.com/reddemo0110/attic"
 
 [workspace.dependencies]
 # Members opt into `full`; the wasm scanner takes the pure modules only.

@@ -1126,3 +1126,30 @@ image breaks a heading mid-word when the column is under ~100 px.
 - Safe point before all this: tag `v0.2-pre-windows`. The handover for
   the Windows session is `WINDOWS-HANDOVER.md` in the repo root; it is
   the only thing that session can read.
+
+## 2026-09-26 — The app is called Attic
+
+- Renamed from JotJotBoom to **Attic** ("store stuff in the attic"), before
+  the Windows shell exists, so there is one shell to rename and the
+  handover starts with the final name. Binary and package `attic`, app
+  id `io.github.reddemo0110.Attic` (the Flathub form, owner then app;
+  the old id used the app name twice), D-Bus names follow it, keyring
+  attribute `application=attic`, sync `User-Agent: Attic/<version>`,
+  default notes folder `~/Documents/Attic`.
+- Deliberately unchanged: the `jjb` prefixes. `jjb-core`, `jjb-md-wasm`,
+  `apps/jjb-cosmic`, the `<!-- jjb:table -->` comment inside note
+  files, the `jjb-file:` sync key prefix and the `JJB_*` environment
+  variables are invisible to users and two of them are part of the
+  on-disk and sync contract; changing them would rewrite every note
+  with a table and re-upload every asset.
+- A machine that still has `~/Documents/JotJotBoom` and no
+  `~/Documents/Attic` keeps using the old folder
+  (`platform::LEGACY_NOTES_FOLDER`); nothing is moved behind the user's
+  back. Settings under the old app id are not read; on this box they
+  were copied by hand.
+- Historical documents keep the old name: the original project
+  handover, `RICH-EDITOR-PLAN.md`, and earlier entries here.
+- Still to do: rename the GitHub repository to `attic` (the URLs in
+  Cargo.toml and the metainfo already point there; GitHub redirects
+  the old name), and rethink the launcher icon, whose two dots and hash
+  spelled "jot jot boom".

@@ -126,7 +126,7 @@
       "x": 0,
       "y": -330,
       "w": 700,
-      "text": "IMAGES IN JOTJOTBOOM \u2014 pick from two axes.\n\nPage 1 (this one): how a picture is FRAMED. Pick any number; they become per-image options in the editor (right-click or the dock), with one as the default.\nPage 2: WHERE pictures sit relative to the text. Pick one default; the inline option is shown for comparison but arrives with the custom editor.\n\nAdding images will work three ways: drag a file onto the note, paste from the clipboard, or the \u29c9 button on the dock (file picker). The file is copied to ~/Documents/JotJotBoom/assets/ and the note gets an ![alt](assets/\u2026) line, ghosted like other syntax.\n\nAll previews use the real conversions (tint, dither, ASCII, pixel) I'd ship, on the same sample photo."
+      "text": "IMAGES IN ATTIC \u2014 pick from two axes.\n\nPage 1 (this one): how a picture is FRAMED. Pick any number; they become per-image options in the editor (right-click or the dock), with one as the default.\nPage 2: WHERE pictures sit relative to the text. Pick one default; the inline option is shown for comparison but arrives with the custom editor.\n\nAdding images will work three ways: drag a file onto the note, paste from the clipboard, or the \u29c9 button on the dock (file picker). The file is copied to ~/Documents/Attic/assets/ and the note gets an ![alt](assets/\u2026) line, ghosted like other syntax.\n\nAll previews use the real conversions (tint, dither, ASCII, pixel) I'd ship, on the same sample photo."
     },
     {
       "id": "sizes",

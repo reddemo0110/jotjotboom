@@ -18,7 +18,11 @@ mod linux;
 mod windows;
 
 /// The folder name under the user's Documents.
-pub const NOTES_FOLDER: &str = "JotJotBoom";
+pub const NOTES_FOLDER: &str = "Attic";
+/// The folder name before the app was renamed (September 2026). A machine
+/// that still has it, and no `Attic` folder, keeps using it; nothing is
+/// moved behind the user's back.
+pub const LEGACY_NOTES_FOLDER: &str = "JotJotBoom";
 
 pub trait Platform: Send + Sync {
     /// A short name for logs and the About box ("linux", "windows").
@@ -69,7 +73,15 @@ pub fn notes_dir(configured: &str) -> PathBuf {
     if !configured.is_empty() {
         return expand_home(configured);
     }
-    current().default_notes_dir()
+    let dir = current().default_notes_dir();
+    if !dir.exists() {
+        let legacy = dir.with_file_name(LEGACY_NOTES_FOLDER);
+        if legacy.is_dir() {
+            tracing::info!(path = %legacy.display(), "using the notes folder from before the rename");
+            return legacy;
+        }
+    }
+    dir
 }
 
 /// The derived SQLite index for `app_id`.
@@ -132,6 +144,15 @@ mod tests {
         let home = dirs::home_dir().unwrap();
         assert_eq!(expand_home("~/Notes"), home.join("Notes"));
         assert_eq!(expand_home("/abs/Notes"), PathBuf::from("/abs/Notes"));
+    }
+
+    #[test]
+    fn legacy_folder_is_a_sibling_of_the_default() {
+        let dir = current().default_notes_dir();
+        assert_eq!(
+            dir.with_file_name(LEGACY_NOTES_FOLDER),
+            dir.parent().unwrap().join(LEGACY_NOTES_FOLDER)
+        );
     }
 
     #[test]

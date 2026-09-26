@@ -1,5 +1,5 @@
 # D-Bus activation for the GNOME Shell search provider. `Exec=` is
 # rewritten to an absolute path at install time (see justfile / install.sh).
 [D-BUS Service]
-Name=io.github.jotjotboom.JotJotBoom.SearchProvider
-Exec=jotjotboom --search-provider
+Name=io.github.reddemo0110.Attic.SearchProvider
+Exec=attic --search-provider

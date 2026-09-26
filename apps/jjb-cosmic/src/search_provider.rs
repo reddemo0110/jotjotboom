@@ -6,7 +6,7 @@
 //! GNOME Shell reads `share/gnome-shell/search-providers/*.ini`, D-Bus
 //! activates the bus name named there (`server/` has nothing to do with
 //! this — the `.service` file under `share/dbus-1/services` points at
-//! `jotjotboom --search-provider`) and talks `org.gnome.Shell.SearchProvider2`
+//! `attic --search-provider`) and talks `org.gnome.Shell.SearchProvider2`
 //! to it. This process is that service: headless, answers from the SQLite
 //! index read-only, launches the real app to open a result, and quits after
 //! a while with nothing to do so it does not sit in memory. The shell just
@@ -22,8 +22,8 @@ use zbus::zvariant::Value;
 
 /// The bus name the shell activates. Distinct from the app's own name so
 /// the provider and the app never fight over who owns what.
-pub const BUS_NAME: &str = "io.github.jotjotboom.JotJotBoom.SearchProvider";
-pub const OBJECT_PATH: &str = "/io/github/jotjotboom/JotJotBoom/SearchProvider";
+pub const BUS_NAME: &str = "io.github.reddemo0110.Attic.SearchProvider";
+pub const OBJECT_PATH: &str = "/io/github/reddemo0110/Attic/SearchProvider";
 
 /// Quit after this long without a request.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(120);

@@ -1,4 +1,8 @@
-# JotJotBoom — Windows handover
+# Attic — Windows handover
+
+The app was called JotJotBoom until 26 September 2026; the `jjb` prefixes in
+crate names, the `<!-- jjb:table -->` comment, the `jjb-file:` sync key and
+the `JJB_*` environment variables are deliberate leftovers and stay.
 
 Written 26 September 2026 at the end of Phase A on the Linux box, for the
 Claude Code session that builds the Windows app. That session cannot read
@@ -29,7 +33,7 @@ Cargo.toml                 workspace (resolver 3); shared dependency versions
 crates/jjb-core            the notes model, store, sync, scanner, images,
                            links, tables, platform trait.  No toolkit.
 crates/jjb-md-wasm         wasm-bindgen wrapper around the scanner.
-apps/jjb-cosmic            the libcosmic app, package name `jotjotboom`.
+apps/jjb-cosmic            the libcosmic app, package name `attic`.
 apps/jjb-win               (Phase C) the Tauri app.
 server/                    PocketBase migrations, revision hook, README.
 examples/notes             42 example notes and their photos (`just
@@ -64,7 +68,7 @@ Rules:
 
 ```rust
 fn name(&self) -> &'static str;                        // "linux", "windows"
-fn default_notes_dir(&self) -> PathBuf;                // Documents/JotJotBoom
+fn default_notes_dir(&self) -> PathBuf;                // Documents/Attic
 fn data_dir(&self, app_id: &str) -> PathBuf;           // where index.db lives
 fn store_secret(&self, key: &str, label: &str, secret: &[u8]) -> Result<()>;
 fn get_secret(&self, key: &str) -> Result<Option<Vec<u8>>>;
@@ -79,7 +83,7 @@ non-empty setting with `~/` expanded, then the platform default.
 `platform::index_path(app_id)` is `data_dir(app_id)/index.db`.
 
 `linux.rs` is the code the COSMIC app used: Secret Service over D-Bus
-(blocking API), items tagged `application=jotjotboom`, `key=<key>`; XDG
+(blocking API), items tagged `application=attic`, `key=<key>`; XDG
 directories through `dirs`. `windows.rs` is the stub: folders and
 open-URL already work through `dirs` and `open`; `store_secret` fails
 with "the keyring is not wired up on this platform yet", `get_secret`
@@ -88,11 +92,13 @@ returns `None`.
 What Windows must implement in Phase C:
 
 - Secrets through the `keyring` crate (Windows Credential Manager),
-  service `jotjotboom`, account = the key. The one key in use is
+  service `attic`, account = the key. The one key in use is
   `sync-token` (`jjb_core::sync::TOKEN_KEY`), the PocketBase bearer
   token. Nothing else is stored in the keyring yet.
-- `default_notes_dir` is `%USERPROFILE%\Documents\JotJotBoom`; `dirs`
-  already gives that.
+- `default_notes_dir` is `%USERPROFILE%\Documents\Attic`; `dirs`
+  already gives that. If that folder is missing and a `JotJotBoom`
+  sibling exists (the name before September 2026), the core uses the
+  old folder and moves nothing.
 - `data_dir` is `%LOCALAPPDATA%\<app_id>` (`dirs::data_local_dir`
   would be the closer match than `data_dir`, which maps to Roaming on
   Windows; the index is derived and must not roam).
@@ -110,10 +116,10 @@ Everything below is what the Linux app writes and reads today (`crates/jjb-core`
 
 ### 1. The notes folder
 
-The notes folder is the source of truth. Default location: `<Documents>/JotJotBoom` (`platform::NOTES_FOLDER`), overridden by the `notes_dir` setting (a leading `~/` or `~\` is expanded) and, above both, by the `JJB_NOTES_DIR` environment variable (the test and screenshot harness uses it).
+The notes folder is the source of truth. Default location: `<Documents>/Attic` (`platform::NOTES_FOLDER`), overridden by the `notes_dir` setting (a leading `~/` or `~\` is expanded) and, above both, by the `JJB_NOTES_DIR` environment variable (the test and screenshot harness uses it).
 
 ```
-JotJotBoom/
+Attic/
   Kyoto.md                 one note per .md file, root only (subfolders are the user's, never scanned)
   Kyoto (2).md             title collision suffix " (n)", n from 2; past 9999 it is "Title <uuid>.md"
   .Kyoto.md.tmp            atomic-write temp file (dot-prefixed, so the scan never sees it)
@@ -204,9 +210,9 @@ Reindex on open: scan the folder; a file whose mtime is within 1 s of the indexe
 
 ### 5. Sync protocol
 
-A self-hosted PocketBase (`server/`). One cycle (`sync::run`, blocking, on a worker thread) = refresh token, pull notes since cursor, push pending notes, then the files half. Triggered 3 s after a save, every 60 s, on sign-in and by Sync now. HTTP `User-Agent: JotJotBoom/<version>`, bearer token on every call.
+A self-hosted PocketBase (`server/`). One cycle (`sync::run`, blocking, on a worker thread) = refresh token, pull notes since cursor, push pending notes, then the files half. Triggered 3 s after a save, every 60 s, on sign-in and by Sync now. HTTP `User-Agent: Attic/<version>`, bearer token on every call.
 
-**Auth**: `POST /api/collections/users/auth-with-password` `{identity, password}`; sign-up `POST /api/collections/users/records` `{email, password, passwordConfirm}` (8+ chars) then sign in; `POST /api/collections/users/auth-refresh` at the start of every cycle (PocketBase rotates the token; 401/403/404 means sign in again). The token is the only secret: keyring key `sync-token` (`sync::TOKEN_KEY`), label `JotJotBoom sync`. Server URL and email are ordinary settings.
+**Auth**: `POST /api/collections/users/auth-with-password` `{identity, password}`; sign-up `POST /api/collections/users/records` `{email, password, passwordConfirm}` (8+ chars) then sign in; `POST /api/collections/users/auth-refresh` at the start of every cycle (PocketBase rotates the token; 401/403/404 means sign in again). The token is the only secret: keyring key `sync-token` (`sync::TOKEN_KEY`), label `Attic sync`. Server URL and email are ordinary settings.
 
 **`notes` collection** (`pb_migrations/1757000000_notes.js`): `owner` (relation to `users`), `note` (text, max 64: the frontmatter id), `revision` (int, server-owned), `device` (text 128), `modified` (text 64, the writer's RFC 3339 time), `blob` (text, max 20,000,000), `created`, `updated` (autodate). Unique index on (`owner`, `note`); rules restrict every operation to the owner.
 
@@ -232,11 +238,11 @@ A self-hosted PocketBase (`server/`). One cycle (`sync::run`, blocking, on a wor
 
 ### 6. Settings keys
 
-On Linux these are cosmic-config entries under app id `io.github.jotjotboom.JotJotBoom` (version 1). On Windows they become a JSON settings file with the same keys. Only `notes_dir`, `device_id`, `sync_url` and `sync_email` affect compatibility; the rest are appearance and may be ignored by a shell that lacks the feature.
+On Linux these are cosmic-config entries under app id `io.github.reddemo0110.Attic` (version 1). On Windows they become a JSON settings file with the same keys. Only `notes_dir`, `device_id`, `sync_url` and `sync_email` affect compatibility; the rest are appearance and may be ignored by a shell that lacks the feature.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `notes_dir` | string | `""` | notes folder; empty = `<Documents>/JotJotBoom` |
+| `notes_dir` | string | `""` | notes folder; empty = `<Documents>/Attic` |
 | `device_id` | string | `""` | per-installation UUID v7, generated on first run; stamped into `oplog` and sent as `device` |
 | `sync_url` | string | `""` | PocketBase address; empty = sync off |
 | `sync_email` | string | `""` | account email (the token is in the keyring) |
@@ -283,9 +289,9 @@ On Linux these are cosmic-config entries under app id `io.github.jotjotboom.JotJ
 `jjb_core::platform::Platform` (`crates/jjb-core/src/platform/mod.rs`) is everything that differs per OS. The section "The platform trait" above lists the methods; on Windows they resolve to:
 
 - `name()` -> `"windows"`.
-- `default_notes_dir()` -> `dirs::document_dir()` + `JotJotBoom`, i.e. `%USERPROFILE%\Documents\JotJotBoom` (falls back to home, then `.`). Already works.
-- `data_dir(app_id)` -> `dirs::data_local_dir()` + app id, i.e. `%LOCALAPPDATA%\io.github.jotjotboom.JotJotBoom\index.db` for the index. Local, not Roaming, on purpose: the index is derived and must never follow a profile between machines. Already works.
-- `store_secret(key, label, bytes)`, `get_secret(key)`, `delete_secret(key)` -> Windows Credential Manager through the `keyring` crate (service `jotjotboom`, account = `key`); the only key in use is `sync-token` with label `JotJotBoom sync`. Today the stub returns an error on store and `None` on get, which degrades to a sign-in that lasts for the session.
+- `default_notes_dir()` -> `dirs::document_dir()` + `Attic`, i.e. `%USERPROFILE%\Documents\Attic` (falls back to home, then `.`). Already works.
+- `data_dir(app_id)` -> `dirs::data_local_dir()` + app id, i.e. `%LOCALAPPDATA%\io.github.reddemo0110.Attic\index.db` for the index. Local, not Roaming, on purpose: the index is derived and must never follow a profile between machines. Already works.
+- `store_secret(key, label, bytes)`, `get_secret(key)`, `delete_secret(key)` -> Windows Credential Manager through the `keyring` crate (service `attic`, account = `key`); the only key in use is `sync-token` with label `Attic sync`. Today the stub returns an error on store and `None` on get, which degrades to a sign-in that lasts for the session.
 - `open(target)` -> `open::that_detached` (ShellExecute), already fine.
 
 Single-instance and argument forwarding are not in the trait; they belong to the shell (Tauri's single-instance plugin).
@@ -526,7 +532,7 @@ All bundled under `apps/jjb-cosmic/resources/fonts/<licence>/<family>/`; static 
 
 `BASE_FONTS` (shown first in the picker): system, opensans, mulish, nunitosans, hankengrotesk, commissioner, lato, sourcesans, roboto, atkinson, ptsans; the rest sit under "more fonts". The body weight setting (`weight`, 200/300/400/500) needs the extra Light/Medium files above. Config: `title_font`, `ui_font`, `editor_font`.
 
-Pairings (`PAIRINGS`, key: title / sidebar+list / note): jotjotboom (default): vt323 / system / system; plex: plexserif / plex / plexserif; editorial: spectral / lato / spectral; magazine: dmserif / lato / lato; paratype: ptserif / ptsans / ptserif; hyperlegible: atkinson throughout; ubuntu: ubuntusans / ubuntusans / ubuntu; typewriter: specialelite / courier / courier; opensans: opensans throughout; montserrat: montserrat / opensans / opensans; playfair: playfair / opensans / opensans; lora: montserrat / opensans / lora; bitter: bitter / sourcesans / opensans; oswald: oswald / opensans / opensans; raleway: raleway / opensans / opensans; roboto: roboto / roboto / opensans; oldstandard: abril / opensans / oldstandard.
+Pairings (`PAIRINGS`, key: title / sidebar+list / note): attic (default): vt323 / system / system; plex: plexserif / plex / plexserif; editorial: spectral / lato / spectral; magazine: dmserif / lato / lato; paratype: ptserif / ptsans / ptserif; hyperlegible: atkinson throughout; ubuntu: ubuntusans / ubuntusans / ubuntu; typewriter: specialelite / courier / courier; opensans: opensans throughout; montserrat: montserrat / opensans / opensans; playfair: playfair / opensans / opensans; lora: montserrat / opensans / lora; bitter: bitter / sourcesans / opensans; oswald: oswald / opensans / opensans; raleway: raleway / opensans / opensans; roboto: roboto / roboto / opensans; oldstandard: abril / opensans / oldstandard.
 
 ### Size scales
 
@@ -550,16 +556,16 @@ Launcher icon (`icon.rs`): a 64x64 squircle (tile at 80% of the canvas) with a v
 
 ## The screenshot harness: script steps
 
-`tools/xshot.py out.png [--script '...'] [--notes-dir DIR] [--wait 4] [--settle 1.5] [--keep] [--binary target/debug/jotjotboom]` is the Linux harness; `tools/wshot.ps1` on Windows must honour the same contract, driving the WebView2 window through WebDriver (tauri-driver + msedgedriver) instead of Xwayland.
+`tools/xshot.py out.png [--script '...'] [--notes-dir DIR] [--wait 4] [--settle 1.5] [--keep] [--binary target/debug/attic]` is the Linux harness; `tools/wshot.ps1` on Windows must honour the same contract, driving the WebView2 window through WebDriver (tauri-driver + msedgedriver) instead of Xwayland.
 
 ### Launch
 
-- `JJB_SCRIPT` carries the script (below). `JJB_NOTES_DIR` points the run at a fresh scratch folder made per run (`jjb-notes-*` in the temp dir) unless `--notes-dir` names a real one; steps like `new`, `type`, `attach`, `image` write files there. `JJB_NOTES_DIR` overrides the configured notes dir (default `~/Documents/JotJotBoom`).
-- `COSMIC_SINGLE_INSTANCE=false` bypasses single-instance activation, otherwise a running JotJotBoom would be handed the launch and no window would open. The Tauri build needs an equivalent switch (same variable name is fine).
-- `XSHOT_LOG=path` keeps the app's stdout/stderr (tracing writes to stdout); unset or empty means discard. `RUST_LOG` defaults to `jotjotboom=info,warn`.
+- `JJB_SCRIPT` carries the script (below). `JJB_NOTES_DIR` points the run at a fresh scratch folder made per run (`jjb-notes-*` in the temp dir) unless `--notes-dir` names a real one; steps like `new`, `type`, `attach`, `image` write files there. `JJB_NOTES_DIR` overrides the configured notes dir (default `~/Documents/Attic`).
+- `COSMIC_SINGLE_INSTANCE=false` bypasses single-instance activation, otherwise a running Attic would be handed the launch and no window would open. The Tauri build needs an equivalent switch (same variable name is fine).
+- `XSHOT_LOG=path` keeps the app's stdout/stderr (tracing writes to stdout); unset or empty means discard. `RUST_LOG` defaults to `attic=info,warn`.
 - xshot.py does not set `XDG_CONFIG_HOME` or `XDG_DATA_HOME`, so a run inherits the real config (theme, fonts, sizes) and the real `index.db` under the data dir; only the sync tests set `XDG_DATA_HOME` (`sync_state` lives in index.db). wshot.ps1 should isolate both (a scratch `APPDATA`/`LOCALAPPDATA`, or a `JJB_CONFIG_DIR`) so captures start from defaults.
 - Other hooks: `JJB_LINK_FIXTURE=page.html` serves that file for every link preview (no network); `JJB_PB_URL` is the PocketBase for the sync integration test; `JJB_SCREENSHOT=path` is the in-app iced capture and is not trusted (it drops editor text and menu labels).
-- Sequence: launch with `DISPLAY` set and `WAYLAND_DISPLAY` removed; sleep `--wait` (4 s); find the top-level window whose class contains `jotjotboom`, viewable, wider than 100 px (retry up to 6 times with a 3 s timeout each); sleep `--settle` (1.5 s); capture; terminate the app unless `--keep` (5 s grace, then kill). X keyboard auto-repeat is switched off for the whole run and restored after, so a stuck key cannot type into the window.
+- Sequence: launch with `DISPLAY` set and `WAYLAND_DISPLAY` removed; sleep `--wait` (4 s); find the top-level window whose class contains `attic`, viewable, wider than 100 px (retry up to 6 times with a 3 s timeout each); sleep `--settle` (1.5 s); capture; terminate the app unless `--keep` (5 s grace, then kill). X keyboard auto-repeat is switched off for the whole run and restored after, so a stuck key cannot type into the window.
 - The script starts 1200 ms after launch. The window opens at the last saved size (`window_width`/`window_height`, minimum 480x320).
 
 ### Capture

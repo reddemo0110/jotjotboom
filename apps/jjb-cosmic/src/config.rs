@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[derive(Debug, Default, Clone, CosmicConfigEntry, Eq, PartialEq)]
 #[version = 1]
 pub struct Config {
-    /// Where the `.md` files live. Empty string = default (`~/Documents/JotJotBoom`).
+    /// Where the `.md` files live. Empty string = default (`~/Documents/Attic`).
     pub notes_dir: String,
     /// Stable per-installation id, stamped into the oplog for sync. Generated on first run.
     pub device_id: String,
@@ -95,7 +95,7 @@ pub struct Config {
 
 impl Config {
     /// Resolve the notes directory, falling back to the platform default
-    /// (`~/Documents/JotJotBoom`); `JJB_NOTES_DIR` overrides both.
+    /// (`~/Documents/Attic`); `JJB_NOTES_DIR` overrides both.
     pub fn notes_dir(&self) -> PathBuf {
         jjb_core::platform::notes_dir(&self.notes_dir)
     }

@@ -1,5 +1,5 @@
 [package]
-name = "jotjotboom"
+name = "attic"
 description = "Retro-flavoured markdown notes for the COSMIC and GNOME desktops"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 
 # The binary keeps the app's name; the package directory says which shell
 # this is (`apps/jjb-cosmic`). The i18n domain and the launcher files are
-# derived from the package name, so it must stay `jotjotboom`.
+# derived from the package name, so it must stay `attic`.
 
 [dependencies]
 jjb-core = { workspace = true, features = ["full"] }

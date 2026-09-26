@@ -1,9 +1,9 @@
 [Desktop Entry]
-Name=JotJotBoom
+Name=Attic
 Comment=Retro-flavoured markdown notes
 Type=Application
-Icon=io.github.jotjotboom.JotJotBoom
-Exec=jotjotboom %F
+Icon=io.github.reddemo0110.Attic
+Exec=attic %F
 Terminal=false
 StartupNotify=true
 SingleMainWindow=true
@@ -14,4 +14,4 @@ Actions=new-note;
 
 [Desktop Action new-note]
 Name=New note
-Exec=jotjotboom --new
+Exec=attic --new

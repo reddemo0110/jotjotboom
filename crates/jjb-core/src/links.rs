@@ -14,7 +14,7 @@ pub const CACHE_DIR: &str = "assets/.links";
 const MAX_HTML: u64 = 1_500_000;
 const MAX_IMAGE: u64 = 8_000_000;
 const THUMB: u32 = 320;
-const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux) JotJotBoom/0.2 link-preview";
+const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux) Attic/0.2 link-preview";
 
 /// One `[text](target)` or bare `https://…` line.
 #[derive(Debug, Clone, PartialEq, Eq)]

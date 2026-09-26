@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! JotJotBoom's core: everything that is true of a note regardless of which
+//! Attic's core: everything that is true of a note regardless of which
 //! window shows it.
 //!
 //! Files on disk are the source of truth; `index.db` is derived and

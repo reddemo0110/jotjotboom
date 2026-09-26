@@ -1,4 +1,4 @@
-# Jotjotboom
+# Attic
 
 Retro-flavoured markdown notes for the COSMIC desktop — and for GNOME.
 
@@ -8,12 +8,12 @@ The quick way — clone and run the one-shot installer (per-user, into
 `~/.local`; it fetches Rust and build tools if the machine lacks them):
 
 ```sh
-git clone https://github.com/reddemo0110/jotjotboom.git
-cd jotjotboom && ./install.sh
+git clone https://github.com/reddemo0110/attic.git
+cd attic && ./install.sh
 ```
 
 Re-run it after a `git pull` to update. Your notes live in
-`~/Documents/JotJotBoom` as plain markdown files.
+`~/Documents/Attic` as plain markdown files.
 
 A [justfile](./justfile) is included by default for the [casey/just][just] command runner.
 
@@ -36,7 +36,7 @@ desktop already knows:
 - Notes turn up in the Activities overview search; pick one to open it,
   or press the arrow to search inside the app. (Log in again after
   installing for the shell to notice the provider.)
-- "Open With → JotJotBoom" on a `.md` file in Files imports a copy into
+- "Open With → Attic" on a `.md` file in Files imports a copy into
   your notes; a file already in the notes folder just opens.
 - The launcher's right-click menu has "New note"; launching the app again
   raises the window instead of opening a second one.
@@ -65,7 +65,7 @@ If packaging for a Linux distribution, vendor dependencies locally with the `ven
 ```sh
 just vendor
 just build-vendored
-just rootdir=debian/jotjotboom prefix=/usr install
+just rootdir=debian/attic prefix=/usr install
 ```
 
 It is recommended to build a source tarball with the vendored dependencies, which can typically be done by running `just vendor` on the host system before it enters the build environment.

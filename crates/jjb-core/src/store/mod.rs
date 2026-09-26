@@ -115,7 +115,7 @@ impl Store {
         };
         let mut n = Note {
             // A fresh id: the copy is a different note from wherever the
-            // file came from, even if that was another JotJotBoom folder.
+            // file came from, even if that was another Attic folder.
             id: note::new_id(),
             title,
             body: body.to_owned(),
@@ -516,13 +516,13 @@ fn parse_folders(text: &str) -> Vec<String> {
     out
 }
 
-const WELCOME: &str = "# Welcome to JotJotBoom
+const WELCOME: &str = "# Welcome to Attic
 
 Your notes are plain markdown files in this folder — open them with anything.
 
 - Tags are just `#words` in the text: #welcome #tips/tags
 - Nested tags use a slash, like #tips/tags above
-- Link notes with double brackets: [[Welcome to JotJotBoom]]
+- Link notes with double brackets: [[Welcome to Attic]]
 - The first line is the title, and the filename follows it
 
 Press **Ctrl+N** for a new note. Everything saves as you type.

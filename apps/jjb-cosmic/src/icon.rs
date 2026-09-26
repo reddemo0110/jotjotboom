@@ -76,7 +76,7 @@ pub fn install(app_id: &str, svg: &str) -> Result<bool> {
 }
 
 fn filetime_touch(dir: &std::path::Path) -> std::io::Result<()> {
-    let marker = dir.join(".jotjotboom-icon");
+    let marker = dir.join(".attic-icon");
     std::fs::write(&marker, b"")?;
     std::fs::remove_file(&marker)
 }

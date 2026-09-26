@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.jotjotboom.JotJotBoom</id>
+  <id>io.github.reddemo0110.Attic</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
-  <name>JotJotBoom</name>
+  <name>Attic</name>
   <summary>Retro-flavoured markdown notes</summary>
   <description>
     <p>
@@ -22,22 +22,22 @@
       GNOME, where notes also turn up in the Activities overview search.
     </p>
   </description>
-  <developer id="io.github.jotjotboom">
+  <developer id="io.github.reddemo0110">
     <name>Andrew Kneebone</name>
   </developer>
   <icon type="remote" width="64" height="64" scale="1">
-    https://github.com/reddemo0110/jotjotboom/raw/main/resources/icons/hicolor/scalable/apps/icon.svg
+    https://github.com/reddemo0110/attic/raw/main/resources/icons/hicolor/scalable/apps/icon.svg
   </icon>
-  <url type="homepage">https://github.com/reddemo0110/jotjotboom</url>
-  <url type="vcs-browser">https://github.com/reddemo0110/jotjotboom</url>
-  <url type="bugtracker">https://github.com/reddemo0110/jotjotboom/issues</url>
-  <launchable type="desktop-id">io.github.jotjotboom.JotJotBoom.desktop</launchable>
+  <url type="homepage">https://github.com/reddemo0110/attic</url>
+  <url type="vcs-browser">https://github.com/reddemo0110/attic</url>
+  <url type="bugtracker">https://github.com/reddemo0110/attic/issues</url>
+  <launchable type="desktop-id">io.github.reddemo0110.Attic.desktop</launchable>
   <provides>
     <id>com.system76.CosmicApplication</id>
     <binaries>
-      <binary>jotjotboom</binary>
+      <binary>attic</binary>
     </binaries>
-    <dbus type="session">io.github.jotjotboom.JotJotBoom.SearchProvider</dbus>
+    <dbus type="session">io.github.reddemo0110.Attic.SearchProvider</dbus>
   </provides>
   <requires>
     <display_length compare="ge">360</display_length>

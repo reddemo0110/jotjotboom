@@ -549,7 +549,7 @@ impl cosmic::Application for AppModel {
     type Flags = Flags;
     type Message = Message;
 
-    const APP_ID: &'static str = "io.github.jotjotboom.JotJotBoom";
+    const APP_ID: &'static str = "io.github.reddemo0110.Attic";
 
     fn core(&self) -> &cosmic::Core {
         &self.core
@@ -1456,7 +1456,7 @@ impl AppModel {
                         return Task::perform(
                             async move {
                                 if let Err(err) =
-                                    crate::secrets::store(sync::TOKEN_KEY, "JotJotBoom sync", token.as_bytes())
+                                    crate::secrets::store(sync::TOKEN_KEY, "Attic sync", token.as_bytes())
                                         .await
                                 {
                                     tracing::warn!(%err, "keeping the sync token in the keyring");
@@ -1517,7 +1517,7 @@ impl AppModel {
                     token_task = Task::perform(
                         async move {
                             if let Err(err) =
-                                crate::secrets::store(sync::TOKEN_KEY, "JotJotBoom sync", token.as_bytes())
+                                crate::secrets::store(sync::TOKEN_KEY, "Attic sync", token.as_bytes())
                                     .await
                             {
                                 tracing::warn!(%err, "keeping the sync token in the keyring");

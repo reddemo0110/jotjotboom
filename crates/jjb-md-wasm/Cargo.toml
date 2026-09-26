@@ -1,6 +1,6 @@
 [package]
 name = "jjb-md-wasm"
-description = "JotJotBoom's markdown scanner for the browser-side editor"
+description = "Attic's markdown scanner for the browser-side editor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

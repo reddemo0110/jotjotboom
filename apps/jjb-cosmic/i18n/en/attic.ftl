@@ -1,4 +1,4 @@
-app-title = JotJotBoom
+app-title = Attic
 app-comment = Retro-flavoured markdown notes
 app-keywords = notes;markdown;retro;COSMIC
 about = About
@@ -265,7 +265,7 @@ sync-conflicts = { $n ->
     [one] One note changed here and elsewhere: your version is kept beside it as "(conflict, { $device })".
    *[other] { $n } notes changed here and elsewhere: your versions are kept beside them as "(conflict, { $device })".
 }
-sync-server-hint = Any PocketBase server with the JotJotBoom collection will do — see server/README.md in the source for a five-minute setup.
+sync-server-hint = Any PocketBase server with the Attic collection will do — see server/README.md in the source for a five-minute setup.
 ago-now = just now
 ago-seconds = { $n } s ago
 ago-minutes = { $n ->
